@@ -12,7 +12,7 @@
   body {
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     background:#2e4d2e; color:#fff;
-    display:flex; flex-direction:column;
+    display:flex; flex-direction:column; min-height:0;
     padding-top: env(safe-area-inset-top);
     user-select:none; -webkit-user-select:none;
   }
@@ -38,36 +38,14 @@
   #inv { display:flex; gap:8px; font-size:clamp(11px,2.6vw,13px); }
   #inv span.zero { opacity:.4; }
 
-  /* ---------- Queue bar ---------- */
-  #queuebar {
-    display:flex; gap:5px; padding:5px 6px; background:#244024;
-    border-bottom:2px solid #142414; z-index:20;
-  }
-  .charsec {
-    flex:1 1 0; min-width:0; display:flex; align-items:center; gap:5px;
-    background:#1b301b; border:2px solid #2f4f2f; border-radius:10px; padding:4px 5px;
-    cursor:pointer; transition:border-color .12s, box-shadow .12s;
-  }
-  .charsec.sel { border-color:var(--cc); box-shadow:0 0 8px var(--cc); }
-  .charsec .pwrap { position:relative; flex:0 0 auto; }
-  .charsec canvas { display:block; width:38px; height:38px; border-radius:50%; background:#0d180d; border:2px solid var(--cc); }
-  .charsec .cinfo { flex:1 1 auto; min-width:0; }
-  .charsec .cname { font-size:10px; font-weight:800; color:var(--cc); line-height:1.1; }
-  .charsec .cstats { font-size:10px; opacity:.9; white-space:nowrap; }
-  .chips { display:flex; gap:3px; margin-top:2px; overflow-x:auto; scrollbar-width:none; }
-  .chips::-webkit-scrollbar { display:none; }
-  .chip {
-    position:relative; flex:0 0 auto; background:#375c37; border-radius:6px;
-    font-size:11px; padding:2px 5px; line-height:1.3; cursor:pointer; overflow:hidden;
-    border:1px solid #4a774a;
-  }
-  .chip .fill { position:absolute; left:0; top:0; bottom:0; width:0%; background:rgba(255,215,106,.35); }
-  .chip .lbl { position:relative; }
-  .chip.cur { border-color:#ffd76a; }
-  .chip:active { transform:scale(.9); }
+  /* ---------- Spielerstatus (Schritt 3: Kanne/Tragekapazität statt Warteschlangen-Leiste) ---------- */
+  #hud .pstat { white-space:nowrap; }
 
-  /* ---------- Canvas ---------- */
-  #wrap { flex:1; position:relative; overflow:hidden; background:#5da03f; }
+  /* ---------- Canvas ----------
+     Spielfläche für die Ego-Perspektive: #wrap füllt die verbleibende (Querformat-)Höhe unter
+     HUD/Warteschlange, #cv füllt #wrap komplett aus. Der JS-Renderer (resize()) passt Sichtfeld/
+     Horizontlinie an jede Breite/Höhe an — kein Letterboxing wie im alten Top-Down-Modus mehr. */
+  #wrap { flex:1; min-height:0; position:relative; overflow:hidden; background:#8fc36a; }
   #cv { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
 
   /* ---------- Toasts ---------- */
@@ -147,6 +125,37 @@
     align-items:center; justify-content:center; flex-direction:column; gap:10px;
     font-weight:800; color:#ffd76a; font-size:18px;
   }
+
+  /* ---------- Ego-Interaktion: Kontext-Prompt, Fortschrittsbalken, Aktions-Button ---------- */
+  #actionPrompt {
+    position:absolute; left:50%; top:calc(50% + 30px); transform:translateX(-50%);
+    background:rgba(20,35,20,.88); border:1px solid #ffd76a; color:#ffd76a;
+    padding:5px 12px; border-radius:10px; font-size:13px; font-weight:700;
+    white-space:nowrap; pointer-events:none; z-index:25; text-align:center;
+  }
+  #actionPrompt div:last-child { font-size:11px; opacity:.85; font-weight:600; color:#fff; }
+  #actionPrompt.hidden { display:none; }
+
+  #actionBarWrap {
+    position:absolute; left:50%; bottom:30px; transform:translateX(-50%);
+    width:min(60vw,320px); height:9px; background:rgba(0,0,0,.45); border-radius:6px;
+    border:1px solid rgba(255,255,255,.4); overflow:hidden; z-index:26;
+  }
+  #actionBarWrap.hidden { display:none; }
+  #actionBar { height:100%; width:0%; background:linear-gradient(90deg,#ffd76a,#ff9d3c); }
+
+  #btnInteract {
+    position:absolute; right:16px; bottom:16px; z-index:30;
+    width:76px; height:76px; border-radius:50%;
+    background:rgba(176,114,42,.92); border:3px solid #ffd76a; color:#fff;
+    font-size:11px; font-weight:800; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:2px; line-height:1.15; cursor:pointer; touch-action:none;
+    box-shadow:0 4px 14px rgba(0,0,0,.45); transition:background .1s, opacity .15s;
+  }
+  #btnInteract .ic { font-size:22px; }
+  #btnInteract.off { opacity:.4; }
+  #btnInteract.active { background:rgba(255,215,106,.95); color:#1d331d; }
+  #btnInteract:active { transform:translateY(1px) scale(.96); }
 </style>
 </head>
 <body>
@@ -160,18 +169,21 @@
   <span id="inv">
     <span id="iSeed">🌱0</span><span id="iBio">🌟0</span><span id="iPest">🧪0</span><span id="iFert">💩0</span>
   </span>
+  <span class="pstat stat">💧 <span id="hCan">0</span>/<span id="hCanCap">0</span></span>
+  <span class="pstat stat">🧺 <span id="hCarry">0</span>/<span id="hCarryCap">0</span></span>
   <span class="spacer"></span>
   <button id="btnHelp" title="Hilfe">❓</button>
   <button id="btnPause" title="Pause">⏸️</button>
   <button id="btnShop">🛒 Laden</button>
 </div>
 
-<div id="queuebar"></div>
-
 <div id="wrap">
   <canvas id="cv"></canvas>
   <div id="toasts"></div>
   <div id="amenu" class="hidden"></div>
+  <div id="actionPrompt" class="hidden"></div>
+  <div id="actionBarWrap" class="hidden"><div id="actionBar"></div></div>
+  <button id="btnInteract" class="off"><span class="ic">✋</span>Aktion</button>
   <div id="modal" class="hidden"><div id="mbox"></div></div>
   <div id="loading">🌳<br>Dominiks werden gepflanzt …</div>
 </div>
@@ -220,7 +232,6 @@ const W=800, H=1100;                       // logische Weltgröße
 const PLOT_COLS=[150,400,650];
 const PLOT_ROWS=[235,395,555,715];
 const WELL ={x:105,y:912}, STALL={x:662,y:905}, SHED={x:398,y:922};
-const IDLE=[{x:235,y:1030},{x:400,y:1042},{x:565,y:1030}];
 const DAYLEN=75;                           // Sekunden pro Tag
 const MAXDAY=10, GOAL=300;
 const SEED_PRICE=5, BIO_PRICE=14;
@@ -255,30 +266,21 @@ for(let r=0;r<4;r++) for(let c=0;c<3;c++){
     fruits:0, premium:false, seed:r*3+c+7 });
 }
 
-const chars=[
-  {key:'manni', name:'Manni', color:'#ff6b4a', speed:175, carryBase:4, canBase:4, work:1.0,
-   flavor:'Flink wie ein Wiesel, trägt aber nix.'},
-  {key:'jannes',name:'Jannes',color:'#4ab0ff', speed:135, carryBase:5, canBase:7, work:0.72,
-   flavor:'Arbeitet effizient. Behauptet er zumindest.'},
-  {key:'benni', name:'Benni', color:'#57e06b', speed:105, carryBase:9, canBase:4, work:1.0,
-   flavor:'Stark wie ein Baum, schnell wie ein Baum.'},
-];
-chars.forEach((c,i)=>{ Object.assign(c,{ idx:i, x:IDLE[i].x, y:IDLE[i].y, dir:1,
-  queue:[], phase:'idle', prog:0, dur:1, carry:0, can:c.canBase, bobT:0 }); });
+// canCap/carryCap/trimMul lesen weiterhin nur `upg.*` plus die Basiswerte des Akteurs —
+// Schritt 3 übergibt hier stets `player` (statt eines der drei Arbeiter-Objekte von früher).
 const canCap  = c=>c.canBase + upg.can*2;
 const carryCap= c=>c.carryBase + upg.barrow*3;
 const trimMul = ()=>[1,0.7,0.5][upg.shears];
 
-let selChar=-1;
-let queueVersion=0, renderedQueueVersion=-1;
 const floats=[];   // {x,y,txt,t,color,size}
 
 // ---------------------------------------------------------------- assets
 const IMG={};
-const SPRITES={};   // vorgerenderte, verkleinerte Charaktere
 let dominikSmall=null;
 function loadAssets(){
-  const names=['manni','jannes','benni','dominik'];
+  // Nur noch die Frucht-Grafik wird gebraucht — Manni/Jannes/Benni gibt es als Charaktere
+  // nicht mehr (Schritt 3: Solo-Ich-Perspektive), daher werden ihre Bilder nicht mehr geladen.
+  const names=['dominik'];
   return Promise.all(names.map(n=>new Promise((res,rej)=>{
     const im=new Image();
     im.onload=()=>{IMG[n]=im;res();};
@@ -287,38 +289,199 @@ function loadAssets(){
   })));
 }
 function prepSprites(){
-  for(const c of chars){
-    const im=IMG[c.key], h=260, w=Math.round(h*im.width/im.height);
-    const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
-    cv.getContext('2d').drawImage(im,0,0,w,h);
-    SPRITES[c.key]=cv;
-  }
   const dim=IMG.dominik, dh=96, dw=Math.round(dh*dim.width/dim.height);
   dominikSmall=document.createElement('canvas'); dominikSmall.width=dw; dominikSmall.height=dh;
   dominikSmall.getContext('2d').drawImage(dim,0,0,dw,dh);
 }
-function drawPortrait(cv,key){
-  const im=IMG[key], ctx=cv.getContext('2d');
-  const side=im.width*0.42, sx=im.width*0.29, sy=im.height*0.03;
-  ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.drawImage(im,sx,sy,side,side,0,0,cv.width,cv.height);
+
+// ---------------------------------------------------------------- Kamera & Projektion (Ego-Perspektive)
+// Schritt 1: von Top-Down auf Ego-Perspektive umgestellt. Die Spielwelt (plots/WELL/STALL/SHED/…)
+// bleibt exakt in denselben Weltkoordinaten (0..W, 0..H) — nur die Projektion auf den Bildschirm
+// ändert sich. Schritt 2 (Steuerung) bewegt/dreht `player`; Schritt 3 (Interaktion/HUD) baut auf
+// `project()`, `HORIZON_FRAC`/`horizonY` und den Billboard-Helfern weiter unten auf.
+const FOV=70*Math.PI/180;         // horizontales Sichtfeld
+const NEAR=24;                    // Nah-Clipping in Weltweinheiten
+const HORIZON_FRAC=0.44;          // Horizontlinie als Anteil der Canvas-Höhe
+const FIELD={x0:20,x1:W-20,y0:150,y1:1080}; // Feldgrenze für Zaunring/Perimeter
+
+// Schritt 3: der Spieler ist jetzt der einzige Akteur (kein Manni/Jannes/Benni-Trio mehr) und
+// trägt daher selbst die frühere Arbeiter-Statistik: `can` (Gießkannen-Ladungen), `carry`
+// (getragene Dominiks), `work` (Zeitfaktor für Aktionen — <1 = schneller). Basiswerte bewusst
+// etwas kräftiger als jeder Einzel-Arbeiter früher, weil man nun alles nacheinander statt zu
+// dritt parallel erledigt; austariert, damit 300 € bis Tag 10 solo erreichbar bleiben.
+// Spawn bewusst NICHT auf x≈400 (das liegt fast genau vor dem Laden bei (398,922) — dort würde
+// der Schuppen beim Spielstart formatfüllend riesig im Bild stehen). x:240 schiebt Brunnen/
+// Feststand/Laden alle weit genug aus dem 70°-Sichtfeld heraus (Winkel 34–71°, Abstand 186–443
+// Welteinheiten, jeweils klar über den geforderten ≥100), sodass beim Start nur das freie Feld
+// mit den Baumreihen und dem Banner zu sehen ist — keine Station "guckt" mit rein.
+const player={ x:240, y:1040, ang:0, eye:92,
+  canBase:8, carryBase:10, work:0.85, carry:0 };
+player.can=player.canBase;
+window.player=player; // Debug-/Testzugriff, auch für Schritt 2/3
+// ang=0 → Blickrichtung -y (feldaufwärts, zum Zaun/Banner). Steigend = Drehung im Uhrzeigersinn.
+
+// ---------------------------------------------------------------- Steuerung (Schritt 2)
+// Tunables: Bewegung/Blick/Kollision — bewusst als benannte Konstanten, damit sie leicht
+// nachjustiert werden können (z. B. wenn sich die Feldgröße/Layout in Zukunft ändert).
+const MOVE_SPEED=210;        // Welteinheiten/Sek. beim Laufen (Feld ~800×800, Bäume ~160 u auseinander)
+const LOOK_SENS=0.0028;      // Rad Gierwinkel pro Pixel Touch-/Maus-Drag (rechte Bildschirmhälfte)
+const KEY_TURN_SPEED=2.1;    // Rad/Sek. Drehgeschwindigkeit für Q/E bzw. Pfeil-links/rechts
+const PLAYER_RADIUS=24;      // Kollisionsradius des Spielers
+const TREE_RADIUS=34;        // Kollisionsradius eines bepflanzten/lebendigen Beets
+const TREE_RADIUS_EMPTY=18;  // leere/tote Beete sind flacher/schmaler — geringerer, aber spürbarer Radius
+const BUILDING_RADIUS=44;    // Kollisionsradius Brunnen/Feststand/Laden (< Abstand Startposition↔Laden)
+const FIELD_MARGIN=18;       // Mindestabstand des Spielers zum Zaun (FIELD-Grenze)
+const JOY_MAX_R=55;          // maximale Auslenkung des virtuellen Joysticks in CSS-Pixeln
+const JOY_DEADZONE=6;        // px Mindestauslenkung, bevor der Joystick überhaupt Bewegung meldet
+const TAP_MOVE_THRESHOLD=10; // px — darunter zählt ein Pointer-Auf/Ab noch als Tap statt Kamera-Drag
+
+// Eingabezustand: Touch (getrennt nach Bildschirmhälfte/pointerId, damit Bewegen+Schauen
+// gleichzeitig funktionieren) + Tastatur. `touchPoints` merkt sich pro pointerId Start/Zustand,
+// um am Ende (pointerup) zu entscheiden: Tap (→ doInteract()) oder Drag (→ Kamera).
+const input={
+  keys:Object.create(null),
+  moveTouchId:null, joyOrigin:{x:0,y:0}, joyDX:0, joyDY:0, moveVec:{x:0,y:0}, // moveVec: x=strafe, y=vorwärts, je [-1,1]
+  lookTouchId:null, lookLastX:0,
+};
+const touchPoints=new Map(); // pointerId -> {half, startX, startY, moved}
+
+// Kollisionsobjekte: 12 Beete (Radius je nach Zustand) + 3 Gebäude. Günstig genug, um
+// jeden Frame neu zusammengestellt zu werden (~15 Einträge).
+function collisionObstacles(){
+  const obs=[];
+  for(const p of plots){
+    obs.push({x:p.x, y:p.y, r:(p.stage==='empty'||p.stage==='dead')?TREE_RADIUS_EMPTY:TREE_RADIUS});
+  }
+  obs.push({x:WELL.x, y:WELL.y, r:BUILDING_RADIUS});
+  obs.push({x:STALL.x, y:STALL.y, r:BUILDING_RADIUS});
+  obs.push({x:SHED.x, y:SHED.y, r:BUILDING_RADIUS});
+  return obs;
 }
+// Bewegt den Spieler um (dx,dy) in Weltkoordinaten, hält ihn im Zaun und schiebt ihn aus
+// Bäumen/Gebäuden heraus (einfache Kreis-Kollision, 2 Durchläufe reichen bei dieser Objektzahl).
+function clampField(x,y){
+  return { x:clamp(x,FIELD.x0+FIELD_MARGIN,FIELD.x1-FIELD_MARGIN),
+           y:clamp(y,FIELD.y0+FIELD_MARGIN,FIELD.y1-FIELD_MARGIN) };
+}
+function movePlayer(dx,dy){
+  let nx=player.x+dx, ny=player.y+dy;
+  ({x:nx,y:ny}=clampField(nx,ny));
+  const obs=collisionObstacles();
+  for(let pass=0;pass<4;pass++){
+    for(const o of obs){
+      const ox=nx-o.x, oy=ny-o.y, d=Math.hypot(ox,oy), minD=PLAYER_RADIUS+o.r;
+      if(d<minD){
+        if(d<1e-4){ nx=o.x+minD; ny=o.y; }
+        else { const push=(minD-d)/d; nx+=ox*push; ny+=oy*push; }
+      }
+    }
+    ({x:nx,y:ny}=clampField(nx,ny));
+  }
+  player.x=nx; player.y=ny;
+}
+// Bewegung/Drehung pro Frame anwenden — wird von update(dt) aufgerufen (bereits hinter dem
+// paused/over-Check, daher automatisch deaktiviert während Modals/Tutorial/Spielende).
+function updatePlayerControls(dt){
+  let mvx=0, mvy=0; // lokal: x=strafe (rechts+), y=vorwärts (+)
+  if(input.moveTouchId!=null){ mvx+=input.moveVec.x; mvy+=input.moveVec.y; }
+  if(input.keys['w']) mvy+=1;
+  if(input.keys['s']) mvy-=1;
+  if(input.keys['a']) mvx-=1;
+  if(input.keys['d']) mvx+=1;
+  if(input.keys['arrowup']) mvy+=1;
+  if(input.keys['arrowdown']) mvy-=1;
+  const len=Math.hypot(mvx,mvy);
+  if(len>0.001){
+    if(len>1){ mvx/=len; mvy/=len; }
+    const v=camVecs();
+    movePlayer((v.fx*mvy+v.rx*mvx)*MOVE_SPEED*dt, (v.fy*mvy+v.ry*mvx)*MOVE_SPEED*dt);
+  }
+  let turn=0;
+  if(input.keys['q']) turn-=1;
+  if(input.keys['e']) turn+=1;
+  if(input.keys['arrowleft']) turn-=1;
+  if(input.keys['arrowright']) turn+=1;
+  if(turn) player.ang+=turn*KEY_TURN_SPEED*dt;
+}
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='w'||k==='a'||k==='s'||k==='d'||k==='q'||k==='e'||
+     k==='arrowup'||k==='arrowdown'||k==='arrowleft'||k==='arrowright'){
+    input.keys[k]=true; e.preventDefault();
+  }
+});
+window.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(k in input.keys) input.keys[k]=false;
+});
+// Liefert das nächstgelegene Ziel im engen Sichtkegel um die Blickrichtung (Fadenkreuz-Interaktion).
+// Treibt in Schritt 3 den Kontext-Prompt, den ✋-Aktions-Button und die Boden-Hervorhebung an
+// (siehe updateAimUI()/drawAimHighlight()). maxDist deutlich größer als der Kollisionsabstand
+// (Spieler bleibt ~PLAYER_RADIUS+TREE_RADIUS/BUILDING_RADIUS ≈ 58–68 Welteinheiten entfernt stehen),
+// damit man direkt nach dem Anlaufen ohne Nachjustieren interagieren kann.
+function aimTarget(maxDist=260,maxAngle=0.30){
+  const v=camVecs();
+  const cands=[];
+  for(let i=0;i<plots.length;i++) cands.push({kind:'plot', idx:i, x:plots[i].x, y:plots[i].y});
+  cands.push({kind:'well', x:WELL.x, y:WELL.y});
+  cands.push({kind:'stall', x:STALL.x, y:STALL.y});
+  cands.push({kind:'shed', x:SHED.x, y:SHED.y});
+  let best=null, bestScore=Infinity;
+  for(const c of cands){
+    const dx=c.x-player.x, dy=c.y-player.y;
+    const forward=dx*v.fx+dy*v.fy, right=dx*v.rx+dy*v.ry;
+    if(forward<=NEAR||forward>maxDist) continue;
+    const angle=Math.atan2(right,forward);
+    if(Math.abs(angle)>maxAngle) continue;
+    const score=forward+Math.abs(angle)*120;
+    if(score<bestScore){ bestScore=score; best=c; }
+  }
+  return best;
+}
+
+let dpr=1, cw=0, ch=0, focal=500, horizonY=200;
+
+function camVecs(){ const s=Math.sin(player.ang), c=Math.cos(player.ang);
+  return {fx:s, fy:-c, rx:c, ry:s}; } // forward/right-Einheitsvektoren der Kamera in Weltkoordinaten
+/** Projiziert einen Weltpunkt (ox,oy) in den Kamera-/Bildschirmraum.
+ *  @returns {sx, scale, forward, right} oder null, wenn der Punkt hinter/zu nah an der Kamera liegt. */
+function project(ox,oy){
+  const v=camVecs(), dx=ox-player.x, dy=oy-player.y;
+  const right=dx*v.rx+dy*v.ry, forward=dx*v.fx+dy*v.fy;
+  if(forward<=NEAR) return null;
+  return { sx:cw/2+(right/forward)*focal, scale:focal/forward, forward, right };
+}
+// Bildschirm-Y der Bodenebene in gegebener Entfernung (Kamera ohne Neigung, feste Augenhöhe).
+function groundScreenY(forward){ return horizonY+(player.eye/forward)*focal; }
+// Umkehrung für Taps: Bodenpunkt unter einem Bildschirmpunkt (nur unterhalb des Horizonts gültig).
+function screenToGround(sx,sy){
+  if(sy<=horizonY+0.5) return null;
+  const forward=player.eye*focal/(sy-horizonY), right=(sx-cw/2)/focal*forward;
+  const v=camVecs();
+  return { x:player.x+right*v.rx+forward*v.fx, y:player.y+right*v.ry+forward*v.fy };
+}
+const fogAlpha=forward=>clamp(1-forward/1500,0.12,1); // Distanz-Dunst Richtung Horizontfarbe
 
 // ---------------------------------------------------------------- Canvas & Layout
 const cvEl=document.getElementById('cv');
 const ctx=cvEl.getContext('2d');
-let scale=1, offX=0, offY=0, dpr=1;
 function resize(){
   const wrap=document.getElementById('wrap');
-  const cw=wrap.clientWidth, ch=wrap.clientHeight;
+  cw=wrap.clientWidth; ch=wrap.clientHeight;      // Querformat: Canvas füllt #wrap komplett aus
   dpr=window.devicePixelRatio||1;
   cvEl.width=Math.round(cw*dpr); cvEl.height=Math.round(ch*dpr);
-  scale=Math.min(cw/W, ch/H);
-  offX=(cw-W*scale)/2; offY=(ch-H*scale)/2;
+  focal=(cw*0.5)/Math.tan(FOV/2);
+  horizonY=ch*HORIZON_FRAC;
 }
 window.addEventListener('resize',resize);
-const worldToScreen=(x,y)=>({x:offX+x*scale, y:offY+y*scale});
-const screenToWorld=(x,y)=>({x:(x-offX)/scale, y:(y-offY)/scale});
+// Kompatibel zur bestehenden UI-Logik (Aktionsmenü-Platzierung, Taps): projiziert über die
+// Bodenebene statt orthografisch wie im alten Top-Down-Renderer.
+function worldToScreen(x,y){
+  const pr=project(x,y);
+  if(!pr) return {x:-9999,y:-9999};
+  return {x:pr.sx, y:groundScreenY(pr.forward)};
+}
+function screenToWorld(sx,sy){ return screenToGround(sx,sy) || {x:player.x,y:player.y}; }
 
 // ---------------------------------------------------------------- toasts & floats
 function toast(msg,type='',ms=3200){
@@ -406,31 +569,9 @@ function spawnPests(dt){
 }
 
 // ---------------------------------------------------------------- Aufgaben
-function targetFor(task){
-  if(task.plot!=null){ const p=plots[task.plot]; return {x:p.x, y:p.y+58}; }
-  if(task.type==='refill') return {x:WELL.x+8, y:WELL.y+42};
-  if(task.type==='sell')   return {x:STALL.x-6, y:STALL.y+46};
-  return IDLE[0];
-}
-function enqueue(ci,type,plotIdx=null,silent=false){
-  const c=chars[ci];
-  if(c.queue.length>=6){ toast(c.name+' hat schon genug auf dem Zettel! (max. 6)','warn'); SND.fail(); return false; }
-  c.queue.push({type,plot:plotIdx});
-  queueVersion++;
-  if(!silent) SND.enq();
-  return true;
-}
-function cancelTask(ci,qi){
-  const c=chars[ci];
-  if(qi<0||qi>=c.queue.length) return;
-  const t=c.queue[qi];
-  c.queue.splice(qi,1);
-  if(qi===0){ c.phase='idle'; c.prog=0; }
-  queueVersion++;
-  toast('❌ '+c.name+': „'+TASKDEFS[t.type].label+'" abgebrochen.','',1800);
-  SND.tap();
-}
-// Prüfung bei Ankunft — Welt kann sich geändert haben
+// Schritt 3: kein Warteschlangen-Trio mehr — der Spieler geht selbst hin und macht die Arbeit.
+// `canDoNow`/`completeTask` bleiben (fast) unverändert, werden jetzt aber stets mit `player`
+// statt einem Arbeiter-Objekt aufgerufen. Meldungen wurden von "Manni/Jannes/Benni" auf "Du" umgestellt.
 function canDoNow(c,task){
   const p=task.plot!=null?plots[task.plot]:null;
   switch(task.type){
@@ -439,16 +580,16 @@ function canDoNow(c,task){
     case 'plantbio': if(!(p.stage==='empty'||p.stage==='dead')) return 'Da wächst schon was!';
                      if(inv.bio<1) return 'Keine Bio-Samen mehr!'; return true;
     case 'water':    if(!ALIVE.includes(p.stage)) return 'Hier gibt es nichts zu gießen.';
-                     if(c.can<1) return c.name+'s Gießkanne ist leer!'; return true;
+                     if(c.can<1) return 'Deine Gießkanne ist leer!'; return true;
     case 'trim':     if(!ALIVE.includes(p.stage)||p.over<0.15) return 'Nichts zu schneiden.'; return true;
     case 'spray':    if(!p.pest) return 'Keine Schädlinge (mehr) da.';
                      if(inv.pest<1) return 'Kein Pestizid im Lager!'; return true;
     case 'fert':     if(!GROWABLE.includes(p.stage)) return 'Düngen bringt hier nichts.';
                      if(inv.fert<1) return 'Kein Dünger im Lager!'; return true;
     case 'harvest':  if(!(p.stage==='fruiting'||p.stage==='overripe')) return 'Keine reifen Dominiks.';
-                     if(c.carry>=carryCap(c)) return c.name+' kann nichts mehr tragen!'; return true;
+                     if(c.carry>=carryCap(c)) return 'Du kannst nichts mehr tragen!'; return true;
     case 'refill':   if(c.can>=canCap(c)) return 'Kanne ist schon voll.'; return true;
-    case 'sell':     if(c.carry<1) return c.name+' hat nichts zu verkaufen.'; return true;
+    case 'sell':     if(c.carry<1) return 'Du hast nichts zu verkaufen.'; return true;
   }
   return true;
 }
@@ -488,38 +629,28 @@ function completeTask(c,task){
   if(task.type!=='sell') SND.done();
   updateHUD();
 }
-function updateChar(c,dt){
-  if(c.queue.length===0){ c.phase='idle'; return; }
-  const task=c.queue[0];
-  if(c.phase==='idle'){ c.phase='walk'; }
-  if(c.phase==='walk'){
-    const tg=targetFor(task);
-    const dx=tg.x-c.x, dy=tg.y-c.y, d=Math.hypot(dx,dy);
-    if(d<7){
-      const ok=canDoNow(c,task);
-      if(ok!==true){
-        addFloat(c.x,c.y-160,'❓','#ffb0b0');
-        toast('🤷 '+c.name+': '+ok,'warn',2600);
-        SND.fail();
-        c.queue.shift(); c.phase='idle'; queueVersion++;
-        return;
-      }
-      c.phase='work'; c.prog=0;
-      c.dur=TASKDEFS[task.type].dur*c.work*(task.type==='trim'?trimMul():1);
-    } else {
-      const sp=c.speed*dt;
-      c.x+=dx/d*Math.min(sp,d); c.y+=dy/d*Math.min(sp,d);
-      if(Math.abs(dx)>2) c.dir=dx>0?1:-1;
-      c.bobT+=dt;
-    }
-  } else if(c.phase==='work'){
-    c.prog+=dt;
-    if(c.prog>=c.dur){
-      const ok=canDoNow(c,task);   // z. B. Frucht inzwischen zermatscht
-      if(ok===true) completeTask(c,task);
-      else { addFloat(c.x,c.y-160,'❓','#ffb0b0'); SND.fail(); }
-      c.queue.shift(); c.phase='idle'; c.prog=0; queueVersion++;
-    }
+// Ego-Aktionsablauf: ausgewählte Aktion nimmt sichtbar Zeit in Anspruch (Fortschrittsbalken),
+// bevor sie via completeTask() angewendet wird. Nur eine Aktion gleichzeitig — Bewegung wird
+// währenddessen eingefroren (siehe update()).
+let activeAction=null; // {type, plot, dur, prog}
+function startAction(type,plotIdx=null){
+  const task={type,plot:plotIdx};
+  const ok=canDoNow(player,task);
+  if(ok!==true){ toast('🤷 '+ok,'warn',2400); SND.fail(); return false; }
+  const dur=TASKDEFS[type].dur*player.work*(type==='trim'?trimMul():1);
+  activeAction={type,plot:plotIdx,dur,prog:0};
+  SND.enq();
+  return true;
+}
+function updateActiveAction(dt){
+  if(!activeAction) return;
+  activeAction.prog+=dt;
+  if(activeAction.prog>=activeAction.dur){
+    const task={type:activeAction.type,plot:activeAction.plot};
+    const ok=canDoNow(player,task);       // z. B. Frucht ist inzwischen zermatscht
+    if(ok===true) completeTask(player,task);
+    else { addFloat(player.x,player.y-160,'❓','#ffb0b0'); toast('🤷 '+ok,'warn',2200); SND.fail(); }
+    activeAction=null;
   }
 }
 
@@ -543,6 +674,9 @@ function plotActions(p){
 }
 
 // ---------------------------------------------------------------- Eingabe
+// Schritt 3: kein Antippen von Manni/Jannes/Benni oder Stationen mehr nötig — der Reticle
+// (Fadenkreuz) zeigt über aimTarget() an, was gerade in Reichweite ist; der ✋-Aktions-Button
+// (oder ein kurzer Tap ohne Kamera-Drag) löst die passende Interaktion aus.
 const amenu=document.getElementById('amenu');
 function closeMenu(){ amenu.classList.add('hidden'); }
 function openMenuForPlot(pi){
@@ -550,7 +684,7 @@ function openMenuForPlot(pi){
   if(acts.length===0){ toast('Hier gibt es gerade nichts zu tun.','',1800); return; }
   amenu.innerHTML='';
   const t=document.createElement('div'); t.className='mtitle';
-  t.textContent='Baum #'+(pi+1)+' — '+chars[selChar].name+' soll:';
+  t.textContent='Baum #'+(pi+1)+' — was tun?';
   amenu.appendChild(t);
   for(const a of acts){
     const b=document.createElement('button');
@@ -560,56 +694,92 @@ function openMenuForPlot(pi){
     if(a.dis){ b.disabled=true; }
     b.addEventListener('click',ev=>{
       ev.stopPropagation();
-      enqueue(selChar,a.type,pi);
       closeMenu();
+      startAction(a.type,pi);
     });
     amenu.appendChild(b);
   }
-  const s=worldToScreen(p.x,p.y);
   amenu.classList.remove('hidden');
+  // Landscape: mittig-oben platzieren (bleibt fern von Joystick unten-links und Aktions-Button
+  // unten-rechts, unabhängig davon, wo der Baum gerade auf dem breiten Bildschirm projiziert wird).
   const wrap=document.getElementById('wrap');
   const mw=amenu.offsetWidth, mh=amenu.offsetHeight;
-  amenu.style.left=clamp(s.x-mw/2, 6, wrap.clientWidth-mw-6)+'px';
-  amenu.style.top =clamp(s.y+20, 6, wrap.clientHeight-mh-6)+'px';
+  amenu.style.left=clamp((wrap.clientWidth-mw)/2, 6, wrap.clientWidth-mw-6)+'px';
+  amenu.style.top =clamp(wrap.clientHeight*0.24, 6, wrap.clientHeight-mh-6)+'px';
 }
-function tapWorld(wx,wy){
-  if(state.over) return;
-  // Charaktere zuerst
-  for(const c of chars){
-    if(Math.abs(wx-c.x)<45 && wy<c.y+18 && wy>c.y-160){
-      selChar=(selChar===c.idx)?-1:c.idx;
-      SND.tap(); queueVersion++;
-      if(selChar>=0) toast('👉 '+c.name+' ausgewählt. Tippe Bäume & Stationen an!','',1600);
-      return;
-    }
-  }
-  // Läden / Stationen
-  const near=(s,r)=>Math.hypot(wx-s.x,wy-(s.y-30))<r;
-  if(near(SHED,70)){ openShop(); return; }
-  if(selChar<0){
-    if(near(WELL,70)||near(STALL,80)||plots.some(p=>Math.hypot(wx-p.x,wy-(p.y-40))<70))
-      toast('☝️ Wähle zuerst Manni, Jannes oder Benni aus!','warn',2200);
+// Zentrale Interaktion: was der Spieler gerade anvisiert (aimTarget()) bestimmt, was der
+// ✋-Aktions-Button (bzw. ein kurzer Tap) auslöst.
+let currentAim=null;
+function doInteract(){
+  if(state.paused||state.over) return;
+  if(activeAction) return;                       // schon mitten in einer Aktion
+  if(!amenu.classList.contains('hidden')) return; // Menü ist offen — erst dort wählen
+  const a=currentAim;
+  if(!a){ toast('🤷 Nichts in Reichweite.','',1400); return; }
+  if(a.kind==='plot'){
+    const p=plots[a.idx];
+    if(!p.unlocked){ toast('🚧 Diese Parzelle kannst du im Laden kaufen!','warn'); return; }
+    openMenuForPlot(a.idx);
     return;
   }
-  if(near(WELL,70)){ enqueue(selChar,'refill'); return; }
-  if(near(STALL,80)){ enqueue(selChar,'sell'); return; }
-  for(let i=0;i<plots.length;i++){
-    const p=plots[i];
-    if(Math.hypot(wx-p.x,wy-(p.y-40))<70){
-      if(!p.unlocked){ toast('🚧 Diese Parzelle kannst du im Laden kaufen!','warn'); return; }
-      openMenuForPlot(i);
-      return;
-    }
-  }
+  if(a.kind==='well'){ startAction('refill'); return; }
+  if(a.kind==='stall'){ startAction('sell'); return; }
+  if(a.kind==='shed'){ openShop(); return; }
 }
+document.getElementById('btnInteract').addEventListener('pointerdown',e=>{
+  e.preventDefault(); e.stopPropagation();
+  ac(); doInteract();
+});
+// Pointer-Routing (Schritt 2/3): linke Bildschirmhälfte = virtueller Joystick (Bewegen),
+// rechte Hälfte = Drag-to-Look (Gieren). Mehrere gleichzeitige Pointer (pointerId) werden
+// getrennt verfolgt, damit auf Touch gleichzeitig bewegt UND geschaut werden kann. Ein
+// Pointer, der sich nie über TAP_MOVE_THRESHOLD hinaus bewegt, zählt als Tap und löst — genau
+// wie der ✋-Button — die Interaktion mit dem aktuell anvisierten Ziel aus.
 cvEl.addEventListener('pointerdown',e=>{
   e.preventDefault();
   ac(); // Audio freischalten
   if(!amenu.classList.contains('hidden')){ closeMenu(); return; }
+  if(state.paused||state.over) return; // keine Bewegung/Blick/Tap während Modal/Pause/Ende
   const r=cvEl.getBoundingClientRect();
-  const w=screenToWorld(e.clientX-r.left,e.clientY-r.top);
-  tapWorld(w.x,w.y);
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  try{ cvEl.setPointerCapture(e.pointerId); }catch(err){}
+  const half=x<r.width/2?'left':'right';
+  touchPoints.set(e.pointerId,{half,startX:x,startY:y,moved:false});
+  if(half==='left'){
+    input.moveTouchId=e.pointerId;
+    input.joyOrigin.x=x; input.joyOrigin.y=y; input.joyDX=0; input.joyDY=0;
+    input.moveVec.x=0; input.moveVec.y=0;
+  } else {
+    input.lookTouchId=e.pointerId;
+    input.lookLastX=x;
+  }
 });
+cvEl.addEventListener('pointermove',e=>{
+  const ts=touchPoints.get(e.pointerId); if(!ts) return;
+  const r=cvEl.getBoundingClientRect();
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  if(Math.hypot(x-ts.startX,y-ts.startY)>TAP_MOVE_THRESHOLD) ts.moved=true;
+  if(e.pointerId===input.moveTouchId){
+    let dx=x-input.joyOrigin.x, dy=y-input.joyOrigin.y;
+    const d=Math.hypot(dx,dy);
+    if(d>JOY_MAX_R){ dx*=JOY_MAX_R/d; dy*=JOY_MAX_R/d; }
+    input.joyDX=dx; input.joyDY=dy;
+    input.moveVec.x=Math.abs(dx)<JOY_DEADZONE?0:dx/JOY_MAX_R;
+    input.moveVec.y=Math.abs(dy)<JOY_DEADZONE?0:-dy/JOY_MAX_R; // Bildschirm-Y invertiert: hoch = vorwärts
+  } else if(e.pointerId===input.lookTouchId){
+    player.ang += (x-input.lookLastX)*LOOK_SENS;
+    input.lookLastX=x;
+  }
+});
+function endPointer(e){
+  const ts=touchPoints.get(e.pointerId); if(!ts) return;
+  touchPoints.delete(e.pointerId);
+  if(e.pointerId===input.moveTouchId){ input.moveTouchId=null; input.moveVec.x=0; input.moveVec.y=0; }
+  if(e.pointerId===input.lookTouchId){ input.lookTouchId=null; }
+  if(!ts.moved && !state.paused && !state.over) doInteract();
+}
+cvEl.addEventListener('pointerup',endPointer);
+cvEl.addEventListener('pointercancel',endPointer);
 
 // ---------------------------------------------------------------- Laden (Shop)
 const SHOP=[
@@ -621,11 +791,11 @@ const SHOP=[
    price:()=>8, own:()=>'Vorrat: '+inv.pest, buy:()=>inv.pest++},
   {id:'fert', ico:'💩', nm:'Turbo-Dünger', ds:'Sofortiger Wachstumsschub (+45 %). Riecht nach Erfolg.',
    price:()=>9, own:()=>'Vorrat: '+inv.fert, buy:()=>inv.fert++},
-  {id:'can', ico:'🚿', nm:'Größere Gießkanne', ds:'+2 Ladungen für alle drei Jungs.', max:3, lvl:()=>upg.can,
+  {id:'can', ico:'🚿', nm:'Größere Gießkanne', ds:'+2 Ladungen für dich.', max:3, lvl:()=>upg.can,
    price:()=>[20,35,60][upg.can], buy:()=>upg.can++},
   {id:'shears', ico:'✂️', nm:'Schärfere Schere', ds:'Schneiden geht deutlich flotter.', max:2, lvl:()=>upg.shears,
    price:()=>[25,45][upg.shears], buy:()=>upg.shears++},
-  {id:'barrow', ico:'🛞', nm:'Schubkarre', ds:'+3 Tragekapazität für alle drei Jungs.', max:2, lvl:()=>upg.barrow,
+  {id:'barrow', ico:'🛞', nm:'Schubkarre', ds:'+3 Tragekapazität für dich.', max:2, lvl:()=>upg.barrow,
    price:()=>[30,55][upg.barrow], buy:()=>upg.barrow++},
   {id:'plot', ico:'🌍', nm:'Neue Parzelle', ds:'Mehr Platz für Dominiks. Der Acker ruft.', max:3, lvl:()=>upg.plots,
    price:()=>[35,60,90][upg.plots],
@@ -669,19 +839,23 @@ mbox.addEventListener('click',e=>{
 // ---------------------------------------------------------------- Tutorial / Enden
 function showTutorial(){
   showModal(`<h2>🌳 ErnteDominiksFest</h2>
-  <p>Das große Fest steht an — und es fehlen <b>Dominiks</b>! Züchte Bäume, an denen
-  pralle Dominiks reifen, und verkaufe sie am Feststand.</p>
+  <p>Das große Fest steht an — und es fehlen <b>Dominiks</b>! Du bist ganz allein auf dem Acker:
+  Züchte Bäume, an denen pralle Dominiks reifen, und verkaufe sie am Feststand.</p>
   <ul class="tut">
-    <li><b>👆 Tippe</b> auf Manni, Jannes oder Benni, dann auf Bäume, Brunnen oder Feststand.
-        Du kannst mehrere Aufgaben hintereinander vergeben — die <b>Warteschlange</b> oben zeigt sie an.</li>
-    <li><b>❌ Vertippt?</b> Tippe in der Warteschlange auf die Aufgabe, um sie abzubrechen.</li>
-    <li><b>💧 Gießen</b> nicht vergessen (Kanne am Brunnen füllen!), <b>✂️ schneiden</b> bei Wildwuchs,
-        <b>🧪 spritzen</b> bei Blattläusen.</li>
+    <li><b>🕹️ Bewegen:</b> linker Daumen (Joystick unten links) bzw. WASD/Pfeiltasten.
+        <b>👀 Umsehen:</b> auf der rechten Bildschirmhälfte ziehen, bzw. Q/E oder ←/→.</li>
+    <li><b>✋ Aktion:</b> lauf mit dem Fadenkreuz auf einen Baum, den Brunnen, den Feststand oder
+        den Laden zu — sobald etwas in Reichweite ist, erscheint ein Hinweis. Drück dann den
+        <b>✋ Aktion</b>-Button (oder tippe kurz aufs Spielfeld), um zu handeln.</li>
+    <li><b>🌳 Am Baum</b> öffnet sich ein Menü mit den möglichen Schritten: pflanzen, gießen,
+        schneiden, spritzen, düngen, ernten. Jede Aktion braucht kurz Zeit (Fortschrittsbalken).</li>
+    <li><b>💧 Gießen</b> nicht vergessen (Kanne am Brunnen auffüllen!), <b>✂️ schneiden</b> bei
+        Wildwuchs, <b>🧪 spritzen</b> bei Blattläusen.</li>
     <li><b>🧺 Ernte rechtzeitig</b> — überreife Dominiks werden matschig. Igitt.</li>
-    <li><b>🛒 Im Laden</b> gibt's Samen, Werkzeug und neue Parzellen.</li>
+    <li><b>🛒 Im Laden</b> (hinlaufen oder Button oben) gibt's Samen, Werkzeug und neue Parzellen.</li>
   </ul>
   <p>🎯 <b>Ziel: ${GOAL} € bis zum Ende von Tag ${MAXDAY}</b> — sonst fällt das Fest aus!</p>
-  <p style="opacity:.7;font-size:12px">Manni läuft schnell, Jannes arbeitet flott, Benni trägt am meisten.</p>
+  <p style="opacity:.7;font-size:12px">Du schaffst nur eine Sache auf einmal — plane deine Wege auf dem Acker gut.</p>
   <div class="btnrow"><button class="primary" data-act="start">Los geht's! 🚜</button></div>`);
 }
 function endScreen(winner,msg){
@@ -712,8 +886,7 @@ function checkWin(){
 }
 function checkBankrupt(){
   const anyAlive=plots.some(p=>p.unlocked&&ALIVE.includes(p.stage));
-  const anyCarry=chars.some(c=>c.carry>0);
-  if(!anyAlive && !anyCarry && inv.seed<1 && inv.bio<1 && state.money<SEED_PRICE && !state.won){
+  if(!anyAlive && player.carry<1 && inv.seed<1 && inv.bio<1 && state.money<SEED_PRICE && !state.won){
     endScreen(false,'Pleite! Keine Bäume, keine Samen, kein Geld. Dominik ist untröstlich.');
   }
 }
@@ -729,10 +902,12 @@ function newDay(){
   toast('🌅 Tag '+state.day+(state.day<=MAXDAY?'/'+MAXDAY:'')+' bricht an. '+pick(flavor),'',3600);
 }
 
-// ---------------------------------------------------------------- HUD & Warteschlangen
+// ---------------------------------------------------------------- HUD
 const hMoney=document.getElementById('hMoney'), hDay=document.getElementById('hDay'),
       hPrice=document.getElementById('hPrice'), daybar=document.getElementById('daybar'),
-      hGoal=document.getElementById('hGoal');
+      hGoal=document.getElementById('hGoal'),
+      hCan=document.getElementById('hCan'), hCanCap=document.getElementById('hCanCap'),
+      hCarry=document.getElementById('hCarry'), hCarryCap=document.getElementById('hCarryCap');
 function updateHUD(){
   hMoney.textContent=state.money;
   hDay.textContent=state.day<=MAXDAY?state.day+'/'+MAXDAY:state.day;
@@ -743,134 +918,24 @@ function updateHUD(){
     el.textContent=ico+inv[key];
     el.classList.toggle('zero',inv[key]===0);
   }
-}
-const qbar=document.getElementById('queuebar');
-const secEls=[], statEls=[], chipBoxes=[];
-function buildQueueBar(){
-  qbar.innerHTML='';
-  for(const c of chars){
-    const sec=document.createElement('div');
-    sec.className='charsec'; sec.style.setProperty('--cc',c.color);
-    const pw=document.createElement('div'); pw.className='pwrap';
-    const pc=document.createElement('canvas'); pc.width=76; pc.height=76;
-    drawPortrait(pc,c.key); pw.appendChild(pc); sec.appendChild(pw);
-    const info=document.createElement('div'); info.className='cinfo';
-    info.innerHTML=`<div class="cname">${c.name}</div><div class="cstats"></div><div class="chips"></div>`;
-    sec.appendChild(info);
-    sec.addEventListener('click',e=>{
-      if(e.target.closest('.chip')) return;
-      selChar=(selChar===c.idx)?-1:c.idx; SND.tap(); queueVersion++;
-    });
-    qbar.appendChild(sec);
-    secEls.push(sec); statEls.push(info.querySelector('.cstats')); chipBoxes.push(info.querySelector('.chips'));
-  }
-}
-let curFillEls=[null,null,null];
-function renderQueues(){
-  for(const c of chars){
-    secEls[c.idx].classList.toggle('sel',selChar===c.idx);
-    const box=chipBoxes[c.idx];
-    box.innerHTML='';
-    curFillEls[c.idx]=null;
-    c.queue.forEach((t,qi)=>{
-      const chip=document.createElement('div');
-      chip.className='chip'+(qi===0?' cur':'');
-      const lbl=TASKDEFS[t.type].icon+(t.plot!=null?'#'+(t.plot+1):'');
-      chip.innerHTML=`<div class="fill"></div><span class="lbl">${lbl}</span>`;
-      chip.title=TASKDEFS[t.type].label+' abbrechen';
-      chip.addEventListener('click',e=>{ e.stopPropagation(); cancelTask(c.idx,qi); });
-      box.appendChild(chip);
-      if(qi===0) curFillEls[c.idx]=chip.querySelector('.fill');
-    });
-    if(c.queue.length===0){
-      const z=document.createElement('div');
-      z.className='chip'; z.style.opacity='.45'; z.style.pointerEvents='none';
-      z.innerHTML='<span class="lbl">💤 nix zu tun</span>';
-      box.appendChild(z);
-    }
-  }
-}
-function updateQueueLive(){
-  if(queueVersion!==renderedQueueVersion){ renderQueues(); renderedQueueVersion=queueVersion; }
-  for(const c of chars){
-    statEls[c.idx].textContent=`💧${c.can}/${canCap(c)} 🧺${c.carry}/${carryCap(c)}`;
-    const f=curFillEls[c.idx];
-    if(f){
-      const pct=c.phase==='work'?Math.round(100*c.prog/c.dur):0;
-      f.style.width=pct+'%';
-    }
-  }
+  hCan.textContent=player.can; hCanCap.textContent=canCap(player);
+  hCarry.textContent=player.carry; hCarryCap.textContent=carryCap(player);
 }
 
-// ---------------------------------------------------------------- Rendering
+// ---------------------------------------------------------------- Rendering (Ego-Perspektive/Billboards)
 const grassPatches=(()=>{const r=mulberry(42),a=[];
   for(let i=0;i<26;i++)a.push({x:r()*W,y:120+r()*(H-160),rx:20+r()*45,ry:8+r()*16,c:r()});
   return a;})();
 const flowers=(()=>{const r=mulberry(7),a=[];
   for(let i=0;i<40;i++)a.push({x:r()*W,y:130+r()*(H-170),h:r()});
   return a;})();
-function rr(x,y,w,h,r){ ctx.beginPath();
-  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
-  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function rr(g,x,y,w,h,r){ g.beginPath();
+  g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
 
-function drawGround(){
-  // ganze Leinwand mit Gras (auch Letterbox-Bereiche)
-  ctx.save(); ctx.setTransform(dpr,0,0,dpr,0,0);
-  const g=ctx.createLinearGradient(0,0,0,cvEl.height/dpr);
-  g.addColorStop(0,'#6cb14e'); g.addColorStop(1,'#4f9140');
-  ctx.fillStyle=g; ctx.fillRect(0,0,cvEl.width/dpr,cvEl.height/dpr);
-  ctx.restore();
-  ctx.fillStyle='rgba(255,255,255,.06)';
-  for(const p of grassPatches){ ctx.beginPath(); ctx.ellipse(p.x,p.y,p.rx,p.ry,0,0,7); ctx.fill(); }
-  for(const f of flowers){
-    ctx.fillStyle=f.h>0.5?'#ffe08a':'#ff9db0';
-    ctx.beginPath(); ctx.arc(f.x,f.y,2.6,0,7); ctx.fill();
-  }
-  // Zaun oben
-  ctx.strokeStyle='#7a5a34'; ctx.lineWidth=5; ctx.lineCap='round';
-  for(let x=30;x<W;x+=70){ ctx.beginPath(); ctx.moveTo(x,95); ctx.lineTo(x,135); ctx.stroke(); }
-  ctx.beginPath(); ctx.moveTo(10,105); ctx.lineTo(W-10,105); ctx.moveTo(10,125); ctx.lineTo(W-10,125); ctx.stroke();
-  // Banner
-  ctx.fillStyle='#c8352f'; rr(W/2-180,52,360,34,10); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 21px system-ui'; ctx.textAlign='center';
-  ctx.fillText('🎪 ErnteDominiksFest 🎪',W/2,76);
-}
-function drawWell(){
-  const {x,y}=WELL;
-  ctx.fillStyle='#8b8b8b'; ctx.beginPath(); ctx.ellipse(x,y,42,18,0,0,7); ctx.fill();
-  ctx.fillStyle='#6d6d6d'; ctx.beginPath(); ctx.ellipse(x,y-4,36,14,0,0,7); ctx.fill();
-  ctx.fillStyle='#3f7fbf'; ctx.beginPath(); ctx.ellipse(x,y-4,28,10,0,0,7); ctx.fill();
-  ctx.strokeStyle='#7a5a34'; ctx.lineWidth=7; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(x-30,y-8); ctx.lineTo(x-30,y-70); ctx.moveTo(x+30,y-8); ctx.lineTo(x+30,y-70); ctx.stroke();
-  ctx.fillStyle='#a34d2d'; ctx.beginPath();
-  ctx.moveTo(x-46,y-66); ctx.lineTo(x,y-96); ctx.lineTo(x+46,y-66); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
-  ctx.fillText('🚰 Brunnen',x,y-106);
-}
-function drawStall(){
-  const {x,y}=STALL;
-  ctx.fillStyle='#7a5a34'; rr(x-62,y-42,124,42,6); ctx.fill();
-  ctx.fillStyle='#93704a'; rr(x-62,y-42,124,10,4); ctx.fill();
-  ctx.strokeStyle='#7a5a34'; ctx.lineWidth=6; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(x-58,y-42); ctx.lineTo(x-58,y-100); ctx.moveTo(x+58,y-42); ctx.lineTo(x+58,y-100); ctx.stroke();
-  for(let i=0;i<6;i++){ ctx.fillStyle=i%2?'#e8e4d8':'#c8352f';
-    ctx.fillRect(x-72+i*24,y-116,24,20); }
-  ctx.fillStyle='rgba(0,0,0,.15)'; ctx.fillRect(x-72,y-98,144,4);
-  if(dominikSmall){ const dw=dominikSmall.width*(30/dominikSmall.height);
-    ctx.drawImage(dominikSmall,x-40,y-70,dw,30);
-    ctx.drawImage(dominikSmall,x-40+dw+4,y-70,dw,30); }
-  ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
-  ctx.fillText('💰 Feststand',x,y-126);
-}
-function drawShed(){
-  const {x,y}=SHED;
-  ctx.fillStyle='#6e4f2f'; rr(x-48,y-70,96,70,6); ctx.fill();
-  ctx.fillStyle='#5b3f24'; rr(x-16,y-46,32,46,4); ctx.fill();
-  ctx.fillStyle='#a34d2d'; ctx.beginPath();
-  ctx.moveTo(x-58,y-66); ctx.lineTo(x,y-100); ctx.lineTo(x+58,y-66); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
-  ctx.fillText('🛒 Laden',x,y-110);
-}
+// ---- Kunstwerk in lokalem (Offscreen-)Koordinatenraum. Identisch zur alten Top-Down-Zeichnung,
+// nur auf einen übergebenen Kontext `g` statt des globalen `ctx` umgestellt, damit es sowohl
+// direkt als auch (weiter unten) via blitArt() als Billboard verwendet werden kann.
 function fruitSlots(p){
   const r=mulberry(p.seed), n=5, out=[];
   for(let i=0;i<n;i++){
@@ -880,28 +945,28 @@ function fruitSlots(p){
   }
   return out;
 }
-function drawTree(p,pi){
-  const {x,y}=p;
+function drawTreeArt(g,lx,ly,p,pi){
+  const x=lx, y=ly;
   // Beet
-  ctx.fillStyle='#8d6e42'; ctx.beginPath(); ctx.ellipse(x,y,56,20,0,0,7); ctx.fill();
-  ctx.fillStyle='#7a5c34'; ctx.beginPath(); ctx.ellipse(x,y,56,20,0,0,7); ctx.lineWidth=3; ctx.strokeStyle='#6b4f2c'; ctx.stroke();
-  ctx.fillStyle='rgba(255,255,255,.55)'; ctx.font='bold 12px system-ui'; ctx.textAlign='center';
-  ctx.fillText('#'+(pi+1),x+42,y+16);
+  g.fillStyle='#8d6e42'; g.beginPath(); g.ellipse(x,y,56,20,0,0,7); g.fill();
+  g.fillStyle='#7a5c34'; g.beginPath(); g.ellipse(x,y,56,20,0,0,7); g.lineWidth=3; g.strokeStyle='#6b4f2c'; g.stroke();
+  g.fillStyle='rgba(255,255,255,.55)'; g.font='bold 12px system-ui'; g.textAlign='center';
+  g.fillText('#'+(pi+1),x+42,y+16);
   if(!p.unlocked){
-    ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.setLineDash([8,7]); ctx.lineWidth=3;
-    ctx.beginPath(); ctx.ellipse(x,y-30,60,52,0,0,7); ctx.stroke(); ctx.setLineDash([]);
-    ctx.font='26px system-ui'; ctx.fillText('🚧',x,y-30);
-    ctx.fillStyle='rgba(255,255,255,.75)'; ctx.font='bold 12px system-ui';
-    ctx.fillText('Zu verkaufen',x,y-2);
+    g.strokeStyle='rgba(255,255,255,.5)'; g.setLineDash([8,7]); g.lineWidth=3;
+    g.beginPath(); g.ellipse(x,y-30,60,52,0,0,7); g.stroke(); g.setLineDash([]);
+    g.font='26px system-ui'; g.fillText('🚧',x,y-30);
+    g.fillStyle='rgba(255,255,255,.75)'; g.font='bold 12px system-ui';
+    g.fillText('Zu verkaufen',x,y-2);
     return;
   }
   if(p.stage==='empty') return;
   if(p.stage==='dead'){
-    ctx.strokeStyle='#6e625a'; ctx.lineWidth=9; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-58); ctx.stroke();
-    ctx.lineWidth=6;
-    ctx.beginPath(); ctx.moveTo(x,y-40); ctx.lineTo(x-22,y-62); ctx.moveTo(x,y-52); ctx.lineTo(x+20,y-72); ctx.stroke();
-    ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.fillText('💀',x,y-84);
+    g.strokeStyle='#6e625a'; g.lineWidth=9; g.lineCap='round';
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x,y-58); g.stroke();
+    g.lineWidth=6;
+    g.beginPath(); g.moveTo(x,y-40); g.lineTo(x-22,y-62); g.moveTo(x,y-52); g.lineTo(x+20,y-72); g.stroke();
+    g.font='16px system-ui'; g.textAlign='center'; g.fillText('💀',x,y-84);
     return;
   }
   const dry=1-clamp(p.water*3,0,1);            // erst unter 33 % sichtbar
@@ -915,32 +980,32 @@ function drawTree(p,pi){
   };
   const overScale=1+p.over*0.3;
   if(p.stage==='seed'){
-    ctx.fillStyle='#6b4f2c'; ctx.beginPath(); ctx.ellipse(x,y-4,14,7,0,0,7); ctx.fill();
-    if(p.growth>0.5){ ctx.strokeStyle='#4c9b52'; ctx.lineWidth=4; ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(x,y-6); ctx.lineTo(x,y-16); ctx.stroke(); }
+    g.fillStyle='#6b4f2c'; g.beginPath(); g.ellipse(x,y-4,14,7,0,0,7); g.fill();
+    if(p.growth>0.5){ g.strokeStyle='#4c9b52'; g.lineWidth=4; g.lineCap='round';
+      g.beginPath(); g.moveTo(x,y-6); g.lineTo(x,y-16); g.stroke(); }
   } else if(p.stage==='sprout'){
-    ctx.strokeStyle='#5d8c3e'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-26+droop*0.5); ctx.stroke();
-    ctx.fillStyle=leaf(0); ctx.beginPath(); ctx.arc(x-8,y-28+droop,9,0,7); ctx.arc(x+8,y-30+droop,9,0,7); ctx.fill();
+    g.strokeStyle='#5d8c3e'; g.lineWidth=5; g.lineCap='round';
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x,y-26+droop*0.5); g.stroke();
+    g.fillStyle=leaf(0); g.beginPath(); g.arc(x-8,y-28+droop,9,0,7); g.arc(x+8,y-30+droop,9,0,7); g.fill();
   } else {
     const big=p.stage!=='young';
     const th=big?58:38, tw=big?13:9, cr=(big?40:26)*overScale, cy=y-th-(big?22:12)+droop;
-    ctx.fillStyle='#7a5a34'; rr(x-tw/2,y-th,tw,th,4); ctx.fill();
-    ctx.fillStyle=leaf(-12); ctx.beginPath(); ctx.arc(x-cr*0.55,cy+8,cr*0.72,0,7); ctx.arc(x+cr*0.55,cy+8,cr*0.72,0,7); ctx.fill();
-    ctx.fillStyle=leaf(0); ctx.beginPath(); ctx.arc(x,cy-6,cr,0,7); ctx.fill();
-    ctx.fillStyle=leaf(14); ctx.beginPath(); ctx.arc(x-cr*0.3,cy-cr*0.45,cr*0.5,0,7); ctx.fill();
+    g.fillStyle='#7a5a34'; rr(g,x-tw/2,y-th,tw,th,4); g.fill();
+    g.fillStyle=leaf(-12); g.beginPath(); g.arc(x-cr*0.55,cy+8,cr*0.72,0,7); g.arc(x+cr*0.55,cy+8,cr*0.72,0,7); g.fill();
+    g.fillStyle=leaf(0); g.beginPath(); g.arc(x,cy-6,cr,0,7); g.fill();
+    g.fillStyle=leaf(14); g.beginPath(); g.arc(x-cr*0.3,cy-cr*0.45,cr*0.5,0,7); g.fill();
     if(p.over>0.5){ // wilde Triebe
-      ctx.strokeStyle=leaf(-18); ctx.lineWidth=4; ctx.lineCap='round';
+      g.strokeStyle=leaf(-18); g.lineWidth=4; g.lineCap='round';
       const r=mulberry(p.seed*3);
       for(let i=0;i<5;i++){ const a=r()*Math.PI*2;
-        ctx.beginPath(); ctx.moveTo(x+Math.cos(a)*cr*0.8,cy+Math.sin(a)*cr*0.8);
-        ctx.lineTo(x+Math.cos(a)*(cr*0.8+16+p.over*14),cy+Math.sin(a)*(cr*0.8+16+p.over*14)); ctx.stroke(); }
+        g.beginPath(); g.moveTo(x+Math.cos(a)*cr*0.8,cy+Math.sin(a)*cr*0.8);
+        g.lineTo(x+Math.cos(a)*(cr*0.8+16+p.over*14),cy+Math.sin(a)*(cr*0.8+16+p.over*14)); g.stroke(); }
     }
     if(p.stage==='blossom'){
       const r=mulberry(p.seed*5);
-      ctx.fillStyle='#fff0f4';
-      for(let i=0;i<8;i++){ ctx.beginPath();
-        ctx.arc(x+(r()-0.5)*cr*1.7, cy+(r()-0.5)*cr*1.4, 4.5,0,7); ctx.fill(); }
+      g.fillStyle='#fff0f4';
+      for(let i=0;i<8;i++){ g.beginPath();
+        g.arc(x+(r()-0.5)*cr*1.7, cy+(r()-0.5)*cr*1.4, 4.5,0,7); g.fill(); }
     }
     if((p.stage==='fruiting'||p.stage==='overripe') && dominikSmall){
       const slots=fruitSlots(p);
@@ -948,28 +1013,28 @@ function drawTree(p,pi){
       for(let i=0;i<p.fruits;i++){
         const s=slots[i%slots.length];
         const wob=Math.sin(state.t*2.1+i*1.7)*0.09;
-        ctx.save();
-        ctx.translate(x+s.dx, cy+s.dy+10);
-        ctx.rotate(wob);
-        ctx.drawImage(dominikSmall,-fw/2,-4,fw,fh);
+        g.save();
+        g.translate(x+s.dx, cy+s.dy+10);
+        g.rotate(wob);
+        g.drawImage(dominikSmall,-fw/2,-4,fw,fh);
         if(p.stage==='overripe'){
-          ctx.fillStyle='rgba(200,110,20,.4)';
-          ctx.beginPath(); ctx.ellipse(0,fh/2-4,fw/2,fh/2,0,0,7); ctx.fill();
+          g.fillStyle='rgba(200,110,20,.4)';
+          g.beginPath(); g.ellipse(0,fh/2-4,fw/2,fh/2,0,0,7); g.fill();
         }
-        ctx.restore();
+        g.restore();
       }
       if(p.stage==='overripe'){ // Fliegen
-        ctx.fillStyle='#222';
+        g.fillStyle='#222';
         for(let i=0;i<4;i++){ const a=state.t*3+i*1.9;
-          ctx.beginPath(); ctx.arc(x+Math.cos(a)*(cr+12), cy+Math.sin(a*1.3)*14-8, 2.2,0,7); ctx.fill(); }
+          g.beginPath(); g.arc(x+Math.cos(a)*(cr+12), cy+Math.sin(a*1.3)*14-8, 2.2,0,7); g.fill(); }
       }
     }
     if(p.pest){ // krabbelnde Läuse
-      ctx.fillStyle='#902020';
+      g.fillStyle='#902020';
       const r=mulberry(p.seed*9);
       for(let i=0;i<5;i++){
         const a=r()*6.28+state.t*(0.6+r());
-        ctx.beginPath(); ctx.arc(x+Math.cos(a)*cr*0.75, cy+Math.sin(a)*cr*0.6, 3.4,0,7); ctx.fill();
+        g.beginPath(); g.arc(x+Math.cos(a)*cr*0.75, cy+Math.sin(a)*cr*0.6, 3.4,0,7); g.fill();
       }
     }
   }
@@ -983,86 +1048,295 @@ function drawTree(p,pi){
   let ix=x-(icons.length-1)*17;
   for(const ic of icons){
     if(ic.blink && Math.floor(state.t*3)%2===0){ ix+=34; continue; }
-    ctx.fillStyle='rgba(20,35,20,.75)'; ctx.beginPath(); ctx.arc(ix,iy,14,0,7); ctx.fill();
-    if(ic.ring!=null){ ctx.strokeStyle=ic.c; ctx.lineWidth=3;
-      ctx.beginPath(); ctx.arc(ix,iy,14,-Math.PI/2,-Math.PI/2+6.28*clamp(ic.ring,0,1)); ctx.stroke(); }
-    ctx.font='14px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(ic.t,ix,iy+1); ctx.textBaseline='alphabetic';
+    g.fillStyle='rgba(20,35,20,.75)'; g.beginPath(); g.arc(ix,iy,14,0,7); g.fill();
+    if(ic.ring!=null){ g.strokeStyle=ic.c; g.lineWidth=3;
+      g.beginPath(); g.arc(ix,iy,14,-Math.PI/2,-Math.PI/2+6.28*clamp(ic.ring,0,1)); g.stroke(); }
+    g.font='14px system-ui'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(ic.t,ix,iy+1); g.textBaseline='alphabetic';
     ix+=34;
   }
-  // Ziel-Marker: eingeplante Aufgaben anderer
-  let mx=x-52;
-  for(const c of chars) for(const t of c.queue) if(t.plot===pi){
-    ctx.fillStyle=c.color; ctx.beginPath(); ctx.arc(mx,y+14,5,0,7); ctx.fill(); mx+=12;
+  // Laufende Aktion des Spielers an diesem Baum (Schritt 3: statt Ziel-Marken der drei Arbeiter).
+  if(activeAction && activeAction.plot===pi){
+    const pct=clamp(activeAction.prog/activeAction.dur,0,1);
+    g.fillStyle='rgba(20,35,20,.75)'; g.beginPath(); g.arc(x,y+18,11,0,7); g.fill();
+    g.strokeStyle='#ffd76a'; g.lineWidth=3;
+    g.beginPath(); g.arc(x,y+18,11,-Math.PI/2,-Math.PI/2+6.28*pct); g.stroke();
+    g.font='12px system-ui'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillStyle='#fff'; g.fillText(TASKDEFS[activeAction.type].icon,x,y+19);
+    g.textBaseline='alphabetic';
   }
 }
-function drawChar(c){
-  const spr=SPRITES[c.key]; if(!spr) return;
-  const hgt=128, wid=spr.width*(hgt/spr.height);
-  const bob=c.phase==='walk'?Math.sin(c.bobT*11)*3.5:(c.phase==='work'?Math.sin(state.t*16)*1.6:0);
-  // Schatten
-  ctx.fillStyle='rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(c.x,c.y+4,wid*0.42,9,0,0,7); ctx.fill();
-  if(selChar===c.idx){
-    ctx.strokeStyle=c.color; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.ellipse(c.x,c.y+4,wid*0.55+6,13,0,0,7); ctx.stroke();
-    ctx.globalAlpha=0.25; ctx.fillStyle=c.color;
-    ctx.beginPath(); ctx.ellipse(c.x,c.y+4,wid*0.55+6,13,0,0,7); ctx.fill(); ctx.globalAlpha=1;
+function drawWellArt(g,x,y){
+  g.fillStyle='#8b8b8b'; g.beginPath(); g.ellipse(x,y,42,18,0,0,7); g.fill();
+  g.fillStyle='#6d6d6d'; g.beginPath(); g.ellipse(x,y-4,36,14,0,0,7); g.fill();
+  g.fillStyle='#3f7fbf'; g.beginPath(); g.ellipse(x,y-4,28,10,0,0,7); g.fill();
+  g.strokeStyle='#7a5a34'; g.lineWidth=7; g.lineCap='round';
+  g.beginPath(); g.moveTo(x-30,y-8); g.lineTo(x-30,y-70); g.moveTo(x+30,y-8); g.lineTo(x+30,y-70); g.stroke();
+  g.fillStyle='#a34d2d'; g.beginPath();
+  g.moveTo(x-46,y-66); g.lineTo(x,y-96); g.lineTo(x+46,y-66); g.closePath(); g.fill();
+  g.fillStyle='#fff'; g.font='bold 15px system-ui'; g.textAlign='center';
+  g.fillText('🚰 Brunnen',x,y-106);
+}
+function drawStallArt(g,x,y){
+  g.fillStyle='#7a5a34'; rr(g,x-62,y-42,124,42,6); g.fill();
+  g.fillStyle='#93704a'; rr(g,x-62,y-42,124,10,4); g.fill();
+  g.strokeStyle='#7a5a34'; g.lineWidth=6; g.lineCap='round';
+  g.beginPath(); g.moveTo(x-58,y-42); g.lineTo(x-58,y-100); g.moveTo(x+58,y-42); g.lineTo(x+58,y-100); g.stroke();
+  for(let i=0;i<6;i++){ g.fillStyle=i%2?'#e8e4d8':'#c8352f';
+    g.fillRect(x-72+i*24,y-116,24,20); }
+  g.fillStyle='rgba(0,0,0,.15)'; g.fillRect(x-72,y-98,144,4);
+  if(dominikSmall){ const dw=dominikSmall.width*(30/dominikSmall.height);
+    g.drawImage(dominikSmall,x-40,y-70,dw,30);
+    g.drawImage(dominikSmall,x-40+dw+4,y-70,dw,30); }
+  g.fillStyle='#fff'; g.font='bold 15px system-ui'; g.textAlign='center';
+  g.fillText('💰 Feststand',x,y-126);
+}
+function drawShedArt(g,x,y){
+  g.fillStyle='#6e4f2f'; rr(g,x-48,y-70,96,70,6); g.fill();
+  g.fillStyle='#5b3f24'; rr(g,x-16,y-46,32,46,4); g.fill();
+  g.fillStyle='#a34d2d'; g.beginPath();
+  g.moveTo(x-58,y-66); g.lineTo(x,y-100); g.lineTo(x+58,y-66); g.closePath(); g.fill();
+  g.fillStyle='#fff'; g.font='bold 15px system-ui'; g.textAlign='center';
+  g.fillText('🛒 Laden',x,y-110);
+}
+function drawBannerArt(g){
+  g.fillStyle='#c8352f'; rr(g,20,8,360,34,10); g.fill();
+  g.fillStyle='#fff'; g.font='bold 21px system-ui'; g.textAlign='center';
+  g.fillText('🎪 ErnteDominiksFest 🎪',200,32);
+}
+
+// ---- Offscreen-Leinwände: das Kunstwerk oben wird hier vorgerendert und per blitArt() (weiter
+// unten) perspektivisch als Billboard in die Szene geblittet. Bäume ändern sich (Wachstum/
+// Animation), daher wird refreshTreeArt() jeden Frame neu gezeichnet; Stationen/Banner sind
+// statisch und werden einmalig beim Laden vorbereitet.
+const TREE_ART_W=300, TREE_ART_H=220, TREE_ART_AX=150, TREE_ART_AY=170;
+const treeArt=plots.map(()=>{ const c=document.createElement('canvas'); c.width=TREE_ART_W; c.height=TREE_ART_H; return c; });
+function refreshTreeArt(pi){
+  const cnv=treeArt[pi], g=cnv.getContext('2d');
+  g.clearRect(0,0,cnv.width,cnv.height);
+  drawTreeArt(g,TREE_ART_AX,TREE_ART_AY,plots[pi],pi);
+}
+const STA_W=220, STA_H=200, STA_AX=110, STA_AY=160;
+const BANNER_W=400, BANNER_H=60, BANNER_AX=200, BANNER_AY=60;
+const BANNER_POS={x:W/2, y:130};
+let wellArt=null, stallArt=null, shedArt=null, bannerArt=null;
+function makeArt(w,h,drawFn){ const c=document.createElement('canvas'); c.width=w; c.height=h; drawFn(c.getContext('2d')); return c; }
+function prepStationArt(){
+  wellArt  = makeArt(STA_W,STA_H, g=>drawWellArt(g,STA_AX,STA_AY));
+  stallArt = makeArt(STA_W,STA_H, g=>drawStallArt(g,STA_AX,STA_AY));
+  shedArt  = makeArt(STA_W,STA_H, g=>drawShedArt(g,STA_AX,STA_AY));
+  bannerArt= makeArt(BANNER_W,BANNER_H, g=>drawBannerArt(g));
+}
+
+// ---- Zaunring ums Feld — reine Prop-Billboards (kein vorgerendertes Kunstwerk nötig).
+function buildFencePosts(){
+  const posts=[];
+  for(let x=FIELD.x0;x<=FIELD.x1;x+=70){ posts.push({x,y:FIELD.y0}); posts.push({x,y:FIELD.y1}); }
+  for(let y=FIELD.y0;y<=FIELD.y1;y+=110){ posts.push({x:FIELD.x0,y}); posts.push({x:FIELD.x1,y}); }
+  return posts;
+}
+const fencePosts=buildFencePosts();
+
+// ---- Wiederverwendbare Billboard-Grundbausteine (Basis für Schritt 2/3: Spieler-Requisiten,
+// Interaktions-Hervorhebungen etc. können dieselben Helfer benutzen).
+function blitArt(pr,art,ax,ay){
+  if(!art) return;
+  const gY=groundScreenY(pr.forward), w=art.width*pr.scale, h=art.height*pr.scale;
+  ctx.globalAlpha=fogAlpha(pr.forward);
+  ctx.drawImage(art, pr.sx-ax*pr.scale, gY-ay*pr.scale, w, h);
+  ctx.globalAlpha=1;
+}
+function drawPropBillboard(px,py,worldW,worldH,color){
+  const pr=project(px,py); if(!pr) return null;
+  const gY=groundScreenY(pr.forward), w=Math.max(1,worldW*pr.scale), h=Math.max(1,worldH*pr.scale);
+  ctx.globalAlpha=fogAlpha(pr.forward);
+  ctx.fillStyle=color; ctx.fillRect(pr.sx-w/2, gY-h, w, h);
+  ctx.globalAlpha=1;
+  return pr;
+}
+function drawGroundScatter(pr,rx,ry,color){
+  const gY=groundScreenY(pr.forward);
+  ctx.globalAlpha=fogAlpha(pr.forward)*0.9;
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.ellipse(pr.sx,gY,Math.max(0.6,rx*pr.scale),Math.max(0.4,ry*pr.scale*0.45),0,0,7); ctx.fill();
+  ctx.globalAlpha=1;
+}
+
+// ---- Himmel & Boden
+function drawSkyAndGround(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const sky=ctx.createLinearGradient(0,0,0,horizonY);
+  sky.addColorStop(0,'#bfe6ff'); sky.addColorStop(1,'#eaf7e2');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,cw,horizonY);
+  const grd=ctx.createLinearGradient(0,horizonY,0,ch);
+  grd.addColorStop(0,'#7fb95a'); grd.addColorStop(1,'#3c7233');
+  ctx.fillStyle=grd; ctx.fillRect(0,horizonY,cw,ch-horizonY);
+  // Perspektivische Entfernungsbänder — machen Bewegung/Tiefe auch ohne Details lesbar.
+  ctx.strokeStyle='rgba(255,255,255,.14)'; ctx.lineWidth=1;
+  for(const d of [60,120,220,380,600,900,1350]){
+    const gy=groundScreenY(d);
+    if(gy<horizonY||gy>ch) continue;
+    ctx.globalAlpha=fogAlpha(d)*0.5;
+    ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(cw,gy); ctx.stroke();
   }
-  ctx.save();
-  ctx.translate(c.x,c.y+bob);
-  ctx.scale(c.dir,1);
-  ctx.drawImage(spr,-wid/2,-hgt,wid,hgt);
-  ctx.restore();
-  // Namensschild
-  ctx.fillStyle='rgba(20,35,20,.8)'; rr(c.x-30,c.y-hgt-24,60,18,8); ctx.fill();
-  ctx.fillStyle=c.color; ctx.font='bold 12px system-ui'; ctx.textAlign='center';
-  ctx.fillText(c.name,c.x,c.y-hgt-11);
-  // Trage-Anzeige
-  if(c.carry>0 && dominikSmall){
-    const fh=20, fw=dominikSmall.width*(fh/dominikSmall.height);
-    ctx.drawImage(dominikSmall,c.x+18,c.y-hgt-20,fw,fh);
-    ctx.fillStyle='#ffd76a'; ctx.font='bold 13px system-ui'; ctx.textAlign='left';
-    ctx.fillText('×'+c.carry,c.x+20+fw,c.y-hgt-5);
+  // Fluchtlinien Richtung Horizont (Feld-Furchen).
+  ctx.strokeStyle='rgba(255,255,255,.09)';
+  for(const fx of [-0.9,-0.5,-0.2,0.2,0.5,0.9]){
+    ctx.beginPath(); ctx.moveTo(cw/2,horizonY); ctx.lineTo(cw/2+fx*cw,ch); ctx.stroke();
   }
-  // Arbeit: Fortschritt + Werkzeug
-  if(c.phase==='work' && c.queue[0]){
-    const pct=clamp(c.prog/c.dur,0,1);
-    ctx.fillStyle='rgba(20,35,20,.8)'; rr(c.x-26,c.y-hgt-42,52,9,4); ctx.fill();
-    ctx.fillStyle='#ffd76a'; rr(c.x-24,c.y-hgt-40,48*pct,5,2); ctx.fill();
-    ctx.font='20px system-ui'; ctx.textAlign='center';
-    const ty=c.y-hgt-52+Math.sin(state.t*10)*3;
-    ctx.fillText(TASKDEFS[c.queue[0].type].icon,c.x,ty);
+  ctx.globalAlpha=1;
+}
+function drawDuskOverlay(){
+  if(state.dayT>0.72){
+    const a=(state.dayT-0.72)/0.28*0.32;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle=`rgba(26,32,80,${a})`; ctx.fillRect(0,0,cw,ch);
   }
 }
-function drawFloats(dt){
+function drawFloatsFP(dt){
   for(let i=floats.length-1;i>=0;i--){
     const f=floats[i]; f.t+=dt;
     if(f.t>1.6){ floats.splice(i,1); continue; }
-    ctx.globalAlpha=clamp(1.6-f.t,0,1);
-    ctx.fillStyle=f.color; ctx.font='bold '+f.size+'px system-ui'; ctx.textAlign='center';
-    ctx.fillText(f.txt,f.x,f.y-f.t*34);
+    const pr=project(f.x,f.y); if(!pr) continue;
+    const gY=groundScreenY(pr.forward);
+    ctx.globalAlpha=clamp(1.6-f.t,0,1)*fogAlpha(pr.forward);
+    ctx.fillStyle=f.color; ctx.font='bold '+Math.max(9,f.size*pr.scale)+'px system-ui'; ctx.textAlign='center';
+    ctx.fillText(f.txt,pr.sx,gY-f.t*34*pr.scale);
     ctx.globalAlpha=1;
   }
 }
+// Hervorhebung des aktuell anvisierten Ziels (Schritt 3): ein pulsierender Ring am Boden unter
+// Baum/Brunnen/Feststand/Laden, sobald aimTarget() darauf zeigt — macht die Fadenkreuz-Interaktion
+// klar erkennbar, ohne die vorgerenderten Billboards selbst anfassen zu müssen.
+function drawAimHighlight(){
+  if(!currentAim) return;
+  let wx,wy;
+  if(currentAim.kind==='plot'){ const p=plots[currentAim.idx]; wx=p.x; wy=p.y; }
+  else { wx=currentAim.x; wy=currentAim.y; }
+  const pr=project(wx,wy); if(!pr) return;
+  const gY=groundScreenY(pr.forward);
+  const pulse=0.5+0.5*Math.sin(state.t*6);
+  ctx.save();
+  ctx.globalAlpha=fogAlpha(pr.forward)*(0.5+0.3*pulse);
+  ctx.strokeStyle='#ffd76a'; ctx.lineWidth=Math.max(1.5,3*pr.scale);
+  ctx.beginPath(); ctx.ellipse(pr.sx,gY,55*pr.scale,20*pr.scale,0,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+}
+
+// ---- Billboards sammeln, nach Entfernung sortieren (am weitesten zuerst) und zeichnen.
+function collectBillboards(){
+  const list=[];
+  for(let i=0;i<plots.length;i++){
+    const pr=project(plots[i].x,plots[i].y); if(!pr) continue;
+    refreshTreeArt(i);
+    list.push({forward:pr.forward, draw:()=>blitArt(pr,treeArt[i],TREE_ART_AX,TREE_ART_AY)});
+  }
+  for(const [pos,art] of [[WELL,wellArt],[STALL,stallArt],[SHED,shedArt]]){
+    const pr=project(pos.x,pos.y); if(!pr) continue;
+    list.push({forward:pr.forward, draw:()=>blitArt(pr,art,STA_AX,STA_AY)});
+  }
+  { const pr=project(BANNER_POS.x,BANNER_POS.y);
+    if(pr) list.push({forward:pr.forward, draw:()=>blitArt(pr,bannerArt,BANNER_AX,BANNER_AY)}); }
+  for(const post of fencePosts){
+    const pr=project(post.x,post.y); if(!pr) continue;
+    list.push({forward:pr.forward, draw:()=>drawPropBillboard(post.x,post.y,6,46,'#7a5a34')});
+  }
+  for(const p of grassPatches){
+    const pr=project(p.x,p.y); if(!pr) continue;
+    list.push({forward:pr.forward, draw:()=>drawGroundScatter(pr,p.rx,p.ry,'rgba(255,255,255,.10)')});
+  }
+  for(const f of flowers){
+    const pr=project(f.x,f.y); if(!pr) continue;
+    list.push({forward:pr.forward, draw:()=>drawGroundScatter(pr,3.4,3.4,f.h>0.5?'#ffe08a':'#ff9db0')});
+  }
+  return list;
+}
 function render(dt){
-  ctx.setTransform(dpr*scale,0,0,dpr*scale,dpr*offX,dpr*offY);
-  drawGround();
-  for(let i=0;i<plots.length;i++) drawTree(plots[i],i);
-  drawWell(); drawStall(); drawShed();
-  [...chars].sort((a,b)=>a.y-b.y).forEach(drawChar);
-  drawFloats(dt);
-  // Abenddämmerung
-  if(state.dayT>0.72){
-    const a=(state.dayT-0.72)/0.28*0.24;
-    ctx.save(); ctx.setTransform(dpr,0,0,dpr,0,0);
-    ctx.fillStyle=`rgba(26,32,80,${a})`; ctx.fillRect(0,0,cvEl.width/dpr,cvEl.height/dpr);
+  drawSkyAndGround();
+  const bills=collectBillboards();
+  bills.sort((a,b)=>b.forward-a.forward); // am weitesten entfernt zuerst zeichnen (Übermalen näherer Objekte)
+  for(const b of bills) b.draw();
+  drawAimHighlight();
+  drawFloatsFP(dt);
+  drawDuskOverlay();
+}
+// ---- Steuerungs-Overlay (Schritt 2/3): Joystick-Basis/Knauf links (nur solange aktiv) +
+// zentrales Fadenkreuz, das sich verfärbt/vergrößert, sobald aimTarget() etwas Interaktives
+// findet (siehe updateAimUI()). Reines Canvas-Overlay (kein extra DOM) — liegt zwar über der
+// Szene, aber unter #amenu/#modal/#btnInteract (eigene, höher gestapelte DOM-Elemente).
+function drawControlsOverlay(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  if(input.moveTouchId!=null){
+    ctx.save();
+    ctx.lineWidth=2; ctx.strokeStyle='rgba(255,255,255,.55)';
+    ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.arc(input.joyOrigin.x,input.joyOrigin.y,JOY_MAX_R,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='rgba(255,215,106,.85)';
+    ctx.beginPath();
+    ctx.arc(input.joyOrigin.x+input.joyDX,input.joyOrigin.y+input.joyDY,20,0,Math.PI*2);
+    ctx.fill();
     ctx.restore();
+  }
+  const rx=cw/2, ry=ch/2, aimed=!!currentAim, rad=aimed?9.5:7;
+  ctx.save();
+  ctx.strokeStyle=aimed?'rgba(255,215,106,.95)':'rgba(255,255,255,.8)'; ctx.lineWidth=aimed?2.2:1.5;
+  ctx.beginPath(); ctx.arc(rx,ry,rad,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle=aimed?'rgba(255,215,106,.95)':'rgba(255,255,255,.85)';
+  ctx.beginPath(); ctx.arc(rx,ry,1.6,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+// ---- Kontext-Prompt/Aktions-Button: jeden Frame neu bestimmen, worauf das Fadenkreuz zeigt,
+// und DOM-Overlay (#actionPrompt, #btnInteract, Fortschrittsbalken) entsprechend aktualisieren.
+function aimLabel(a){
+  if(!a) return null;
+  if(a.kind==='plot'){
+    const p=plots[a.idx];
+    if(!p.unlocked) return {title:'🚧 Baum #'+(a.idx+1), hint:'Im Laden freischalten', locked:true};
+    const acts=plotActions(p);
+    if(acts.length===0) return {title:'🌳 Baum #'+(a.idx+1), hint:'Gerade nichts zu tun', locked:true};
+    const first=TASKDEFS[acts[0].type];
+    return {title:'🌳 Baum #'+(a.idx+1), hint:first.icon+' '+first.label+(acts.length>1?' u.a.':''), locked:false};
+  }
+  if(a.kind==='well'){
+    const ok=player.can<canCap(player);
+    return {title:'🚰 Brunnen', hint:ok?'Kanne füllen':'Kanne ist voll', locked:!ok};
+  }
+  if(a.kind==='stall'){
+    const ok=player.carry>0;
+    return {title:'💰 Feststand', hint:ok?'Verkaufen ('+player.carry+')':'Nichts zu verkaufen', locked:!ok};
+  }
+  if(a.kind==='shed') return {title:'🛒 Laden', hint:'Öffnen', locked:false};
+  return null;
+}
+const actionPromptEl=document.getElementById('actionPrompt'),
+      actionBarWrapEl=document.getElementById('actionBarWrap'),
+      actionBarEl=document.getElementById('actionBar'),
+      btnInteractEl=document.getElementById('btnInteract');
+function updateAimUI(){
+  currentAim=(state.paused||state.over)?null:aimTarget();
+  const info=aimLabel(currentAim);
+  if(!info){
+    actionPromptEl.classList.add('hidden');
+    btnInteractEl.classList.add('off');
+  } else {
+    actionPromptEl.classList.remove('hidden');
+    actionPromptEl.innerHTML=`<div>${info.title}</div><div>${info.hint}</div>`;
+    btnInteractEl.classList.toggle('off',!!info.locked);
+  }
+  if(activeAction){
+    actionBarWrapEl.classList.remove('hidden');
+    actionBarEl.style.width=Math.round(100*clamp(activeAction.prog/activeAction.dur,0,1))+'%';
+    btnInteractEl.classList.add('active');
+  } else {
+    actionBarWrapEl.classList.add('hidden');
+    btnInteractEl.classList.remove('active');
   }
 }
 
 // ---------------------------------------------------------------- Spielschleife
 function update(dt){
   if(state.paused||state.over) return;
+  if(activeAction) updateActiveAction(dt); else updatePlayerControls(dt);
   state.t+=dt;
   state.dayT+=dt/DAYLEN;
   if(state.dayT>=1){ state.dayT=0; newDay(); }
@@ -1076,7 +1350,6 @@ function update(dt){
   }
   spawnPests(dt);
   for(const p of plots) updateTree(p,dt);
-  for(const c of chars) updateChar(c,dt);
   state.checkT+=dt;
   if(state.checkT>=1){ state.checkT=0; checkWin(); checkBankrupt(); updateHUD(); }
 }
@@ -1085,8 +1358,9 @@ function frame(now){
   let dt=Math.min((now-last)/1000,0.1); last=now;
   dt*=(window.__speed||1);
   update(dt);
+  updateAimUI();
   render(dt);
-  updateQueueLive();
+  drawControlsOverlay();
   requestAnimationFrame(frame);
 }
 
@@ -1103,12 +1377,11 @@ document.getElementById('btnPause').addEventListener('click',()=>{
 // ---------------------------------------------------------------- Start
 loadAssets().then(()=>{
   prepSprites();
-  buildQueueBar();
-  renderQueues();
+  prepStationArt();     // Brunnen/Feststand/Laden/Banner einmalig als Billboard-Kunstwerk vorrendern
   updateHUD();
   resize();
   document.getElementById('loading').remove();
-  if(localStorage.getItem('edf_tut')) { state.paused=false; toast('🌳 Auf geht\'s! Wähle einen Arbeiter.','good'); }
+  if(localStorage.getItem('edf_tut')) { state.paused=false; toast('🌳 Auf geht\'s! Lauf los und leg los.','good'); }
   else showTutorial();
   requestAnimationFrame(frame);
 }).catch(err=>{
@@ -1116,10 +1389,15 @@ loadAssets().then(()=>{
 });
 
 // Test-/Debug-Schnittstelle
-window.game={ state, inv, upg, chars, plots,
-  enqueue, cancelTask, tapWorld, worldToScreen, screenToWorld, openShop,
-  get selChar(){return selChar;}, set selChar(v){selChar=v; queueVersion++;},
-  tick(sec){ const step=0.05; for(let t=0;t<sec;t+=step) update(step); },
+window.game={ state, inv, upg, plots, player,
+  worldToScreen, screenToWorld, openShop,
+  project, groundScreenY, horizonFrac:()=>HORIZON_FRAC, focal:()=>focal,
+  tick(sec){ const step=0.05; for(let t=0;t<sec;t+=step){ update(step); updateAimUI(); } },
+  // Schritt 2/3: Steuerung/Kollision/Zielsuche/Ego-Interaktion
+  input, movePlayer, collisionObstacles, aimTarget,
+  startAction, doInteract, plotActions, canDoNow, completeTask,
+  get activeAction(){return activeAction;},
+  get currentAim(){return currentAim;},
 };
 </script>
 </body>
