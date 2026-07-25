@@ -68,7 +68,7 @@ const WELL={x:-12,z:24}, BENCH={x:-5,z:25}, SHED={x:2,z:26}, STALL={x:11,z:24};
 const BOUND={x0:-33,x1:25,z0:-35,z1:29};
 
 const state={t:0,day:1,dayT:.05,night:false,price:12,priceT:0,money:20,paused:true,
-  earned:0,harvested:0,sold:0,crafted:0,chopped:0,killed:0,deaths:0,
+  earned:0,harvested:0,sold:0,crafted:0,chopped:0,killed:0,deaths:0,placed:0,
   checkT:0,started:false,tutorial:true,q_water:false};
 const inv={seed:3,bio:0,pest:1,fert:0,torch:0,ball:0,medkit:0};
 const res={wood:0,stone:0};
@@ -80,7 +80,7 @@ const trimMul=()=>[1,.68,.48][upg.shears];
 const walkSpeed=()=>5.6*(1+upg.boots*.16);
 
 const player={x:0,z:20,yaw:0,pitch:-.03,can:4,carry:0,bob:0,act:null,stepT:0,
-  hp:20,maxhp:20,atkCd:0,hurtT:0,driving:false};
+  hp:20,maxhp:20,atkCd:0,hurtT:0,driving:false,blockI:0};
 
 // ------------------------------------------------------------------ Waffen & Rüstung
 const WEAPONS={
@@ -117,6 +117,9 @@ const ACTS={
   chop    :{ic:'🪓',label:'Baum hacken',   dur:2.6},
   mine    :{ic:'⛏️',label:'Stein klopfen', dur:2.6},
   torch   :{ic:'🔥',label:'Fackel setzen', dur:.8},
+  build   :{ic:'🧱',label:'Block setzen',  dur:.35},
+  mineblk :{ic:'⛏️',label:'Block abbauen', dur:.55},
+  pickblk :{ic:'🎨',label:'Baustoff',      dur:0},
   drive   :{ic:'🚜',label:'Einsteigen',    dur:0},
   park    :{ic:'🅿️',label:'Aussteigen',    dur:0},
   heal    :{ic:'❤️',label:'Verbinden',     dur:1.2},
@@ -837,6 +840,10 @@ function updateMobs(dt){
         const rr=o.r+.5;
         if((nx-o.x)**2+(nz-o.z)**2<rr*rr){ nx=m.x+(dz/d)*MOB_SPEED*dt; nz=m.z-(dx/d)*MOB_SPEED*dt; break; }
       }
+      if(blockedByBuilt(nx,nz,.45)){            // an gebauten Mauern entlang statt hindurch
+        nx=m.x+(dz/d)*MOB_SPEED*dt; nz=m.z-(dx/d)*MOB_SPEED*dt;
+        if(blockedByBuilt(nx,nz,.45)){ nx=m.x; nz=m.z; }
+      }
       m.x=nx; m.z=nz;
       m.bob+=dt*7;
     } else {
@@ -939,12 +946,131 @@ function rebuildBlocks(){
   treesDirty=false;
 }
 
+// ------------------------------------------------------------------ Selbst bauen
+const BUILD=[
+  {id:'plank',ic:'🟫',nm:'Bretter',    cost:{wood:1}},
+  {id:'log',  ic:'🪵',nm:'Stamm',      cost:{wood:2}},
+  {id:'stone',ic:'⬜',nm:'Steinblock', cost:{stone:1}},
+  {id:'brick',ic:'🧱',nm:'Mauerstein', cost:{stone:1,wood:1}},
+];
+const U={plank:batch(TEX.plank,700), log:batch(TEX.log,700),
+         stone:batch(TEX.stone,700), brick:batch(TEX.brick,700)};
+const BUILD_MAX=700, BUILD_TOP=5;      // stapelbar bis y=4
+const built=new Map();                 // "x,y,z" → {x,y,z,type}
+const builtCols=new Map();             // "x,z"   → wie viele Blöcke den Weg versperren
+const builtIdx={};                     // Typ → Blöcke in Emit-Reihenfolge, passend zur instanceId
+let builtDirty=false;
+const bkey=(x,y,z)=>x+','+y+','+z;
+const ckey=(x,z)=>x+','+z;
+const solidCol=(x,z)=>(builtCols.get(ckey(x,z))||0)>0;
+const buildDef=id=>BUILD.find(b=>b.id===id);
+const curBuild=()=>BUILD[player.blockI];
+// wie viele Blöcke dieser Sorte das Material noch hergibt
+function buildStock(b){
+  b=b||curBuild();
+  let n=Infinity;
+  for(const k in b.cost) n=Math.min(n,Math.floor(have(k)/b.cost[k]));
+  return n===Infinity?0:n;
+}
+function payBuild(b,sign){
+  for(const k in b.cost){
+    if(k==='wood') res.wood-=sign*b.cost[k];
+    else if(k==='stone') res.stone-=sign*b.cost[k];
+  }
+}
+function emitBuilt(){
+  for(const k in U){ reset(U[k]); builtIdx[k]=[]; }
+  for(const b of built.values()){
+    const m=U[b.type], before=m.count;
+    blk(m,b.x,b.y,b.z);
+    if(m.count>before) builtIdx[b.type].push(b);
+  }
+  // Ohne frische Hülle bleibt die beim ersten Aufruf leer berechnete Kugel stehen
+  // und der Raycast findet die Blöcke nie.
+  for(const k in U){ flush(U[k]); U[k].computeBoundingSphere(); }
+  builtDirty=false;
+}
+const NB=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+const hasNeighbour=(x,y,z)=>NB.some(([a,b,c])=>built.has(bkey(x+a,y+b,z+c)));
+// true wenn hier gebaut werden darf, sonst der Grund als Text
+function placeBlocked(x,y,z){
+  if(built.size>=BUILD_MAX) return 'Baugrenze erreicht';
+  if(y<0||y>=BUILD_TOP) return 'Zu hoch';
+  if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) return 'Außerhalb';
+  if(built.has(bkey(x,y,z))) return 'Besetzt';
+  if(y>0&&!hasNeighbour(x,y,z)) return 'Schwebt';
+  if(y<=1){
+    const R=player.driving?1.1:.5;
+    if(Math.abs(x-player.x)<.5+R&&Math.abs(z-player.z)<.5+R) return 'Da stehst du';
+    for(const o of obstacles){
+      if(o.node&&!o.node.alive) continue;
+      if((x-o.x)**2+(z-o.z)**2<(o.r+.4)**2) return 'Kein Platz';
+    }
+    for(const p of plots)
+      if(Math.abs(x-p.x)<=1&&Math.abs(z-p.z)<=1) return 'Beet';
+  }
+  return true;
+}
+function bumpCol(x,y,z,d){
+  if(y>1) return;                       // darüber läuft man einfach durch
+  const k=ckey(x,z), n=(builtCols.get(k)||0)+d;
+  if(n>0) builtCols.set(k,n); else builtCols.delete(k);
+}
+function placeBlock(x,y,z,type){
+  const b={x,y,z,type};
+  built.set(bkey(x,y,z),b);
+  bumpCol(x,y,z,1);
+  builtDirty=true;
+  return b;
+}
+function breakBlock(b){
+  if(!built.delete(bkey(b.x,b.y,b.z))) return false;
+  bumpCol(b.x,b.y,b.z,-1);
+  builtDirty=true;
+  return true;
+}
+// Kollision: gebaute Blöcke auf Kopfhöhe sind Wände
+function blockedByBuilt(px,pz,R){
+  if(!builtCols.size) return false;
+  for(let bx=Math.round(px-R);bx<=Math.round(px+R);bx++)
+    for(let bz=Math.round(pz-R);bz<=Math.round(pz+R);bz++)
+      if(solidCol(bx,bz)&&Math.abs(px-bx)<.5+R&&Math.abs(pz-bz)<.5+R) return true;
+  return false;
+}
+// Welche Seite des Blocks getroffen wurde — daraus folgt, wo der neue Block landet
+function faceOf(b,p){
+  const dx=p.x-b.x, dy=p.y-(b.y+.5), dz=p.z-b.z;
+  const ax=Math.abs(dx), ay=Math.abs(dy), az=Math.abs(dz);
+  if(ax>=ay&&ax>=az) return {x:b.x+Math.sign(dx),y:b.y,z:b.z};
+  if(ay>=az)         return {x:b.x,y:b.y+Math.sign(dy),z:b.z};
+  return {x:b.x,y:b.y,z:b.z+Math.sign(dz)};
+}
+function raycastBuilt(){
+  const ms=[];
+  for(const k in U) if(U[k].count>0) ms.push(U[k]);
+  if(!ms.length) return null;
+  const hs=ray.intersectObjects(ms,false);
+  if(!hs.length) return null;
+  const h=hs[0];
+  let type=null;
+  for(const k in U) if(U[k]===h.object) type=k;
+  const b=type&&builtIdx[type]?builtIdx[type][h.instanceId]:null;
+  if(!b) return null;
+  return {block:b,dist:h.distance,place:faceOf(b,h.point)};
+}
+
 // ------------------------------------------------------------------ Aktionen
 function plotPrice(){ return [25,40,55,75,100,130,165,205][Math.min(upg.plots,7)]; }
 function actionsFor(tg){
   if(!tg) return [];
   const out=[];
   const add=(id,ok,sub)=>out.push({id,ok:ok===true,reason:ok===true?'':ok,sub});
+  const addBuild=()=>{
+    const b=curBuild(), stock=buildStock(b), p=tg.place;
+    const why=placeBlocked(p.x,p.y,p.z);
+    add('build',stock<1?'Material fehlt':why,b.ic+' ×'+stock);
+    add('pickblk',true,b.ic);
+  };
   if(tg.kind==='plot'){
     const p=tg.plot;
     if(!p.unlocked){ add('buyplot',state.money>=plotPrice()?true:'Zu teuer',plotPrice()+' €'); return out; }
@@ -980,6 +1106,13 @@ function actionsFor(tg){
   }
   if(tg.kind==='ground'){
     if(inv.torch>0) add('torch',true,'×'+inv.torch);
+    addBuild();
+    return out;
+  }
+  if(tg.kind==='block'){
+    const d=buildDef(tg.block.type);
+    add('mineblk',true,'→ '+d.ic);
+    addBuild();
     return out;
   }
   if(tg.kind==='char'){
@@ -995,7 +1128,7 @@ function actionsFor(tg){
   return out;
 }
 function runAction(id,tg){
-  const p=tg.plot;
+  const p=tg&&tg.plot;               // 'pickblk' geht auch ohne Ziel (Taste B)
   switch(id){
     case 'plant':    inv.seed--; p.plant(false); toast('🌱 Gepflanzt an Baum #'+(p.i+1),'',1600); break;
     case 'plantbio': inv.bio--;  p.plant(true);  toast('🌟 Bio-Dominik gepflanzt!','good',1600); break;
@@ -1047,6 +1180,28 @@ function runAction(id,tg){
       placeTorch(tg.point.x,tg.point.z);
       toast('🔥 Fackel gesetzt — hier spawnen keine Bennis.','good',2200);
       break;
+    }
+    case 'build':{
+      const b=curBuild(), pl=tg.place;
+      if(buildStock(b)<1||placeBlocked(pl.x,pl.y,pl.z)!==true) return;
+      payBuild(b,1);
+      placeBlock(pl.x,pl.y,pl.z,b.id);
+      state.placed++;
+      break;
+    }
+    case 'mineblk':{
+      const b=tg.block;
+      if(!breakBlock(b)) return;
+      payBuild(buildDef(b.type),-1);      // Material kommt vollständig zurück
+      SND.chop();
+      break;
+    }
+    case 'pickblk':{
+      player.blockI=(player.blockI+1)%BUILD.length;
+      const b=curBuild();
+      toast(b.ic+' '+b.nm+' ausgewählt.','',1400);
+      targetSig=''; SND.tap(); updateHUD();
+      return;
     }
     case 'drive':  player.driving=true;  toast('🚜 Ab geht die Post!','good',1800); SND.engine(); break;
     case 'park':   dismount(); return;
@@ -1117,26 +1272,31 @@ const centre=new THREE.Vector2(0,0);
 let target=null, targetSig='';
 function updateTarget(){
   ray.setFromCamera(centre,camera);
+  const bh=player.driving?null:raycastBuilt();
   const hits=ray.intersectObjects(interactives,false);
   let tg=null;
-  if(hits.length){
+  if(bh&&bh.dist<=(hits.length?hits[0].distance:Infinity)){
+    tg={kind:'block',block:bh.block,place:bh.place};
+  } else if(hits.length){
     const u=hits[0].object.userData;
     tg={kind:u.kind,plot:u.plot,char:u.char,node:u.node};
-  } else if(inv.torch>0&&!player.driving){
+  } else if(!player.driving){
     const gh=ray.intersectObject(ground,false);
-    if(gh.length) tg={kind:'ground',point:gh[0].point};
+    if(gh.length) tg={kind:'ground',point:gh[0].point,
+      place:{x:Math.round(gh[0].point.x),y:0,z:Math.round(gh[0].point.z)}};
   }
   target=tg;
   const acts=actionsFor(tg);
   el('cross').classList.toggle('hot',!!tg&&acts.length>0);
   const sig=tg?[tg.kind,tg.plot?tg.plot.i:'',tg.char?tg.char.key:'',tg.node?nodes.indexOf(tg.node):'',
+    tg.block?bkey(tg.block.x,tg.block.y,tg.block.z):'',
     acts.map(a=>a.id+(a.ok?'1':'0')+(a.sub||'')).join(',')].join('|'):'';
   if(sig!==targetSig){ targetSig=sig; renderTargetUI(tg,acts); }
   else if(tg&&acts.length) updateTargetName(tg);
   if(player.act){
     const still=acts.find(a=>a.id===player.act.id&&a.ok);
     if(!still||player.act.tg.plot!==tg?.plot||player.act.tg.kind!==tg?.kind
-       ||player.act.tg.node!==tg?.node) cancelAction();
+       ||player.act.tg.node!==tg?.node||player.act.tg.block!==tg?.block) cancelAction();
   }
 }
 const tgEl=el('target'), tName=el('tname'), tActs=el('tacts');
@@ -1148,7 +1308,12 @@ function targetLabel(tg){
   if(tg.kind==='shop') return ['🛒 Laden','Waffen, Fackeln, Samen'];
   if(tg.kind==='bench') return ['🔨 Werkbank','Werkzeug aus 🪵 und 🪨'];
   if(tg.kind==='tractor') return ['🚜 Traktor',player.driving?'Du fährst gerade':'Doppelt so schnell'];
-  if(tg.kind==='ground') return ['🔥 Boden','Fackel setzen'];
+  if(tg.kind==='ground')
+    return ['🟩 Boden',(inv.torch>0?'Fackel setzen oder ':'')+'hier bauen'];
+  if(tg.kind==='block'){
+    const d=buildDef(tg.block.type);
+    return [d.ic+' '+d.nm,'Abbauen — oder daran weiterbauen'];
+  }
   if(tg.kind==='node') return tg.node.kind==='tree'?['🌲 Waldbaum','Gibt Holz']:['🪨 Fels','Gibt Stein'];
   if(tg.kind==='char') return [tg.char.name,{shop:'Ladenbesitzer',stall:'Aufkäufer'}[tg.char.role]];
   return ['',''];
@@ -1273,6 +1438,7 @@ addEventListener('keydown',e=>{
   }
   if(e.code==='KeyF'){ e.preventDefault(); attack(); }
   if(e.code==='KeyR'){ e.preventDefault(); dismount(); }
+  if(e.code==='KeyB'){ e.preventDefault(); runAction('pickblk',target); }
   if(e.code==='KeyP') togglePause();
 });
 addEventListener('keyup',e=>{keys[e.code]=false;});
@@ -1311,6 +1477,8 @@ function updatePlayer(dt){
     if(Math.abs(player.x-o.x)<rr&&Math.abs(nz-o.z)<rr&&
        (player.x-o.x)**2+(nz-o.z)**2<rr*rr) nz=player.z;
   }
+  if(blockedByBuilt(nx,player.z,R)) nx=player.x;
+  if(blockedByBuilt(player.x,nz,R)) nz=player.z;
   player.x=clamp(nx,BOUND.x0,BOUND.x1);
   player.z=clamp(nz,BOUND.z0,BOUND.z1);
   if(speed>.4&&!state.paused){
@@ -1400,6 +1568,7 @@ const HOT=[
   {ic:'🪨',get:()=>res.stone},
   {ic:'🔥',get:()=>inv.torch},
   {ic:'🏀',get:()=>inv.ball},
+  {icf:()=>curBuild().ic,get:()=>buildStock()},
 ];
 let hotEls=null, hotCache='';
 function buildHotbar(){
@@ -1408,7 +1577,7 @@ function buildHotbar(){
   hotEls=HOT.map(h=>{
     const d=document.createElement('div');
     d.className='slot';
-    d.innerHTML=`<span class="i">${h.ic}</span><span class="n"></span>`;
+    d.innerHTML=`<span class="i">${h.icf?h.icf():h.ic}</span><span class="n"></span>`;
     box.appendChild(d);
     return d;
   });
@@ -1430,11 +1599,12 @@ function updateHUD(){
   el('fight').style.display=(mobs.length||state.night)?'flex':'none';
   el('exitcar').style.display=player.driving?'flex':'none';
   el('fight').textContent=w.ic;
-  const sig=HOT.map(h=>h.get()).join('|');
+  const sig=HOT.map(h=>(h.icf?h.icf():'')+h.get()).join('|');
   if(sig!==hotCache){
     hotCache=sig;
     HOT.forEach((h,i)=>{
       hotEls[i].querySelector('.n').textContent=h.get();
+      if(h.icf) hotEls[i].querySelector('.i').textContent=h.icf();
       hotEls[i].classList.toggle('warn',!!(h.warn&&h.warn()));
     });
   }
@@ -1544,13 +1714,14 @@ mbox.addEventListener('pointerdown',e=>{
 function showIntro(){
   const ctrl=isTouch
     ? 'Links wischen = laufen · rechts wischen = umsehen · Aktionen rechts unten antippen.'
-    : 'WASD laufen · Maus umsehen · <b>E</b> Aktion · <b>F</b> zuschlagen.';
+    : 'WASD laufen · Maus umsehen · <b>E</b> Aktion · <b>F</b> zuschlagen · <b>B</b> Baustoff.';
   showModal(`<h2>🌳 ErnteDominiksFest</h2>
   <p style="font-size:14px">Züchte Dominiks auf Bäumen, ernte die Köpfe und verkauf sie im Dorf.
   <b>Kein Zeitdruck, kein Game Over.</b></p>
   <p style="font-size:13px;opacity:.9">${ctrl}</p>
   <p style="font-size:13px">Oben steht, <b>was als Nächstes zu tun ist</b> — ein ⭐ zeigt den Weg.
-  Nachts wird es ungemütlich: dann kommen die Bennis.</p>
+  Aus 🪵 und 🪨 <b>baust du überall Blöcke</b>, auch Mauern gegen die Bennis.
+  Denn nachts wird es ungemütlich.</p>
   <div class="btnrow"><button class="primary" data-act="start">Loslegen 🚜</button></div>`);
 }
 function togglePause(){
@@ -1559,7 +1730,7 @@ function togglePause(){
     localStorage.setItem('edf3d_sold',best);
     showModal(`<h2>⏸️ Pause</h2>
       <p>📊 <b>${state.sold}</b> Dominiks verkauft (Rekord: ${best}) · <b>${state.earned} €</b> Umsatz ·
-      🏀 ${state.killed} Bennis vertrieben · Tag ${state.day}.</p>
+      🏀 ${state.killed} Bennis vertrieben · 🧱 ${state.placed} Blöcke gesetzt · Tag ${state.day}.</p>
       <div class="btnrow">
         ${inv.medkit>0?'<button data-act="heal">❤️ Verbandskasten ('+inv.medkit+')</button>':''}
         <button class="primary" data-act="resume">Weiter 🚜</button></div>`);
@@ -1621,6 +1792,7 @@ function update(dt){
     for(const p of plots) p.update(0);
   }
   if(treesDirty) rebuildBlocks();
+  if(builtDirty) emitBuilt();
   updatePlayer(dt);
   updateTractor();
   updateChars(dt);
@@ -1656,7 +1828,7 @@ Promise.all([
   rebuildBlocks();
   resize(); updateHUD(); updateQuestUI();
   el('boot').remove();
-  el('hint').innerHTML=isTouch?'':'WASD laufen · Maus umsehen<br>E Aktion · F schlagen · P Pause';
+  el('hint').innerHTML=isTouch?'':'WASD laufen · Maus umsehen<br>E Aktion · F schlagen · B Baustoff · P Pause';
   if(localStorage.getItem('edf3d_tut')){ state.paused=false; state.started=true; }
   else showIntro();
   requestAnimationFrame(frame);
@@ -1667,6 +1839,12 @@ Promise.all([
 
 // ------------------------------------------------------------------ Debug-API
 window.game={state,inv,res,upg,owned,plots,player,CHARS,nodes,mobs,torches,RECIPES,SHOP,WEAPONS,
+  BUILD,built,placeBlock,breakBlock,placeBlocked,blockedByBuilt,buildStock,
+  setBuild(i){ player.blockI=i%BUILD.length; targetSig=''; updateHUD(); return curBuild().id; },
+  get build(){return curBuild().id;},
+  get builtCount(){return built.size;},
+  get builtMesh(){ const o={}; for(const k in U) o[k]=U[k].count; return o; },
+  rayBuilt(){ ray.setFromCamera(centre,camera); return raycastBuilt(); },
   get target(){return target;},
   get quest(){return questI;},
   get tractor(){return tractor;},
