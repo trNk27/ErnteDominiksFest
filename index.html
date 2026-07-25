@@ -103,6 +103,49 @@
     font-size:11.5px;opacity:.5;font-weight:700;line-height:1.5;text-shadow:0 1px 3px #000
   }
 
+
+  /* ---------- Herzen & Waffe ---------- */
+  #vitals{
+    position:absolute;left:calc(10px + var(--sal));bottom:calc(58px + var(--sab));
+    display:flex;flex-direction:column;gap:4px;align-items:flex-start
+  }
+  #hearts{font-size:13px;letter-spacing:-1px;text-shadow:0 1px 3px #000;line-height:1}
+  #weapon{
+    display:flex;align-items:center;gap:5px;background:rgba(12,22,12,.72);
+    border:1px solid rgba(255,255,255,.16);border-radius:9px;padding:3px 8px;
+    font-size:16px;font-weight:800;backdrop-filter:blur(6px)
+  }
+  #weapon span{font-size:11px;font-weight:700;opacity:.85}
+
+  /* ---------- Angriffsknopf ---------- */
+  #fight{
+    position:absolute;right:calc(14px + var(--sar));top:50%;transform:translateY(-50%);
+    width:74px;height:74px;border-radius:50%;font-size:31px;display:none;
+    align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;
+    background:rgba(150,40,30,.82);border:2px solid rgba(255,255,255,.35);
+    backdrop-filter:blur(6px);box-shadow:0 4px 14px rgba(0,0,0,.4)
+  }
+  #fight:active{transform:translateY(-50%) scale(.9)}
+  @media (max-height:400px){#fight{width:62px;height:62px;font-size:26px}}
+
+  /* ---------- Aussteigen (nur beim Fahren) ---------- */
+  #exitcar{
+    position:absolute;right:calc(14px + var(--sar));top:calc(56px + var(--sat));
+    display:none;align-items:center;gap:5px;cursor:pointer;pointer-events:auto;
+    background:rgba(12,22,12,.82);border:1px solid rgba(255,255,255,.28);border-radius:11px;
+    padding:8px 12px;font-size:13px;font-weight:800;backdrop-filter:blur(6px)
+  }
+  #exitcar:active{transform:scale(.95)}
+
+  /* ---------- Treffer-Overlay ---------- */
+  #hurt{
+    position:absolute;inset:0;opacity:0;pointer-events:none;
+    box-shadow:inset 0 0 90px 20px rgba(190,20,20,.85);transition:opacity .12s
+  }
+
+  /* ---------- Fadenkreuz-Schlag ---------- */
+  #cross.swing{transform:translate(-50%,-50%) rotate(38deg) scale(1.5)}
+
   /* ---------- Hotbar (Minecraft-Stil) ---------- */
   #hotbar{
     position:absolute;left:50%;bottom:calc(8px + var(--sab));
@@ -221,8 +264,8 @@
   <div id="hud">
     <div id="stats">
       <span>💰 <b id="hMoney">0</b> €</span>
-      <span>🎯 <b id="hGoal">0/450</b> €</span>
-      <span>📅 <b id="hDay">1</b> <span id="daywrap"><i id="daybar"></i></span></span>
+      <span>🍑 <b id="hSold">0</b> verkauft</span>
+      <span><b id="hDay">☀️ 1</b> <span id="daywrap"><i id="daybar"></i></span></span>
       <span>📈 <b id="hPrice">12</b> €</span>
     </div>
     <div id="topbtns">
@@ -232,6 +275,10 @@
   </div>
 
   <div id="cross"><i></i><i></i><i></i><i></i></div>
+  <div id="hurt"></div>
+  <div id="vitals"><div id="hearts">❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️</div><div id="weapon"></div></div>
+  <button id="fight">✊</button>
+  <button id="exitcar">🅿️ Aussteigen</button>
   <div id="alerts"></div>
   <div id="quest"></div>
   <div id="toasts"></div>
