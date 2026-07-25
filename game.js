@@ -65,7 +65,98 @@ const REACH=4.4;
 const COLS=[-9,0,9], ROWS=[-18,-9,0,9];
 // Dorfkern: Brunnen, Werkbank, Laden und Feststand liegen dicht beieinander
 const WELL={x:-12,z:24}, BENCH={x:-5,z:25}, SHED={x:2,z:26}, STALL={x:11,z:24};
-const BOUND={x0:-33,x1:25,z0:-35,z1:29};
+const BOUND={x0:-60,x1:60,z0:-60,z1:60};
+// Heimattal: hier bleibt der Boden flach auf 0, damit Beete und Dorf stehen wie gehabt
+const HOME={x:0,z:5,r:30,fade:13};
+const SEA=0;                            // Wasserspiegel der Flüsse
+const RIVER_BED=-2, RIVER_W=4.5;        // Flusssohle und halbe Breite
+
+// ------------------------------------------------------------------ Geländeform
+// Deterministisches Wertrauschen — dieselbe Welt bei jedem Start, ohne Datei.
+function hash2(x,z,s){
+  let h=Math.imul(x|0,374761393)+Math.imul(z|0,668265263)+Math.imul(s|0,1274126177)|0;
+  h=Math.imul(h^h>>>13,1274126177);
+  return ((h^h>>>16)>>>0)/4294967296;
+}
+function vnoise(x,z,scale,seed){
+  const fx=x/scale, fz=z/scale;
+  const x0=Math.floor(fx), z0=Math.floor(fz);
+  const tx=fx-x0, tz=fz-z0;
+  const sx=tx*tx*(3-2*tx), sz=tz*tz*(3-2*tz);
+  return lerp(lerp(hash2(x0,z0,seed),  hash2(x0+1,z0,seed),  sx),
+              lerp(hash2(x0,z0+1,seed),hash2(x0+1,z0+1,seed),sx),sz);
+}
+// Zwei Flüsse: einer von Nord nach Süd im Westen, einer quer im Norden.
+// Die Furt-Schwelle hängt nur von der Längsachse des Laufs ab — sonst entstehen
+// Flecken quer im Bett und der Fluss ist nirgends komplett zu durchqueren.
+function riverAt(x,z){
+  const ax=-46+(vnoise(0,z,26,7)-.5)*20;        // Mittellinie schlängelt mit z
+  const bz=-47+(vnoise(x,0,24,8)-.5)*18;        // Mittellinie schlängelt mit x
+  const da=Math.abs(x-ax), db=Math.abs(z-bz);
+  return da<db
+    ? {d:da,bed:vnoise(0,z,19, 9)>.52?SEA-1:RIVER_BED}
+    : {d:db,bed:vnoise(x,0,19,10)>.52?SEA-1:RIVER_BED};
+}
+function rawHeight(x,z){
+  let h=vnoise(x,z,38,1)*7-2.2;                 // weite Hügel
+  h+=vnoise(x,z,14,2)*2.6;                      // feine Wellen
+  const m=vnoise(x,z,62,3);                     // Gebirgsmaske
+  if(m>.56) h+=((m-.56)/.44)**2.2*27;           // Berge laufen spitz zu
+  return h;
+}
+// Dörfer stehen an festen Plätzen und ziehen das Gelände flach — genau wie das
+// Heimattal. Umgekehrt (erst Gelände, dann ebene Stelle suchen) geht nicht:
+// dieses Rauschen liefert weltweit nur eine einzige ausreichend flache Fläche.
+const VILLAGES=[{x:19,z:45},{x:37,z:-21},{x:41,z:21}]
+  .map(v=>({...v,y:clamp(Math.round(rawHeight(v.x,v.z)),1,6)}));
+const VILL_R=14, VILL_FADE=11;   // deckt die Häuser bis in die Ecken ab
+const _hCache=new Map();
+// Oberkante der Säule: fester Boden liegt bei y < terrainH, begangen wird terrainH.
+function terrainH(x,z){
+  x=Math.round(x); z=Math.round(z);
+  const k=x+','+z;
+  let v=_hCache.get(k);
+  if(v!==undefined) return v;
+  const hd=Math.hypot(x-HOME.x,z-HOME.z);
+  if(hd<HOME.r) v=0;                            // flaches Heimattal
+  else{
+    let h=rawHeight(x,z);
+    const {d:rd,bed}=riverAt(x,z);
+    if(rd<26){
+      // Breites Tal statt Schlitz, sonst kommt man die Ufer nicht wieder hoch.
+      if(rd<RIVER_W) h=bed;
+      else{ const t=clamp((rd-RIVER_W)/(26-RIVER_W),0,1); h=lerp(bed,h,Math.sqrt(t)); }
+    }
+    if(hd<HOME.r+HOME.fade){                    // weich ans Tal anschließen
+      const t=(hd-HOME.r)/HOME.fade;
+      h=lerp(0,h,t*t*(3-2*t));
+    }
+    // Dorfterrassen zuletzt, damit sie sich auch gegen die Talausblendung
+    // durchsetzen — sonst zieht die den Baugrund unter den Häusern weg.
+    // Immer das nächstgelegene Dorf: bei überlappenden Ausblendzonen würde
+    // sonst das erstbeste gewinnen und den Nachbarn schief stellen.
+    let near=null, nd=Infinity;
+    for(const g of VILLAGES){
+      const d=Math.hypot(x-g.x,z-g.z);
+      if(d<nd){ nd=d; near=g; }
+    }
+    if(nd<VILL_R) h=near.y;
+    else if(nd<VILL_R+VILL_FADE){
+      const t=(nd-VILL_R)/VILL_FADE; h=lerp(near.y,h,t*t*(3-2*t));
+    }
+    v=Math.round(h);
+  }
+  if(_hCache.size<120000) _hCache.set(k,v);
+  return v;
+}
+// Materialschicht der Oberfläche
+function surfaceTex(x,z,h){
+  if(h<=SEA-1) return 'sand';                             // Flussbett
+  if(h>=18) return 'snow';
+  if(h>=9)  return 'rock';
+  if(h<=SEA+1&&riverAt(x,z).d<RIVER_W+3.5) return 'sand'; // Uferstreifen
+  return 'grass';
+}
 
 const state={t:0,day:1,dayT:.05,night:false,price:12,priceT:0,money:20,paused:true,
   earned:0,harvested:0,sold:0,crafted:0,chopped:0,killed:0,deaths:0,placed:0,
@@ -80,7 +171,7 @@ const trimMul=()=>[1,.68,.48][upg.shears];
 const walkSpeed=()=>5.6*(1+upg.boots*.16);
 
 const player={x:0,z:20,yaw:0,pitch:-.03,can:4,carry:0,bob:0,act:null,stepT:0,
-  hp:20,maxhp:20,atkCd:0,hurtT:0,driving:false,blockI:0};
+  hp:20,maxhp:20,atkCd:0,hurtT:0,driving:false,blockI:0,y:0};
 
 // ------------------------------------------------------------------ Waffen & Rüstung
 const WEAPONS={
@@ -206,15 +297,18 @@ renderer.shadowMap.type=THREE.PCFShadowMap;
 document.body.insertBefore(renderer.domElement,el('touchlayer'));
 
 scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0x9fd0e8,50,150);
+scene.fog=new THREE.Fog(0x9fd0e8,46,140);   // vom Berg soll man die ganze Welt sehen
 camera=new THREE.PerspectiveCamera(74,1,.1,400);
 
 const hemi=new THREE.HemisphereLight(0xcfe8ff,0x5a8a45,1.25); scene.add(hemi);
 const sun=new THREE.DirectionalLight(0xfff3d6,2.0);
 sun.position.set(26,44,16); sun.castShadow=true;
-sun.shadow.mapSize.set(1024,1024);
+sun.shadow.mapSize.set(512,512);
 const sc=sun.shadow.camera;
-sc.left=-40;sc.right=40;sc.top=40;sc.bottom=-40;sc.near=1;sc.far=130;
+// Enger Kasten, der dem Spieler folgt: bei 121 Blöcken Weltbreite würde ein
+// fester Kasten fast überall keine Schatten mehr liefern und trotzdem kosten.
+sc.left=-24;sc.right=24;sc.top=24;sc.bottom=-24;sc.near=1;sc.far=120;
+scene.add(sun.target);
 sun.shadow.bias=-0.0018; sun.shadow.normalBias=0.05;
 scene.add(sun);
 
@@ -264,6 +358,11 @@ const TEX={
     g.fillRect(7,0,1,8); g.fillRect(3,8,1,8);
   }),
   water  :noiseTex(['#2f7fc4','#2a72b2','#3a8ad0'],30),
+  grass  :noiseTex(['#6aab3f','#5f9e38','#74b649','#589434','#7cbd4f'],36,(g,s)=>{
+    g.fillStyle='rgba(0,0,0,.10)'; g.fillRect(0,0,s,1); g.fillRect(0,0,1,s);
+  }),
+  sand   :noiseTex(['#d9c68a','#cdb87b','#e3d29a','#c2ad72'],37),
+  snow   :noiseTex(['#f2f6fa','#e7edf4','#ffffff','#dde6ef'],38),
   wool   :pixTex((g,s)=>{ for(let x=0;x<s;x++){ g.fillStyle=(x>>2)%2?'#c8352f':'#e8e4d8'; g.fillRect(x,0,1,s);} }),
   hay    :noiseTex(['#c9a233','#d6ae3c','#b8922c'],31),
   bench  :noiseTex(['#a5783f','#966c38'],32,(g,s)=>{
@@ -312,10 +411,10 @@ function makeLabel(lines,color,h,depthTest=true){
 const BLOCK=new THREE.BoxGeometry(1,1,1);
 const _m4=new THREE.Matrix4(), _pos=new THREE.Vector3(),
       _quat=new THREE.Quaternion(), _scl=new THREE.Vector3();
-function batch(tex,cap,opts){
+function batch(tex,cap,opts,shadow=true){
   const m=new THREE.InstancedMesh(BLOCK,
     new THREE.MeshLambertMaterial(Object.assign({map:tex},opts||{})),cap);
-  m.castShadow=m.receiveShadow=true;
+  m.castShadow=shadow; m.receiveShadow=true;
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   m.count=0; m.frustumCulled=false;
   scene.add(m);
@@ -342,20 +441,94 @@ const D={
 };
 let treesDirty=true;
 
-// ------------------------------------------------------------------ Boden
-const ground=new THREE.Mesh(
-  new THREE.PlaneGeometry(220,220),
-  new THREE.MeshLambertMaterial({map:pixTex((g,s)=>{
-    const r=mulberry(21);
-    for(let y=0;y<s;y++) for(let x=0;x<s;x++){
-      g.fillStyle=['#6aab3f','#5f9e38','#74b649','#589434','#7cbd4f'][Math.floor(r()*5)];
-      g.fillRect(x,y,1,1);
+// ------------------------------------------------------------------ Gelände
+const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
+// Würfel-Instanzen wären hier Verschwendung: von einer Geländesäule sieht man
+// fast nur die Oberseite. Darum werden ausschließlich freiliegende Flächen
+// gebaut — und das chunkweise, damit die Kamera den Rest wegkulisst.
+const TERRAIN_MAT={
+  grass:TEX.grass, sand:TEX.sand, rock:TEX.stone,
+  snow :TEX.snow,  dirt:TEX.dirt, water:TEX.water,
+  leaf :TEX.leaf,  log :TEX.log,  wall:TEX.plank, roof:TEX.brick,
+};
+// Feste Landschaft (Bäume, Häuser) liegt als Blockkarte vor und wird zusammen
+// mit dem Boden vernetzt — so fallen verdeckte Flächen weg und die Kamera
+// kulisst ganze Chunks weg, statt jeden Baum der Welt zu zeichnen.
+const scenery=new Map();
+const sceneryAt=(x,y,z)=>scenery.get(x+','+y+','+z);
+const solidWorld=(x,y,z)=>y<terrainH(x,z)||scenery.has(x+','+y+','+z);
+const CHUNK=24;                  // Kompromiss aus Zeichenaufrufen und Kulissen-Schärfe
+const VIEW=145;                  // Sichtweite; dahinter schluckt der Nebel ohnehin alles
+const terrainMeshes=[];
+// Eckpunkte je Fläche, gegen den Uhrzeigersinn von außen gesehen
+function faceVerts(dir,x,y,z){
+  const x0=x-.5,x1=x+.5,y0=y,y1=y+1,z0=z-.5,z1=z+.5;
+  switch(dir){
+    case 'py': return [x0,y1,z1, x1,y1,z1, x1,y1,z0, x0,y1,z0];
+    case 'ny': return [x0,y0,z0, x1,y0,z0, x1,y0,z1, x0,y0,z1];
+    case 'px': return [x1,y0,z1, x1,y0,z0, x1,y1,z0, x1,y1,z1];
+    case 'nx': return [x0,y0,z0, x0,y0,z1, x0,y1,z1, x0,y1,z0];
+    case 'pz': return [x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1];
+    default  : return [x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0];
+  }
+}
+const FACE_N={py:[0,1,0],ny:[0,-1,0],px:[1,0,0],nx:[-1,0,0],pz:[0,0,1],nz:[0,0,-1]};
+const UVQ=[0,0, 1,0, 1,1, 0,1];
+function emitTerrain(){
+  for(const m of terrainMeshes){ scene.remove(m); m.geometry.dispose(); }
+  terrainMeshes.length=0;
+  const hAt=(x,z)=>(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1)?-99:terrainH(x,z);
+  for(let cx=BOUND.x0;cx<=BOUND.x1;cx+=CHUNK) for(let cz=BOUND.z0;cz<=BOUND.z1;cz+=CHUNK){
+    const buf={};
+    const add=(mat,dir,x,y,z)=>{
+      const b=buf[mat]||(buf[mat]={p:[],n:[],u:[],i:[]});
+      const v=faceVerts(dir,x,y,z), nv=FACE_N[dir], base=b.p.length/3;
+      b.p.push(...v);
+      for(let k=0;k<4;k++) b.n.push(nv[0],nv[1],nv[2]);
+      b.u.push(...UVQ);
+      b.i.push(base,base+1,base+2, base,base+2,base+3);
+    };
+    const x1=Math.min(cx+CHUNK-1,BOUND.x1), z1=Math.min(cz+CHUNK-1,BOUND.z1);
+    for(let x=cx;x<=x1;x++) for(let z=cz;z<=z1;z++){
+      const H=terrainH(x,z), top=surfaceTex(x,z,H);
+      if(!scenery.has(x+','+H+','+z)) add(top,'py',x,H-1,z);   // Oberseite
+      for(const [dx,dz] of NB4){                   // freiliegende Flanken
+        const Hn=hAt(x+dx,z+dz);
+        const dir=dx===1?'px':dx===-1?'nx':dz===1?'pz':'nz';
+        for(let y=Math.max(Hn,H-9);y<=H-1;y++)
+          add(y>=H-1?top:(y<H-3?'rock':'dirt'),dir,x,y,z);
+      }
+      if(H<=SEA-1) add('water','py',x,SEA-1,z);    // Wasserspiegel
+      // Bäume und Häuser derselben Säule: nur die freien Seiten vernetzen
+      for(let y=H;y<H+40;y++){
+        const mat=sceneryAt(x,y,z);
+        if(!mat) continue;
+        if(!solidWorld(x,y+1,z)) add(mat,'py',x,y,z);
+        if(!solidWorld(x,y-1,z)) add(mat,'ny',x,y,z);
+        if(!solidWorld(x+1,y,z)) add(mat,'px',x,y,z);
+        if(!solidWorld(x-1,y,z)) add(mat,'nx',x,y,z);
+        if(!solidWorld(x,y,z+1)) add(mat,'pz',x,y,z);
+        if(!solidWorld(x,y,z-1)) add(mat,'nz',x,y,z);
+      }
     }
-    g.fillStyle='rgba(0,0,0,.10)'; g.fillRect(0,0,s,1); g.fillRect(0,0,1,s);
-  },16,220)}));
-ground.rotation.x=-Math.PI/2; ground.receiveShadow=true;
-ground.userData={kind:'ground'};
-scene.add(ground);
+    for(const mat in buf){
+      const b=buf[mat];
+      if(!b.i.length) continue;
+      const g=new THREE.BufferGeometry();
+      g.setAttribute('position',new THREE.Float32BufferAttribute(b.p,3));
+      g.setAttribute('normal',new THREE.Float32BufferAttribute(b.n,3));
+      g.setAttribute('uv',new THREE.Float32BufferAttribute(b.u,2));
+      g.setIndex(b.i);
+      g.computeBoundingSphere();
+      const opts={map:TERRAIN_MAT[mat]};
+      if(mat==='water'){ opts.transparent=true; opts.opacity=.82; }
+      const mesh=new THREE.Mesh(g,new THREE.MeshLambertMaterial(opts));
+      mesh.receiveShadow=true; mesh.castShadow=false;   // Schattenwurf wäre zu teuer
+      mesh.userData.cx=cx+CHUNK/2; mesh.userData.cz=cz+CHUNK/2;
+      scene.add(mesh); terrainMeshes.push(mesh);
+    }
+  }
+}
 
 const obstacles=[];
 const interactives=[];
@@ -629,35 +802,93 @@ const plots=[];
 const nodes=[];
 (function forest(){
   const r=mulberry(91);
-  for(let k=0;k<70&&nodes.filter(n=>n.kind==='tree').length<14;k++){
-    const x=Math.round(rnd(BOUND.x0+3,BOUND.x1-3));
-    const z=Math.round(rnd(BOUND.z0+3,BOUND.z0+10));
+  // Beide Vorkommen liegen bewusst im flachen Heimattal, damit die Tutorial-Wege
+  // kurz bleiben: der Wald nördlich hinter den Beeten, der Steinbruch im Westen.
+  for(let k=0;k<90&&nodes.filter(n=>n.kind==='tree').length<14;k++){
+    const x=Math.round(rnd(-18,18));
+    const z=Math.round(rnd(-26,-18));
     if(nodes.some(n=>Math.hypot(n.x-x,n.z-z)<5)) continue;
     nodes.push({kind:'tree',x,z,alive:true,respawn:0,h:3+Math.floor(r()*2)});
   }
-  for(let k=0;k<70&&nodes.filter(n=>n.kind==='rock').length<12;k++){
-    const x=Math.round(rnd(BOUND.x0+2,BOUND.x0+9));
-    const z=Math.round(rnd(-12,16));
+  for(let k=0;k<90&&nodes.filter(n=>n.kind==='rock').length<12;k++){
+    const x=Math.round(rnd(-28,-18));
+    const z=Math.round(rnd(-12,8));
     if(nodes.some(n=>Math.hypot(n.x-x,n.z-z)<4)) continue;
     nodes.push({kind:'rock',x,z,alive:true,respawn:0,h:1+Math.floor(r()*2)});
   }
   for(const n of nodes){
+    n.y=terrainH(n.x,n.z);
     obstacles.push({x:n.x,z:n.z,r:.8,node:n});
-    n.proxy=hitProxy(n.x,n.z,1.6,n.kind==='tree'?5:2.2,{kind:'node',node:n});
+    n.proxy=hitProxy(n.x,n.z,1.6,n.kind==='tree'?5:2.2,{kind:'node',node:n},n.y);
   }
 })();
 function emitNodes(){
   for(const n of nodes){
     if(!n.alive) continue;
+    const y0=n.y||0;
     if(n.kind==='tree'){
-      for(let y=0;y<n.h;y++) blk(D.log,n.x,y,n.z);
-      for(const [dx,dy,dz] of CANOPY_BIG) blk(D.leaf,n.x+dx,n.h-1+dy,n.z+dz);
+      for(let y=0;y<n.h;y++) blk(D.log,n.x,y0+y,n.z);
+      for(const [dx,dy,dz] of CANOPY_BIG) blk(D.leaf,n.x+dx,y0+n.h-1+dy,n.z+dz);
     } else {
-      for(let y=0;y<n.h;y++) blk(D.rock,n.x,y,n.z);
-      if(n.h>1){ blk(D.rock,n.x+1,0,n.z); blk(D.rock,n.x,0,n.z+1); }
+      for(let y=0;y<n.h;y++) blk(D.rock,n.x,y0+y,n.z);
+      if(n.h>1){ blk(D.rock,n.x+1,y0,n.z); blk(D.rock,n.x,y0,n.z+1); }
     }
   }
 }
+// ------------------------------------------------------------------ Landschaft
+// Wälder und Dörfer stehen fest und landen in der Blockkarte, die zusammen
+// mit dem Boden vernetzt wird.
+const put=(mat,x,y,z)=>scenery.set(x+','+y+','+z,mat);
+const TREE_TOP=[];
+(function treeShape(){
+  for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++)
+    if(Math.abs(x)+Math.abs(z)<=2) TREE_TOP.push([x,0,z]);
+  for(let x=-1;x<=1;x++) for(let z=-1;z<=1;z++)
+    if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,1,z]);
+  TREE_TOP.push([0,2,0]);
+})();
+// Nur auf ebenem Grasland: Hänge, Ufer und Fels bleiben frei.
+function treeSpot(x,z){
+  const h=terrainH(x,z);
+  if(h<SEA+1||h>=9) return -1;
+  if(surfaceTex(x,z,h)!=='grass') return -1;
+  for(const [dx,dz] of NB4) if(Math.abs(terrainH(x+dx,z+dz)-h)>1) return -1;
+  return h;
+}
+const villages=[];
+(function landscape(){
+  // --- Dörfer: je vier Häuschen um einen gepflasterten Platz
+  for(const v of VILLAGES){
+    const {x:vx,z:vz,y:vy}=v;
+    villages.push(v);
+    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('rock',vx+dx,vy,vz+dz);
+    for(const [hx,hz] of [[-8,-7],[5,-7],[-8,5],[5,5]]){
+      for(let dx=0;dx<5;dx++) for(let dz=0;dz<5;dz++){
+        const edge=dx===0||dx===4||dz===0||dz===4;
+        const x=vx+hx+dx, z=vz+hz+dz;
+        if(edge&&!(dx===2&&dz===4)) for(let y=0;y<3;y++) put('wall',x,vy+y,z);
+        else if(!edge) put('rock',x,vy,z);       // Boden im Haus
+        put('roof',x,vy+3,z);
+      }
+    }
+  }
+  // --- Wälder: Rauschen gibt die Dichte, Dörfer und Farm bleiben frei
+  let n=0;
+  for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<300;x++)
+    for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<300;z++){
+      if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r+4) continue;
+      if(villages.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
+      const dens=vnoise(x,z,44,11);                 // Waldgebiete statt Streusel
+      if(hash2(x,z,55)>(dens>.56?.055:.006)) continue;
+      const h=treeSpot(x,z);
+      if(h<0) continue;
+      const trunk=3+(hash2(x,z,56)>.5?1:0);
+      for(let y=0;y<trunk;y++) put('log',x,h+y,z);
+      for(const [dx,dy,dz] of TREE_TOP) put('leaf',x+dx,h+trunk-1+dy,z+dz);
+      n++;
+    }
+})();
+
 function updateNodes(dt){
   for(const n of nodes){
     if(n.alive) continue;
@@ -669,14 +900,15 @@ function updateNodes(dt){
 // ------------------------------------------------------------------ Fackeln
 const torches=[];
 function placeTorch(x,z){
-  torches.push({x:Math.round(x),z:Math.round(z)});
+  x=Math.round(x); z=Math.round(z);
+  torches.push({x,z,y:surfaceAt(x,z)});
   treesDirty=true;
 }
 function emitTorches(){
   for(const t of torches){
-    blk(D.torchPost,t.x,0,t.z,.24);
-    blk(D.torchPost,t.x,1,t.z,.24);
-    blk(D.flame,t.x,2,t.z,.42);
+    blk(D.torchPost,t.x,t.y,t.z,.24);
+    blk(D.torchPost,t.x,t.y+1,t.z,.24);
+    blk(D.flame,t.x,t.y+2,t.z,.42);
   }
 }
 const litAt=(x,z,r=14)=>torches.some(t=>Math.hypot(t.x-x,t.z-z)<r);
@@ -800,7 +1032,7 @@ function spawnMob(){
   const h=1.95, asp=benniTex.image.width/benniTex.image.height;
   const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp,h),
     new THREE.MeshLambertMaterial({map:benniTex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
-  mesh.position.set(x,h/2,z); mesh.castShadow=true;
+  mesh.position.set(x,surfaceAt(x,z)+h/2,z); mesh.castShadow=true;
   scene.add(mesh);
   mobs.push({x,z,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6)});
 }
@@ -830,7 +1062,7 @@ function updateMobs(dt){
         scene.remove(m.mesh); m.mesh.geometry.dispose(); m.mesh.material.dispose();
         mobs.splice(i,1);
       }
-      m.mesh.position.set(m.x,.98,m.z);
+      m.mesh.position.set(m.x,surfaceAt(m.x,m.z)+.98,m.z);
       continue;
     }
     if(d>2.0){
@@ -840,9 +1072,10 @@ function updateMobs(dt){
         const rr=o.r+.5;
         if((nx-o.x)**2+(nz-o.z)**2<rr*rr){ nx=m.x+(dz/d)*MOB_SPEED*dt; nz=m.z-(dx/d)*MOB_SPEED*dt; break; }
       }
-      if(blockedByBuilt(nx,nz,.45)){            // an gebauten Mauern entlang statt hindurch
+      const my=surfaceAt(m.x,m.z);
+      if(blockedFor(nx,nz,.45,my)){             // an Mauern und Steilhängen entlang
         nx=m.x+(dz/d)*MOB_SPEED*dt; nz=m.z-(dx/d)*MOB_SPEED*dt;
-        if(blockedByBuilt(nx,nz,.45)){ nx=m.x; nz=m.z; }
+        if(blockedFor(nx,nz,.45,my)){ nx=m.x; nz=m.z; }
       }
       m.x=nx; m.z=nz;
       m.bob+=dt*7;
@@ -856,7 +1089,7 @@ function updateMobs(dt){
     }
     // Traktor walzt alles nieder
     if(player.driving&&d<2.2){ damageMob(m,99); continue; }
-    m.mesh.position.set(m.x,.98+Math.abs(Math.sin(m.bob))*.06,m.z);
+    m.mesh.position.set(m.x,surfaceAt(m.x,m.z)+.98+Math.abs(Math.sin(m.bob))*.06,m.z);
   }
 }
 function hurtPlayer(dmg){
@@ -872,7 +1105,7 @@ function respawn(){
   const lost=Math.floor(player.carry/2);
   player.carry-=lost;
   player.hp=player.maxhp;
-  player.x=SHED.x; player.z=SHED.z-6; player.driving=false;
+  player.x=SHED.x; player.z=SHED.z-6; player.y=surfaceAt(player.x,player.z); player.driving=false;
   toast('😵 Benni hat dich umgerempelt. '+(lost?lost+' Dominiks verloren.':'Nichts verloren.'),'bad',3600);
   updateHUD();
 }
@@ -884,7 +1117,7 @@ function fireShot(){
   const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
   const mesh=new THREE.Mesh(BLOCK,new THREE.MeshLambertMaterial({map:dominikTex}));
   mesh.scale.setScalar(.42);
-  mesh.position.set(player.x,1.6,player.z);
+  mesh.position.set(player.x,player.y+1.6,player.z);
   scene.add(mesh);
   shots.push({mesh,vx:dir.x*32,vy:dir.y*32,vz:dir.z*32,life:1.6});
 }
@@ -903,7 +1136,7 @@ function updateShots(dt){
         damageMob(m,WEAPONS.cannon.dmg); hit=true; break;
       }
     }
-    if(hit||s.life<=0||s.mesh.position.y<0){
+    if(hit||s.life<=0||s.mesh.position.y<terrainH(s.mesh.position.x,s.mesh.position.z)){
       scene.remove(s.mesh); s.mesh.material.dispose();
       shots.splice(i,1);
     }
@@ -949,7 +1182,7 @@ function rebuildBlocks(){
 // ------------------------------------------------------------------ Selbst bauen
 const BUILD=[
   {id:'plank',ic:'🟫',nm:'Bretter',    cost:{wood:1}},
-  {id:'log',  ic:'🪵',nm:'Stamm',      cost:{wood:2}},
+  {id:'log',  ic:'🟤',nm:'Stamm',      cost:{wood:2}},
   {id:'stone',ic:'⬜',nm:'Steinblock', cost:{stone:1}},
   {id:'brick',ic:'🧱',nm:'Mauerstein', cost:{stone:1,wood:1}},
 ];
@@ -957,12 +1190,8 @@ const U={plank:batch(TEX.plank,700), log:batch(TEX.log,700),
          stone:batch(TEX.stone,700), brick:batch(TEX.brick,700)};
 const BUILD_MAX=700, BUILD_TOP=5;      // stapelbar bis y=4
 const built=new Map();                 // "x,y,z" → {x,y,z,type}
-const builtCols=new Map();             // "x,z"   → wie viele Blöcke den Weg versperren
-const builtIdx={};                     // Typ → Blöcke in Emit-Reihenfolge, passend zur instanceId
 let builtDirty=false;
 const bkey=(x,y,z)=>x+','+y+','+z;
-const ckey=(x,z)=>x+','+z;
-const solidCol=(x,z)=>(builtCols.get(ckey(x,z))||0)>0;
 const buildDef=id=>BUILD.find(b=>b.id===id);
 const curBuild=()=>BUILD[player.blockI];
 // wie viele Blöcke dieser Sorte das Material noch hergibt
@@ -979,29 +1208,30 @@ function payBuild(b,sign){
   }
 }
 function emitBuilt(){
-  for(const k in U){ reset(U[k]); builtIdx[k]=[]; }
-  for(const b of built.values()){
-    const m=U[b.type], before=m.count;
-    blk(m,b.x,b.y,b.z);
-    if(m.count>before) builtIdx[b.type].push(b);
-  }
-  // Ohne frische Hülle bleibt die beim ersten Aufruf leer berechnete Kugel stehen
-  // und der Raycast findet die Blöcke nie.
-  for(const k in U){ flush(U[k]); U[k].computeBoundingSphere(); }
+  for(const k in U) reset(U[k]);
+  for(const b of built.values()) blk(U[b.type],b.x,b.y,b.z);
+  for(const k in U) flush(U[k]);
   builtDirty=false;
 }
 const NB=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-const hasNeighbour=(x,y,z)=>NB.some(([a,b,c])=>built.has(bkey(x+a,y+b,z+c)));
+// Anschluss zählt auch gegen das Gelände — an Felswänden lässt sich anbauen.
+const hasNeighbour=(x,y,z)=>NB.some(([a,b,c])=>{
+  const nx=x+a, ny=y+b, nz=z+c;
+  return built.has(bkey(nx,ny,nz))||ny<terrainH(nx,nz);
+});
 // true wenn hier gebaut werden darf, sonst der Grund als Text
 function placeBlocked(x,y,z){
   if(built.size>=BUILD_MAX) return 'Baugrenze erreicht';
-  if(y<0||y>=BUILD_TOP) return 'Zu hoch';
   if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) return 'Außerhalb';
+  const g=terrainH(x,z);                 // Bauhöhen zählen ab dem Gelände
+  if(y<g) return 'Im Boden';
+  if(y>=g+BUILD_TOP) return 'Zu hoch';
   if(built.has(bkey(x,y,z))) return 'Besetzt';
-  if(y>0&&!hasNeighbour(x,y,z)) return 'Schwebt';
-  if(y<=1){
-    const R=player.driving?1.1:.5;
-    if(Math.abs(x-player.x)<.5+R&&Math.abs(z-player.z)<.5+R) return 'Da stehst du';
+  if(!hasNeighbour(x,y,z)) return 'Schwebt';
+  const R=player.driving?1.1:.5;
+  if(Math.abs(x-player.x)<.5+R&&Math.abs(z-player.z)<.5+R
+     &&y<player.y+1.8&&y+1>player.y) return 'Da stehst du';
+  if(y<=g+1){
     for(const o of obstacles){
       if(o.node&&!o.node.alive) continue;
       if((x-o.x)**2+(z-o.z)**2<(o.r+.4)**2) return 'Kein Platz';
@@ -1011,52 +1241,74 @@ function placeBlocked(x,y,z){
   }
   return true;
 }
-function bumpCol(x,y,z,d){
-  if(y>1) return;                       // darüber läuft man einfach durch
-  const k=ckey(x,z), n=(builtCols.get(k)||0)+d;
-  if(n>0) builtCols.set(k,n); else builtCols.delete(k);
-}
 function placeBlock(x,y,z,type){
   const b={x,y,z,type};
   built.set(bkey(x,y,z),b);
-  bumpCol(x,y,z,1);
   builtDirty=true;
   return b;
 }
 function breakBlock(b){
   if(!built.delete(bkey(b.x,b.y,b.z))) return false;
-  bumpCol(b.x,b.y,b.z,-1);
   builtDirty=true;
   return true;
 }
-// Kollision: gebaute Blöcke auf Kopfhöhe sind Wände
-function blockedByBuilt(px,pz,R){
-  if(!builtCols.size) return false;
+// ---- Begehbarkeit: Gelände und gesetzte Blöcke nach derselben Regel
+// Oberkante einer Säule: Geländehöhe plus die Blöcke, die lückenlos darauf stehen.
+function surfaceAt(x,z){
+  x=Math.round(x); z=Math.round(z);
+  let y=terrainH(x,z);
+  while(built.has(bkey(x,y,z))) y++;
+  return y;
+}
+// Eine Stufe geht, alles Höhere ist Wand. Tiefes Flusswasser hält ohne Brücke auf.
+function walkable(x,z,fromY){
+  const s=surfaceAt(x,z);
+  if(s-fromY>1.001) return false;
+  if(s<=SEA-2&&s===terrainH(x,z)) return false;
+  if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) return false;
+  return true;
+}
+function blockedFor(px,pz,R,fromY){
   for(let bx=Math.round(px-R);bx<=Math.round(px+R);bx++)
-    for(let bz=Math.round(pz-R);bz<=Math.round(pz+R);bz++)
-      if(solidCol(bx,bz)&&Math.abs(px-bx)<.5+R&&Math.abs(pz-bz)<.5+R) return true;
+    for(let bz=Math.round(pz-R);bz<=Math.round(pz+R);bz++){
+      if(Math.abs(px-bx)>=.5+R||Math.abs(pz-bz)>=.5+R) continue;
+      if(!walkable(bx,bz,fromY)) return true;
+    }
   return false;
 }
-// Welche Seite des Blocks getroffen wurde — daraus folgt, wo der neue Block landet
-function faceOf(b,p){
-  const dx=p.x-b.x, dy=p.y-(b.y+.5), dz=p.z-b.z;
-  const ax=Math.abs(dx), ay=Math.abs(dy), az=Math.abs(dz);
-  if(ax>=ay&&ax>=az) return {x:b.x+Math.sign(dx),y:b.y,z:b.z};
-  if(ay>=az)         return {x:b.x,y:b.y+Math.sign(dy),z:b.z};
-  return {x:b.x,y:b.y,z:b.z+Math.sign(dz)};
+// Block (x,y,z) belegt [x-.5,x+.5] × [y,y+1] × [z-.5,z+.5]; fest ist alles
+// unterhalb der Geländekante plus die selbst gesetzten Blöcke.
+function solidAt(x,y,z){
+  if(built.has(bkey(x,y,z))) return 'built';
+  if(y<terrainH(x,z)) return 'terrain';
+  return null;
 }
-function raycastBuilt(){
-  const ms=[];
-  for(const k in U) if(U[k].count>0) ms.push(U[k]);
-  if(!ms.length) return null;
-  const hs=ray.intersectObjects(ms,false);
-  if(!hs.length) return null;
-  const h=hs[0];
-  let type=null;
-  for(const k in U) if(U[k]===h.object) type=k;
-  const b=type&&builtIdx[type]?builtIdx[type][h.instanceId]:null;
-  if(!b) return null;
-  return {block:b,dist:h.distance,place:faceOf(b,h.point)};
+// Marsch durchs Blockraster statt Raycast gegen zehntausende Instanzen.
+const _rd=new THREE.Vector3();
+function rayPick(){
+  camera.getWorldDirection(_rd);
+  const o=camera.position;
+  const px=o.x+.5, py=o.y, pz=o.z+.5;            // Raster mit ganzzahligen Kanten
+  let cx=Math.floor(px), cy=Math.floor(py), cz=Math.floor(pz);
+  if(solidAt(cx,cy,cz)) return null;             // Auge steckt im Block
+  const sx=Math.sign(_rd.x), sy=Math.sign(_rd.y), sz=Math.sign(_rd.z);
+  const tdx=sx?Math.abs(1/_rd.x):Infinity,
+        tdy=sy?Math.abs(1/_rd.y):Infinity,
+        tdz=sz?Math.abs(1/_rd.z):Infinity;
+  let tmx=sx?(sx>0?cx+1-px:cx-px)/_rd.x:Infinity,
+      tmy=sy?(sy>0?cy+1-py:cy-py)/_rd.y:Infinity,
+      tmz=sz?(sz>0?cz+1-pz:cz-pz)/_rd.z:Infinity;
+  let t=0, nx=0, ny=0, nz=0;
+  for(let step=0;step<64;step++){
+    if(tmx<tmy&&tmx<tmz){ t=tmx; cx+=sx; tmx+=tdx; nx=-sx; ny=0; nz=0; }
+    else if(tmy<tmz){     t=tmy; cy+=sy; tmy+=tdy; nx=0; ny=-sy; nz=0; }
+    else{                 t=tmz; cz+=sz; tmz+=tdz; nx=0; ny=0; nz=-sz; }
+    if(t>REACH) return null;
+    const hit=solidAt(cx,cy,cz);
+    if(hit) return {type:hit, block:hit==='built'?built.get(bkey(cx,cy,cz)):null,
+      cell:{x:cx,y:cy,z:cz}, dist:t, place:{x:cx+nx,y:cy+ny,z:cz+nz}};
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ Aktionen
@@ -1069,7 +1321,6 @@ function actionsFor(tg){
     const b=curBuild(), stock=buildStock(b), p=tg.place;
     const why=placeBlocked(p.x,p.y,p.z);
     add('build',stock<1?'Material fehlt':why,b.ic+' ×'+stock);
-    add('pickblk',true,b.ic);
   };
   if(tg.kind==='plot'){
     const p=tg.plot;
@@ -1177,7 +1428,7 @@ function runAction(id,tg){
     case 'torch':{
       if(inv.torch<1) return;
       inv.torch--;
-      placeTorch(tg.point.x,tg.point.z);
+      placeTorch(tg.place.x,tg.place.z);
       toast('🔥 Fackel gesetzt — hier spawnen keine Bennis.','good',2200);
       break;
     }
@@ -1272,18 +1523,16 @@ const centre=new THREE.Vector2(0,0);
 let target=null, targetSig='';
 function updateTarget(){
   ray.setFromCamera(centre,camera);
-  const bh=player.driving?null:raycastBuilt();
+  const vox=player.driving?null:rayPick();
   const hits=ray.intersectObjects(interactives,false);
   let tg=null;
-  if(bh&&bh.dist<=(hits.length?hits[0].distance:Infinity)){
-    tg={kind:'block',block:bh.block,place:bh.place};
+  if(vox&&vox.dist<=(hits.length?hits[0].distance:Infinity)){
+    tg=vox.type==='built'
+      ? {kind:'block',block:vox.block,place:vox.place}
+      : {kind:'ground',cell:vox.cell,place:vox.place};
   } else if(hits.length){
     const u=hits[0].object.userData;
     tg={kind:u.kind,plot:u.plot,char:u.char,node:u.node};
-  } else if(!player.driving){
-    const gh=ray.intersectObject(ground,false);
-    if(gh.length) tg={kind:'ground',point:gh[0].point,
-      place:{x:Math.round(gh[0].point.x),y:0,z:Math.round(gh[0].point.z)}};
   }
   target=tg;
   const acts=actionsFor(tg);
@@ -1439,11 +1688,12 @@ addEventListener('keydown',e=>{
   if(e.code==='KeyF'){ e.preventDefault(); attack(); }
   if(e.code==='KeyR'){ e.preventDefault(); dismount(); }
   if(e.code==='KeyB'){ e.preventDefault(); runAction('pickblk',target); }
+  if(e.code==='KeyI'){ e.preventDefault(); ac();
+    modal.classList.contains('hidden')?openInventory():hideModal(); }
   if(e.code==='KeyP') togglePause();
 });
 addEventListener('keyup',e=>{keys[e.code]=false;});
 el('fight').addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();ac();attack();});
-el('exitcar').addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();dismount();});
 function dismount(){
   if(!player.driving) return;
   player.driving=false;
@@ -1477,17 +1727,21 @@ function updatePlayer(dt){
     if(Math.abs(player.x-o.x)<rr&&Math.abs(nz-o.z)<rr&&
        (player.x-o.x)**2+(nz-o.z)**2<rr*rr) nz=player.z;
   }
-  if(blockedByBuilt(nx,player.z,R)) nx=player.x;
-  if(blockedByBuilt(player.x,nz,R)) nz=player.z;
+  const curY=surfaceAt(player.x,player.z);
+  if(blockedFor(nx,player.z,R,curY)) nx=player.x;
+  if(blockedFor(player.x,nz,R,curY)) nz=player.z;
   player.x=clamp(nx,BOUND.x0,BOUND.x1);
   player.z=clamp(nz,BOUND.z0,BOUND.z1);
+  // Höhe weich nachziehen, sonst ruckelt die Kamera über jede Geländestufe
+  const tgtY=surfaceAt(player.x,player.z);
+  player.y=Math.abs(tgtY-player.y)<.02?tgtY:lerp(player.y,tgtY,Math.min(1,dt*14));
   if(speed>.4&&!state.paused){
     player.bob+=dt*speed*(player.driving?.7:1.5);
     player.stepT+=dt*speed;
     if(player.stepT>3.1){ player.stepT=0; player.driving?SND.engine():SND.step(); }
   } else player.bob+=dt*.6;
   const bobY=Math.sin(player.bob)*(speed>.4?.045:.012);
-  camera.position.set(player.x,(player.driving?2.6:1.7)+bobY,player.z);
+  camera.position.set(player.x,player.y+(player.driving?2.6:1.7)+bobY,player.z);
   camera.rotation.set(0,0,0);
   camera.rotateY(player.yaw);
   camera.rotateX(player.pitch);
@@ -1567,17 +1821,25 @@ const HOT=[
   {ic:'🪵',get:()=>res.wood},
   {ic:'🪨',get:()=>res.stone},
   {ic:'🔥',get:()=>inv.torch},
-  {ic:'🏀',get:()=>inv.ball},
-  {icf:()=>curBuild().ic,get:()=>buildStock()},
+  // Danach die Baustoffe: antippbar, der gewählte ist hervorgehoben
+  ...BUILD.map((b,i)=>({ic:b.ic,build:i,get:()=>buildStock(b)})),
 ];
 let hotEls=null, hotCache='';
 function buildHotbar(){
   const box=el('hotbar');
   box.innerHTML='';
-  hotEls=HOT.map(h=>{
+  hotEls=HOT.map((h,i)=>{
+    if(h.build===0){                       // Trenner vor den Baustoffen
+      const g=document.createElement('div'); g.className='gap'; box.appendChild(g);
+    }
     const d=document.createElement('div');
-    d.className='slot';
-    d.innerHTML=`<span class="i">${h.icf?h.icf():h.ic}</span><span class="n"></span>`;
+    d.className='slot'+(h.build!=null?' pick':'');
+    d.innerHTML=`<span class="i">${h.ic}</span><span class="n"></span>`;
+    if(h.build!=null) d.addEventListener('pointerdown',e=>{
+      e.stopPropagation(); e.preventDefault();
+      ac(); player.blockI=h.build; targetSig='';
+      SND.tap(); updateHUD();
+    });
     box.appendChild(d);
     return d;
   });
@@ -1597,15 +1859,14 @@ function updateHUD(){
   const w=WEAPONS[activeWeapon()];
   el('weapon').innerHTML=w.ic+'<span>'+w.nm+(w.ranged?' 🍑'+player.carry:'')+'</span>';
   el('fight').style.display=(mobs.length||state.night)?'flex':'none';
-  el('exitcar').style.display=player.driving?'flex':'none';
   el('fight').textContent=w.ic;
-  const sig=HOT.map(h=>(h.icf?h.icf():'')+h.get()).join('|');
+  const sig=HOT.map(h=>h.get()).join('|')+'|'+player.blockI;
   if(sig!==hotCache){
     hotCache=sig;
     HOT.forEach((h,i)=>{
       hotEls[i].querySelector('.n').textContent=h.get();
-      if(h.icf) hotEls[i].querySelector('.i').textContent=h.icf();
       hotEls[i].classList.toggle('warn',!!(h.warn&&h.warn()));
+      if(h.build!=null) hotEls[i].classList.toggle('sel',h.build===player.blockI);
     });
   }
 }
@@ -1684,7 +1945,7 @@ function openCraft(){
   showModal(h);
 }
 mbox.addEventListener('pointerdown',e=>{
-  const b=e.target.closest('button'); if(!b) return;
+  const b=e.target.closest('button,[data-pick],[data-wpn]'); if(!b) return;
   e.stopPropagation();
   if(b.dataset.buy){
     const it=SHOP.find(s=>s.id===b.dataset.buy), pr=it.price();
@@ -1704,6 +1965,15 @@ mbox.addEventListener('pointerdown',e=>{
     updateHUD(); openCraft(); checkQuest();
   }
   else if(b.dataset.act==='close'||b.dataset.act==='resume'){ hideModal(); }
+  else if(b.dataset.act==='help'){ showIntro(); }
+  else if(b.dataset.pick!=null){
+    player.blockI=+b.dataset.pick; targetSig='';
+    SND.tap(); updateHUD(); openInventory();
+  }
+  else if(b.dataset.wpn){
+    player.weapon=b.dataset.wpn;
+    SND.tap(); updateHUD(); openInventory();
+  }
   else if(b.dataset.act==='start'){ localStorage.setItem('edf3d_tut','1'); hideModal(); state.started=true; }
   else if(b.dataset.act==='heal'){
     if(inv.medkit>0){ inv.medkit--; player.hp=clamp(player.hp+10,0,player.maxhp);
@@ -1711,10 +1981,41 @@ mbox.addEventListener('pointerdown',e=>{
     hideModal();
   }
 });
+function openInventory(){
+  const cell=(ic,nm,n,cls='',data='')=>
+    `<div class="invcell ${cls}" ${data}><span class="ic">${ic}</span>`+
+    `<span class="nm">${nm}</span><span class="n">${n}</span></div>`;
+  let h='<h2>🎒 Inventar</h2>';
+  // Das Antippbare steht oben — auf flachem Querformat scrollt der Rest weg.
+  h+='<h3>Baustoff wählen</h3><div class="invgrid">'+
+    BUILD.map((b,i)=>cell(b.ic,b.nm,'×'+buildStock(b),
+      'tap'+(i===player.blockI?' on':'')+(buildStock(b)<1?' dim':''),
+      'data-pick="'+i+'"')).join('')+
+    cell('🪵','Holz',res.wood)+cell('🪨','Stein',res.stone)+'</div>';
+  h+='<h3>Waffe wählen</h3><div class="invgrid">'+
+    WEAPON_ORDER.slice().reverse().map(k=>{
+      const w=WEAPONS[k], have=k==='fist'||owned[k];
+      return cell(w.ic,w.nm,have?(k===activeWeapon()?'aktiv':'dabei'):'—',
+        (have?'tap':'dim')+(k===activeWeapon()?' on':''), have?'data-wpn="'+k+'"':'');
+    }).join('')+'</div>';
+  h+='<h3>Vorräte</h3><div class="invgrid">'+
+    cell('💧','Kanne',player.can+'/'+canCap())+
+    cell('🍑','Dominiks',player.carry+'/'+bagCap())+
+    cell('🌱','Samen',inv.seed)+cell('🌟','Bio',inv.bio)+
+    cell('🧪','Spray',inv.pest)+cell('💩','Kompost',inv.fert)+
+    cell('🔥','Fackeln',inv.torch)+cell('❤️','Verband',inv.medkit)+
+    cell('🏀','Bälle',inv.ball)+'</div>';
+  const gear=[['🪖','Helm',owned.helm],['🦺','Weste',owned.vest],['🚜','Traktor',owned.tractor],
+    ['🚿','Kanne',upg.can],['🎒','Korb',upg.bag],['✂️','Schere',upg.shears],['👟','Stiefel',upg.boots]];
+  h+='<h3>Ausrüstung</h3><div class="invgrid">'+
+    gear.map(([ic,nm,v])=>cell(ic,nm,v===true?'✔':v?'Stufe '+v:'—',v?'':'dim')).join('')+'</div>';
+  h+='<div class="btnrow"><button class="primary" data-act="close">Zurück 🚜</button></div>';
+  showModal(h);
+}
 function showIntro(){
   const ctrl=isTouch
     ? 'Links wischen = laufen · rechts wischen = umsehen · Aktionen rechts unten antippen.'
-    : 'WASD laufen · Maus umsehen · <b>E</b> Aktion · <b>F</b> zuschlagen · <b>B</b> Baustoff.';
+    : 'WASD laufen · Maus umsehen · <b>E</b> Aktion · <b>F</b> zuschlagen · <b>B</b> Baustoff · <b>I</b> Inventar.';
   showModal(`<h2>🌳 ErnteDominiksFest</h2>
   <p style="font-size:14px">Züchte Dominiks auf Bäumen, ernte die Köpfe und verkauf sie im Dorf.
   <b>Kein Zeitdruck, kein Game Over.</b></p>
@@ -1733,11 +2034,12 @@ function togglePause(){
       🏀 ${state.killed} Bennis vertrieben · 🧱 ${state.placed} Blöcke gesetzt · Tag ${state.day}.</p>
       <div class="btnrow">
         ${inv.medkit>0?'<button data-act="heal">❤️ Verbandskasten ('+inv.medkit+')</button>':''}
+        <button data-act="help">❓ Hilfe</button>
         <button class="primary" data-act="resume">Weiter 🚜</button></div>`);
   } else hideModal();
 }
 el('btnPause').addEventListener('pointerdown',e=>{e.stopPropagation();togglePause();});
-el('btnHelp').addEventListener('pointerdown',e=>{e.stopPropagation();showIntro();});
+el('btnBag').addEventListener('pointerdown',e=>{e.stopPropagation();ac();openInventory();});
 function startGameIfNeeded(){
   if(!state.started&&modal.classList.contains('hidden')){ state.started=true; state.paused=false; }
 }
@@ -1763,7 +2065,15 @@ function updateSky(){
   sun.color.copy(C.sunDay).lerp(C.sunEv,warm*.8).lerp(C.moon,night);
   hemi.intensity=lerp(1.25,.42,night);   // nachts dunkel, aber spielbar
   const ang=Math.PI*(.15+d*.7);
-  sun.position.set(Math.cos(ang)*44,Math.max(10,Math.sin(ang)*48),16);
+  sun.target.position.set(player.x,player.y,player.z);
+  sun.position.set(player.x+Math.cos(ang)*44,player.y+Math.max(10,Math.sin(ang)*48),player.z+16);
+}
+
+// Chunks jenseits der Sichtweite abschalten — der Nebel verdeckt sie sowieso.
+function cullTerrain(){
+  const r=(VIEW+CHUNK)**2;
+  for(const m of terrainMeshes)
+    m.visible=(m.userData.cx-player.x)**2+(m.userData.cz-player.z)**2<r;
 }
 
 // ------------------------------------------------------------------ Schleife
@@ -1793,6 +2103,7 @@ function update(dt){
   }
   if(treesDirty) rebuildBlocks();
   if(builtDirty) emitBuilt();
+  cullTerrain();
   updatePlayer(dt);
   updateTractor();
   updateChars(dt);
@@ -1825,10 +2136,12 @@ Promise.all([
 ]).then(()=>{
   setupChars();
   buildHotbar();
+  emitTerrain();
+  player.y=surfaceAt(player.x,player.z);
   rebuildBlocks();
   resize(); updateHUD(); updateQuestUI();
   el('boot').remove();
-  el('hint').innerHTML=isTouch?'':'WASD laufen · Maus umsehen<br>E Aktion · F schlagen · B Baustoff · P Pause';
+  el('hint').innerHTML=isTouch?'':'WASD laufen · Maus umsehen<br>E Aktion · F schlagen · B Baustoff · I Inventar · P Pause';
   if(localStorage.getItem('edf3d_tut')){ state.paused=false; state.started=true; }
   else showIntro();
   requestAnimationFrame(frame);
@@ -1839,7 +2152,13 @@ Promise.all([
 
 // ------------------------------------------------------------------ Debug-API
 window.game={state,inv,res,upg,owned,plots,player,CHARS,nodes,mobs,torches,RECIPES,SHOP,WEAPONS,
-  BUILD,built,placeBlock,breakBlock,placeBlocked,blockedByBuilt,buildStock,
+  BUILD,built,placeBlock,breakBlock,placeBlocked,buildStock,
+  terrainH,surfaceAt,walkable,blockedFor,surfaceTex,villages,rayPick,
+  sun,scene,renderer,terrainMeshes,scenery,
+  get terrainCounts(){
+    let tris=0; for(const m of terrainMeshes) tris+=m.geometry.index.count/3;
+    return {meshes:terrainMeshes.length,tris};
+  },
   setBuild(i){ player.blockI=i%BUILD.length; targetSig=''; updateHUD(); return curBuild().id; },
   get build(){return curBuild().id;},
   get builtCount(){return built.size;},
@@ -1856,7 +2175,8 @@ window.game={state,inv,res,upg,owned,plots,player,CHARS,nodes,mobs,torches,RECIP
   updateTarget(){ updatePlayer(0); updateTarget(); },
   setMove(x,y){ move.x=x; move.y=y; },
   setDayT(v){ state.dayT=v; updateNight(0); },
-  tp(x,z,yaw){ player.x=x; player.z=z; if(yaw!=null) player.yaw=yaw; this.sync(); },
+  tp(x,z,yaw){ player.x=x; player.z=z; player.y=surfaceAt(x,z);
+    if(yaw!=null) player.yaw=yaw; this.sync(); },
   lookAt(x,z){ player.yaw=Math.atan2(player.x-x,player.z-z); player.pitch=0; this.sync(); },
   act(id){ const a=actionsFor(target).find(v=>v.id===id); if(a) startAction(a); return !!a; },
   tick(sec){ const s=.05; for(let t=0;t<sec;t+=s) update(s); },

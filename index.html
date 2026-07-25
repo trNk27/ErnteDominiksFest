@@ -129,15 +129,6 @@
   #fight:active{transform:translateY(-50%) scale(.9)}
   @media (max-height:400px){#fight{width:62px;height:62px;font-size:26px}}
 
-  /* ---------- Aussteigen (nur beim Fahren) ---------- */
-  #exitcar{
-    position:absolute;right:calc(14px + var(--sar));top:calc(56px + var(--sat));
-    display:none;align-items:center;gap:5px;cursor:pointer;pointer-events:auto;
-    background:rgba(12,22,12,.82);border:1px solid rgba(255,255,255,.28);border-radius:11px;
-    padding:8px 12px;font-size:13px;font-weight:800;backdrop-filter:blur(6px)
-  }
-  #exitcar:active{transform:scale(.95)}
-
   /* ---------- Treffer-Overlay ---------- */
   #hurt{
     position:absolute;inset:0;opacity:0;pointer-events:none;
@@ -154,18 +145,39 @@
     display:flex;gap:4px
   }
   #hotbar .slot{
-    position:relative;width:46px;height:46px;border:2px solid rgba(255,255,255,.32);
+    position:relative;width:42px;height:42px;border:2px solid rgba(255,255,255,.32);
     background:rgba(12,22,12,.66);border-radius:6px;display:flex;align-items:center;
-    justify-content:center;font-size:21px;backdrop-filter:blur(4px)
+    justify-content:center;font-size:19px;backdrop-filter:blur(4px)
   }
+  #hotbar .slot.pick{cursor:pointer;pointer-events:auto}
+  #hotbar .slot.pick:active{transform:scale(.93)}
+  /* aktiver Baustoff */
+  #hotbar .slot.sel{border-color:#ffd76a;background:rgba(80,64,20,.8);box-shadow:0 0 0 2px rgba(255,215,106,.28)}
+  #hotbar .gap{width:9px}
   #hotbar .slot .n{
     position:absolute;right:3px;bottom:1px;font-size:11px;font-weight:800;
     text-shadow:1px 1px 0 #000,-1px 1px 0 #000
   }
   #hotbar .slot.warn{border-color:#ff9d3c;background:rgba(70,30,10,.7)}
   @media (max-height:400px){
-    #hotbar .slot{width:40px;height:40px;font-size:18px}
+    #hotbar .slot{width:36px;height:36px;font-size:16px}
   }
+
+  /* ---------- Inventarfenster ---------- */
+  #mbox .invgrid{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 2px}
+  #mbox .invcell{
+    width:60px;padding:5px 2px;border:1px solid rgba(255,255,255,.16);border-radius:9px;
+    background:rgba(255,255,255,.05);text-align:center;font-size:9.5px;font-weight:700;
+    line-height:1.25;overflow:hidden
+  }
+  #mbox .invcell .ic{display:block;font-size:17px;margin-bottom:1px}
+  #mbox .invcell .nm{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #mbox .invcell .n{display:block;opacity:.78;font-size:10px}
+  #mbox .invcell.tap{cursor:pointer}
+  #mbox .invcell.tap:active{transform:scale(.94)}
+  #mbox .invcell.on{border-color:#ffd76a;background:rgba(255,215,106,.16)}
+  #mbox .invcell.dim{opacity:.38}
+  #mbox h3{font-size:11px;opacity:.7;margin:8px 0 0;text-transform:uppercase;letter-spacing:.5px}
 
   /* ---------- Aufgaben-Banner ---------- */
   #quest{
@@ -270,7 +282,7 @@
       <span>📈 <b id="hPrice">12</b> €</span>
     </div>
     <div id="topbtns">
-      <button id="btnHelp" title="Hilfe">❓</button>
+      <button id="btnBag" title="Inventar">🎒</button>
       <button id="btnPause" title="Pause">⏸️</button>
     </div>
   </div>
@@ -279,7 +291,6 @@
   <div id="hurt"></div>
   <div id="vitals"><div id="hearts">❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️</div><div id="weapon"></div></div>
   <button id="fight">✊</button>
-  <button id="exitcar">🅿️ Aussteigen</button>
   <div id="alerts"></div>
   <div id="quest"></div>
   <div id="toasts"></div>
