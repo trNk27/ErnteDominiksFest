@@ -1,13 +1,12 @@
-# 🌳 ErnteDominiksFest — Klötzchen-Edition
+# 🌳 ErnteDominiksFest — Klötzchen-Survival
 
-Ein satirisches Plantagenspiel in **Ego-Perspektive**, gebaut fürs **Handy im Querformat**.
-Die Welt besteht aus Blöcken: du hackst Holz im Wald, klopfst Stein im Steinbruch, baust
-dir an der Werkbank Werkzeug — und züchtest Bäume, an denen **Dominik-Köpfe** als Frucht
-hängen.
+Ein satirisches Minecraft-artiges Spiel in **Ego-Perspektive**, gebaut fürs **Handy im
+Querformat**. Die Welt besteht aus Blöcken: du hackst Holz, klopfst Stein, baust an der
+Werkbank Werkzeug und züchtest Bäume, an denen **Dominik-Köpfe** als Frucht hängen.
 
-**Manni**, **Jannes** und **Benni** stehen als Figuren in der Welt: Manni führt den Laden,
-Jannes kauft dir am Feststand die Ernte ab, Benni läuft über den Acker und kommentiert
-die Lage – helfen tut er eher nicht.
+**Kein Zeitdruck, kein Game Over.** Das Ziel ist einfach: möglichst viele Dominiks
+verkaufen. Vom Geld kaufst du Waffen, Rüstung und einen Traktor — denn **nachts kommen
+die Bennis**.
 
 ## Spielen
 
@@ -25,27 +24,35 @@ python3 -m http.server 8000
 |---|---|---|
 | Laufen | links wischen (Joystick) | `WASD` / Pfeiltasten, `Shift` rennen |
 | Umsehen | rechts wischen | Maus |
-| Aktionen | Buttons rechts unten antippen | `E` (Hauptaktion), `1`–`4` |
+| Aktionen | Buttons rechts unten antippen | `E`, `1`–`4` |
+| Zuschlagen | roter Knopf rechts | `F` oder Mausklick |
+| Aussteigen | Knopf oben rechts | `R` |
 | Pause | ⏸️ oben rechts | `P` |
 
-Stell dich vor einen Baum, einen Felsen, eine Station oder eine Person — rechts unten
-erscheinen die möglichen Aktionen.
+## Tag
 
-## Einstieg
+Bäume pflanzen, gießen, schneiden, spritzen, ernten — und im Dorf verkaufen. Das
+Gärtnern ist entspannt: eine volle Gießkanne hält **gut drei Minuten**, ein Baum
+vertrocknet erst nach **über vier Minuten** Vernachlässigung, und **Blattläuse fressen
+nur die Ernte** statt den Baum zu töten.
 
-Kein Textblock zum Auswendiglernen: das Spiel führt dich durch **sieben kurze Aufgaben**
-(pflanzen → gießen → Holz hacken → Stein klopfen → ernten → verkaufen → bauen). Oben steht
-immer, was als Nächstes dran ist, ein ⭐ zeigt den Weg. **Solange das Tutorial läuft,
-steht die Uhr still** — erst danach beginnt der Countdown.
+Im Dorf liegen **Laden, Feststand, Werkbank und Brunnen dicht beieinander** — Manni
+verkauft, Jannes kauft deine Ernte (Dominiks zum Tagespreis, Basketbälle für 6 €).
 
-## Ziel
+## Nacht
 
-**450 € Umsatz bis zum Ende von Tag 10.** Was du im Laden wieder ausgibst, zählt weiter
-für die Festkasse — investieren lohnt sich also. Danach gibt es einen Endlos-Modus.
+Ab der Dämmerung tauchen **Bennis** auf und rempeln dich um. Stirbst du, wachst du beim
+Laden auf und verlierst die Hälfte deiner getragenen Dominiks — mehr passiert nicht.
 
-Der Druck kommt vom Laufweg: Gießkanne (begrenzte Ladungen, am Brunnen nachfüllen),
-Erntekorb (begrenzte Tragekraft, am Feststand leeren), Blattläuse mit Countdown, kurze
-Erntefenster und ein schwankender Dominik-Preis. Jeder Tag wird härter.
+| Gegenmittel | Wirkung |
+|---|---|
+| 🔥 Fackeln | in ihrem Umkreis spawnen keine Bennis |
+| 🏏 Knüppel / ⚔️ Schwert | Nahkampf, Schwert tötet in 2 Treffern |
+| 🔫 Dominik-Kanone | Fernkampf — verschießt deine Dominiks als Munition |
+| 🪖 Helm / 🦺 Warnweste | weniger Schaden |
+| 🚜 Traktor | doppelt so schnell und überfährt Bennis einfach |
+
+Erledigte Bennis lassen 🏀 Basketbälle fallen, die Jannes dir abkauft.
 
 ## Rohstoffe & Werkbank
 
@@ -55,12 +62,17 @@ Erntefenster und ein schwankender Dominik-Preis. Jeder Tag wird härter.
 | 🪨 Stein | Felsen im Steinbruch abklopfen |
 | 🍑 Dominik | vom eigenen Baum ernten |
 
-An der **Werkbank** entstehen daraus Samen, Blattlaus-Spray, Kompost, größere Gießkanne,
-Erntekorb, Schere und Stiefel. Im **Laden** bei Manni gibt es gegen Geld Samen, Bio-Samen
-und Spray; **freie Beete** kaufst du draußen direkt am Schild.
+An der Werkbank entstehen daraus Samen, Fackeln, Knüppel, Steinschwert, Spray, Kompost
+sowie Gießkanne, Erntekorb, Schere und Stiefel — meist günstiger als im Laden.
+
+## Einstieg
+
+Sieben kurze Aufgaben führen durch den Kreislauf (pflanzen → gießen → Holz → Stein →
+ernten → verkaufen → bauen). Oben steht, was dran ist, ein ⭐ zeigt den Weg. Solange das
+Tutorial läuft, tauchen **keine Bennis** auf.
 
 ## Dateien
 
-- `index.html` + `game.js` — das 3D-Spiel (three.js, lokal unter `vendor/`, MIT)
+- `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
 - `2d.html` — die frühere 2D-Version mit Auftragswarteschlange für drei Arbeiter
 - `*.png` — die Charaktere und Dominik als Frucht
