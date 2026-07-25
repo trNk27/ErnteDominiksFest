@@ -74,5 +74,4 @@ Tutorial läuft, tauchen **keine Bennis** auf.
 ## Dateien
 
 - `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
-- `2d.html` — die frühere 2D-Version mit Auftragswarteschlange für drei Arbeiter
 - `*.png` — die Charaktere und Dominik als Frucht

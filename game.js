@@ -1535,7 +1535,6 @@ mbox.addEventListener('pointerdown',e=>{
   }
   else if(b.dataset.act==='close'||b.dataset.act==='resume'){ hideModal(); }
   else if(b.dataset.act==='start'){ localStorage.setItem('edf3d_tut','1'); hideModal(); state.started=true; }
-  else if(b.dataset.act==='classic'){ location.href='./2d.html'; }
   else if(b.dataset.act==='heal'){
     if(inv.medkit>0){ inv.medkit--; player.hp=clamp(player.hp+10,0,player.maxhp);
       toast('❤️ Verbunden.','good',1600); updateHUD(); }
@@ -1552,10 +1551,7 @@ function showIntro(){
   <p style="font-size:13px;opacity:.9">${ctrl}</p>
   <p style="font-size:13px">Oben steht, <b>was als Nächstes zu tun ist</b> — ein ⭐ zeigt den Weg.
   Nachts wird es ungemütlich: dann kommen die Bennis.</p>
-  <div class="btnrow">
-    <button data-act="classic" style="background:#2f4f2f;flex:0 0 auto;font-size:12.5px">2D 🕹️</button>
-    <button class="primary" data-act="start">Loslegen 🚜</button>
-  </div>`);
+  <div class="btnrow"><button class="primary" data-act="start">Loslegen 🚜</button></div>`);
 }
 function togglePause(){
   if(modal.classList.contains('hidden')){
