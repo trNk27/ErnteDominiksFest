@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="data:,">
-<title>ErnteDominiksFest 3D 🌳</title>
+<title>ErnteDominiksFest ⛏️🌳</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;overflow:hidden;background:#0e1a0e}
@@ -36,7 +36,7 @@
   #stats{
     display:flex;flex-wrap:wrap;gap:3px 10px;background:rgba(12,22,12,.72);
     border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:5px 10px;
-    font-size:13px;font-weight:700;backdrop-filter:blur(6px);max-width:62vw;
+    font-size:13px;font-weight:700;backdrop-filter:blur(6px);max-width:56vw;
   }
   #stats .lo{color:#ff9d9d}
   #daywrap{width:46px;height:6px;background:#0b160b;border-radius:3px;display:inline-block;vertical-align:middle;overflow:hidden}
@@ -103,16 +103,35 @@
     font-size:11.5px;opacity:.5;font-weight:700;line-height:1.5;text-shadow:0 1px 3px #000
   }
 
-  /* ---------- Trage-/Kannen-Anzeige ---------- */
-  #gear{
-    position:absolute;left:50%;bottom:calc(10px + var(--sab));transform:translateX(-50%);
-    display:flex;gap:7px;font-size:12px;font-weight:800
+  /* ---------- Hotbar (Minecraft-Stil) ---------- */
+  #hotbar{
+    position:absolute;left:50%;bottom:calc(8px + var(--sab));
+    transform:translateX(calc(-50% - 74px));   /* frei von der Aktionsleiste rechts */
+    display:flex;gap:4px
   }
-  #gear div{
-    background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.14);border-radius:10px;
-    padding:4px 9px;backdrop-filter:blur(6px);white-space:nowrap
+  #hotbar .slot{
+    position:relative;width:46px;height:46px;border:2px solid rgba(255,255,255,.32);
+    background:rgba(12,22,12,.66);border-radius:6px;display:flex;align-items:center;
+    justify-content:center;font-size:21px;backdrop-filter:blur(4px)
   }
-  #gear .warn{border-color:#ff9d3c;color:#ffd76a}
+  #hotbar .slot .n{
+    position:absolute;right:3px;bottom:1px;font-size:11px;font-weight:800;
+    text-shadow:1px 1px 0 #000,-1px 1px 0 #000
+  }
+  #hotbar .slot.warn{border-color:#ff9d3c;background:rgba(70,30,10,.7)}
+  @media (max-height:400px){
+    #hotbar .slot{width:40px;height:40px;font-size:18px}
+  }
+
+  /* ---------- Aufgaben-Banner ---------- */
+  #quest{
+    position:absolute;left:50%;top:calc(50px + var(--sat));transform:translateX(-50%);
+    background:rgba(12,22,12,.82);border:1px solid #ffd76a;border-radius:12px;
+    padding:5px 14px;font-size:13px;font-weight:700;text-align:center;
+    backdrop-filter:blur(6px);max-width:64vw;display:none
+  }
+  #quest b{color:#ffd76a;margin-right:6px}
+  #quest small{display:block;font-size:10.5px;opacity:.72;font-weight:600;margin-top:1px}
 
   /* ---------- Alarm-Pfeile ---------- */
   .alert{
@@ -123,7 +142,7 @@
 
   /* ---------- Toasts ---------- */
   #toasts{
-    position:absolute;left:50%;top:calc(52px + var(--sat));transform:translateX(-50%);
+    position:absolute;left:50%;top:calc(100px + var(--sat));transform:translateX(-50%);
     display:flex;flex-direction:column;gap:4px;align-items:center;width:max-content;max-width:80vw
   }
   .toast{
@@ -205,7 +224,6 @@
       <span>🎯 <b id="hGoal">0/450</b> €</span>
       <span>📅 <b id="hDay">1</b> <span id="daywrap"><i id="daybar"></i></span></span>
       <span>📈 <b id="hPrice">12</b> €</span>
-      <span id="hInv"></span>
     </div>
     <div id="topbtns">
       <button id="btnHelp" title="Hilfe">❓</button>
@@ -215,12 +233,10 @@
 
   <div id="cross"><i></i><i></i><i></i><i></i></div>
   <div id="alerts"></div>
+  <div id="quest"></div>
   <div id="toasts"></div>
 
-  <div id="gear">
-    <div id="gCan">💧 5/5</div>
-    <div id="gBag">🧺 0/5</div>
-  </div>
+  <div id="hotbar"></div>
 
   <div id="target" class="hidden">
     <div id="tname"></div>
