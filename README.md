@@ -2,11 +2,11 @@
 
 Ein Minecraft-artiges Survival-Spiel in **Ego-Perspektive**, im Browser, ohne Installation.
 Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt sie wieder**
-(rechte Maustaste), stellst dir an der Werkbank Werkzeug her und hältst nachts die
+(rechte Maustaste), legst dir im **Raster** Werkzeug zurecht und hältst nachts die
 **Bennis** aus. Kein Punktestand, keine Aufgabenliste — nur überleben.
 
-**Ziel:** In **🧰 Truhen** überall in der Welt liegen vier Seiten eines alten Kochbuchs.
-Zusammen ergeben sie das Rezept der **🍲 Dominik-Suppe**. Wer sie kocht, hat gewonnen.
+**Ziel:** Das Rezept der **🍲 Dominik-Suppe** liegt als **📜 Zettel** in einer der
+Truhen am äußersten Rand der Welt. Wer es findet und die Suppe kocht, hat gewonnen.
 
 ## Spielen
 
@@ -28,8 +28,8 @@ Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wi
 | `␣ Leertaste` | springen |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | Block setzen · Truhe/Werkbank/Kochtopf benutzen · Essen |
-| `E` | Inventar mit Bauliste |
+| **Rechte Maustaste** | Block setzen · Truhe/Werkbank/Kochtopf benutzen · 📖 Notiz lesen · Essen |
+| `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
 | `P` | Pause |
 
@@ -67,35 +67,55 @@ Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, K
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
 In dich selbst oder in einen Benni hinein baust du nicht.
 
-## Bauliste
+## Bauen im Raster
 
-`E` öffnet Inventar und Bauliste. Die einfachen Sachen gehen überall, alles Weitere
-braucht eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf), die Suppe einen aufgestellten
-**🍲 Kochtopf**.
+`E` öffnet den Rucksack mit dem Handwerksfeld. Zutaten werden **hineingelegt** wie beim
+Vorbild: anklicken, ins Raster klicken. Stimmt das Muster, erscheint rechts das Ergebnis —
+anklicken, fertig. Was danach noch im Raster liegt, wandert beim Schließen zurück.
 
-| Ergebnis | Zutaten | Wo |
+- Im Rucksack ist das Raster **2×2**.
+- Eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf) macht daraus **3×3**. Alles, was
+  breiter oder höher als zwei ist, geht nur dort.
+- Die Suppe geht nur an einem aufgestellten **🍲 Kochtopf**.
+- Muster sind **verschiebbar** und dürfen **gespiegelt** liegen — genau wie im Vorbild.
+
+| Ergebnis | Muster | |
 |---|---|---|
-| 🟧 Bretter ×4 | 1 🪵 | überall |
-| 🥢 Stock ×4 | 2 🟧 | überall |
-| 🛠️ Werkbank | 4 🟧 | überall |
-| 🔥 Fackel ×4 | 2 🥢 + 1 🪨 | überall |
-| 🥣 Schale ×2 | 3 🟧 | Werkbank |
-| ⛏️ Spitzhacke | 3 🪨 + 2 🥢 | Werkbank |
-| 🪓 Axt | 3 🪨 + 2 🥢 | Werkbank |
-| ⚔️ Steinschwert | 2 🪨 + 1 🥢 | Werkbank |
-| 🧱 Ziegel ×4 | 2 🪨 + 2 🟨 | Werkbank |
-| 🍲 Kochtopf | 6 🪨 + 1 🟧 | Werkbank |
-| **🍲 Dominik-Suppe** | 1 🥣 + 3 🍑 + 2 🍄 + 1 🧂 | Kochtopf, Rezept nötig |
+| 🟧 Bretter ×4 | 🪵 | Anordnung egal |
+| 🥢 Stock ×4 | 🟧 / 🟧 | |
+| 🛠️ Werkbank | 🟧🟧 / 🟧🟧 | |
+| 🔥 Fackel ×4 | 🪨 / 🥢 | |
+| 🧱 Ziegel ×4 | 🪨🟨 / 🟨🪨 | |
+| 🥣 Schale ×2 | 🟧·🟧 / ·🟧· | Werkbank |
+| ⚔️ Steinschwert | 🪨 / 🪨 / 🥢 | Werkbank |
+| ⛏️ Spitzhacke | 🪨🪨🪨 / ·🥢· / ·🥢· | Werkbank |
+| 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
+| 🍲 Kochtopf | 🪨·🪨 / 🪨·🪨 / 🪨🟧🪨 | Werkbank |
+| **🍲 Dominik-Suppe** | 🍑🍑🍑 / 🍄🧂🍄 / ·🥣· | Kochtopf, **Rezept nötig** |
 
-## Das Rezept
+## Das Rezeptbuch
 
-Die vier Kochbuchseiten liegen in Truhen. **Zwei stecken in Dorftruhen** — Dörfer sieht
-man von weitem, damit ist der Einstieg sicher. Die anderen beiden liegen irgendwo
-draußen; oben links steht, wie viele du schon hast. Erst mit allen vier tauchen Rezept
-und Zutatenliste in der Bauliste auf.
+Unter dem Raster steht, was du kennst. Ein Rezept landet auf zwei Wegen darin:
+
+1. **Gefunden.** In **🧰 Truhen** liegen **📜 Rezeptzettel**. Sie sind nach Entfernung
+   sortiert: das Alltägliche (Werkbank, Fackel) liegt in den Truhen nah am Tal, das
+   Seltenere weiter draußen. Ein Zettel geht direkt ins Buch, nicht ins Inventar.
+2. **Selbst herausgefunden.** Das Raster fragt nicht, ob du das Rezept kennst — wer das
+   Muster errät, hat es gebaut und kennt es ab dann. Nur die Suppe nicht.
+
+**Das Suppenrezept** liegt in **einer der drei entlegensten Truhen** der Welt. Ohne den
+Zettel bleibt der Kochtopf leer, egal wie richtig alles im Raster liegt.
 
 Truhen enthalten außerdem Vorräte: Bretter, Stöcke, Fackeln, Salz, Pilze, Dominiks,
 Schalen, Stein — gelegentlich auch ein Schwert.
+
+## Notizen
+
+Überall in der Welt stehen **📖 zwölf Notizen** herum (Rechtsklick zum Lesen). Sie
+erzählen, wie das mit Dominik, den Bennis und dem Fest angefangen hat, und ein paar von
+ihnen helfen konkret weiter. Sie liegen dort, wo man ohnehin vorbeikommt: eine gleich am
+Startpunkt, je eine neben den drei Dorfplätzen, zwei auf den höchsten Gipfeln, zwei an
+den Furten, der Rest verstreut im Grasland. Oben links steht, wie viele du gelesen hast.
 
 ## Die Welt
 
@@ -107,7 +127,7 @@ jedem Start dieselbe, kein Speicherstand nötig.
 - **Wälder** in zusammenhängenden Gebieten; an manchen Bäumen hängen **🍑 Dominiks**,
   im Schatten stehen **🍄 Pilze**.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
-- **16 Truhen**, drei davon in Dörfern.
+- **16 Truhen**, drei davon in Dörfern; **12 Notizen** zum Lesen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
   tiefer gräbst du dich nicht.

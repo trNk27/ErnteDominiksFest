@@ -251,6 +251,13 @@ const TEX={
     g.fillRect(3,3,3,3); g.fillRect(10,5,3,3); g.fillRect(6,10,3,3);
     g.fillStyle='#e8dcc0'; g.fillRect(0,12,s,4);
   }),
+  note   :noiseTex(['#e6d9b4','#ddcea3','#efe4c6'],45,(g,s)=>{
+    g.fillStyle='#8a7245'; g.fillRect(0,0,s,1); g.fillRect(0,s-1,s,1);
+    g.fillRect(0,0,1,s); g.fillRect(s-1,0,1,s);
+    g.fillStyle='#6b5a3a';
+    for(let y=4;y<12;y+=3) g.fillRect(3,y,9-(y&2),1);
+    g.fillStyle='#b03a2e'; g.fillRect(10,12,3,3);      // Wachssiegel
+  }),
 };
 
 // ------------------------------------------------------------------ Blöcke
@@ -271,6 +278,7 @@ const BLOCKS={
   dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik'},
   shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz'},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
+  lore   :{tex:'note',  hard:0,   drop:null,     nm:'Alte Notiz', use:'lore', noBreak:true},
 };
 // Fällt auf einen unbekannten Typ zurück, statt die Vernetzung zu sprengen:
 // eine kaputte Textur ist ein Schönheitsfehler, eine Ausnahme killt die Schleife.
@@ -296,23 +304,12 @@ const ITEMS={
   sword   :{ic:'⚔️',nm:'Steinschwert',dmg:6},
   axe     :{ic:'🪓',nm:'Steinaxt',    dmg:4, axe:true},
   pick    :{ic:'⛏️',nm:'Spitzhacke',  dmg:3, pick:true},
-  page1   :{ic:'📖',nm:'Seite I',     page:1},
-  page2   :{ic:'📖',nm:'Seite II',    page:2},
-  page3   :{ic:'📖',nm:'Seite III',   page:3},
-  page4   :{ic:'📖',nm:'Seite IV',    page:4},
   soup    :{ic:'🍲',nm:'Dominik-Suppe',food:20},
-};
-const PAGE_TEXT={
-  1:'Nimm eine <b>🥣 Schale</b>. Ohne Schale keine Suppe.',
-  2:'Drei <b>🍑 Dominiks</b>, frisch vom Baum gepflückt.',
-  3:'Zwei <b>🍄 Pilze</b> aus dem Wald, dazu eine Prise <b>🧂 Salz</b>.',
-  4:'Alles in den <b>🍲 Kochtopf</b>. Stell ihn auf und rühr um.',
 };
 
 // ------------------------------------------------------------------ Inventar
 const STACK=64, NSLOT=36, NBAR=9;
 const slots=Array.from({length:NSLOT},()=>null);   // {id,n} oder null
-const pages=new Set();                             // gefundene Buchseiten
 
 function countOf(id){ let n=0; for(const s of slots) if(s&&s.id===id) n+=s.n; return n; }
 function give(id,n=1){
@@ -339,40 +336,93 @@ const hasTool=k=>{ const id=heldId(); return !!(id&&ITEMS[id]&&ITEMS[id][k]); };
 const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
 
 // ------------------------------------------------------------------ Rezepte
-// station: null = überall · 'bench' = an der Werkbank · 'pot' = am Kochtopf
+// pat  Zeilen von oben nach unten, key übersetzt die Zeichen, ' ' bleibt leer
+// shapeless  Zutaten in beliebiger Anordnung
+// rank je kleiner, desto alltäglicher — danach liegen sie in den Truhen
+// Ob eine Werkbank nötig ist, steht nirgends: was breiter oder höher als zwei
+// ist, passt schlicht nicht ins 2×2-Raster des Inventars.
 const RECIPES=[
-  {id:'plank', out:['plank',4], cost:{log:1},                 station:null},
-  {id:'stick', out:['stick',4], cost:{plank:2},               station:null},
-  {id:'bench', out:['bench',1], cost:{plank:4},               station:null},
-  {id:'torch', out:['torch',4], cost:{stick:2,stone:1},       station:null},
-  {id:'bowl',  out:['bowl',2],  cost:{plank:3},               station:'bench'},
-  {id:'pick',  out:['pick',1],  cost:{stone:3,stick:2},       station:'bench'},
-  {id:'axe',   out:['axe',1],   cost:{stone:3,stick:2},       station:'bench'},
-  {id:'sword', out:['sword',1], cost:{stone:2,stick:1},       station:'bench'},
-  {id:'brick', out:['brick',4], cost:{stone:2,sand:2},        station:'bench'},
-  {id:'pot',   out:['pot',1],   cost:{stone:6,plank:1},       station:'bench'},
-  {id:'soup',  out:['soup',1],  cost:{bowl:1,dominik:3,mushroom:2,salt:1},
-   station:'pot', secret:true},
+  {id:'plank', rank:0, out:['plank',4], shapeless:['log']},
+  {id:'stick', rank:1, out:['stick',4], pat:['P','P'],     key:{P:'plank'}},
+  {id:'bench', rank:2, out:['bench',1], pat:['PP','PP'],   key:{P:'plank'}},
+  {id:'torch', rank:3, out:['torch',4], pat:['S','K'],     key:{S:'stone',K:'stick'}},
+  {id:'brick', rank:4, out:['brick',4], pat:['SA','AS'],   key:{S:'stone',A:'sand'}},
+  {id:'bowl',  rank:5, out:['bowl',2],  pat:['P P',' P '], key:{P:'plank'}},
+  {id:'sword', rank:6, out:['sword',1], pat:['S','S','K'], key:{S:'stone',K:'stick'}},
+  {id:'pick',  rank:7, out:['pick',1],  pat:['SSS',' K ',' K '], key:{S:'stone',K:'stick'}},
+  {id:'axe',   rank:8, out:['axe',1],   pat:['SS ','SK ',' K '], key:{S:'stone',K:'stick'}},
+  {id:'pot',   rank:9, out:['pot',1],   pat:['S S','S S','SPS'], key:{S:'stone',P:'plank'}},
+  {id:'soup',  rank:99,out:['soup',1],  pat:['DDD','MAM',' B '],
+   key:{D:'dominik',M:'mushroom',A:'salt',B:'bowl'}, station:'pot', secret:true},
 ];
-const knowsSoup=()=>pages.size>=4;
-function canCraft(r,station){
-  if(r.secret&&!knowsSoup()) return 'Rezept fehlt';
-  if(r.station==='bench'&&station!=='bench') return 'Werkbank nötig';
-  if(r.station==='pot'&&station!=='pot') return 'Kochtopf nötig';
-  for(const k in r.cost) if(countOf(k)<r.cost[k]) return 'Material fehlt';
-  return true;
+// Jedes Rezept gibt es auch als Zettel zum Finden.
+for(const r of RECIPES)
+  ITEMS['rec_'+r.id]={ic:'📜',nm:'Rezept: '+ITEMS[r.out[0]].nm,recipe:r.id};
+
+// Die zwei offensichtlichen kennt man von zu Hause, der Rest will gefunden
+// oder ausprobiert werden.
+const known=new Set(['plank','stick']);
+const knowsSoup=()=>known.has('soup');
+// Auf den kleinsten belegten Ausschnitt zuschneiden — genau wie das, was im
+// Raster liegt. Sonst hängt an 'SS ' eine leere Spalte, und die Axt passt zu
+// nichts mehr.
+function trimRows(rows){
+  let x0=1e9,x1=-1,y0=1e9,y1=-1;
+  rows.forEach((row,y)=>row.forEach((id,x)=>{
+    if(!id) return;
+    x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y);
+  }));
+  if(x1<0) return [[]];
+  return rows.slice(y0,y1+1).map(row=>{
+    const r=[];
+    for(let x=x0;x<=x1;x++) r.push(row[x]??null);
+    return r;
+  });
 }
-function doCraft(r,station){
-  if(canCraft(r,station)!==true) return false;
-  for(const k in r.cost) take(k,r.cost[k]);
-  const rest=give(r.out[0],r.out[1]);
-  if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
-  state.crafted++;
-  SND.craft();
-  if(r.id==='soup'&&!state.won) winGame();
-  else toast(ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' gebaut.','good',1600);
-  return true;
+const patRows=r=>trimRows(r.shapeless?[r.shapeless.slice()]
+                                     :r.pat.map(row=>[...row].map(ch=>ch===' '?null:r.key[ch])));
+function needList(rows){
+  const n={};
+  for(const row of rows) for(const id of row) if(id) n[id]=(n[id]||0)+1;
+  return n;
 }
+const haveAll=rows=>{ const n=needList(rows); for(const id in n) if(countOf(id)<n[id]) return false; return true; };
+
+// ------------------------------------------------------------------ Notizen
+// Liegen als Zettel draußen in der Welt: auf den Dorfplätzen, an den Furten,
+// oben auf den Bergen. Die letzten drei sagen, wo das Suppenrezept steckt.
+// Die Reihenfolge ist die Fundreihenfolge: [0] liegt am Startpunkt, [1..3] in
+// den Dörfern, [4,5] auf den Bergen, [6,7] an den Furten, der Rest verstreut.
+// Was weiterhilft, liegt also dort, wo man ohnehin vorbeikommt.
+const LORE=[
+  {t:'Wie es anfing',    s:'Das Tal war leer, bis <b>Dominik</b> kam und einen Kern in die Erde drückte. '+
+                           'Am nächsten Morgen stand da ein Baum, und an dem Baum hing er selbst — in klein und rund.'},
+  {t:'Das Fest',         s:'Einmal im Jahr wurde geerntet und gekocht, und das hieß <b>ErnteDominiksFest</b>. '+
+                           'Es gab genau einen Topf Suppe, und jeder bekam einen Schluck. Mehr brauchte es nicht.'},
+  {t:'Zettelwirtschaft', s:'Wir haben jedes Rezept aufgeschrieben und in die <b>🧰 Truhen</b> gelegt. '+
+                           'Was man täglich braucht, kam in die nahen. Was selten gebraucht wird, in die weiten.'},
+  {t:'Der lange Weg',    s:'Das Rezept der Suppe haben wir nicht ins Dorf gelegt — dafür war es zu wertvoll. '+
+                           'Es liegt <b>ganz draußen</b>, in einer der Truhen, die am weitesten vom Tal entfernt sind.'},
+  {t:'Über die Bennis',  s:'Sie kommen mit der Dunkelheit und gehen mit dem Licht, und niemand weiß, wo sie tagsüber stecken. '+
+                           'Eine <b>🔥 Fackel</b> hält sie weit weg. Eine zwei Blöcke hohe Mauer auch.'},
+  {t:'Der letzte Eintrag',s:'Ich hatte den <b>🍲 Kochtopf</b> schon aufgestellt: oben drei <b>🍑 Dominiks</b> nebeneinander, '+
+                           'darunter zwei <b>🍄 Pilze</b> mit dem <b>🧂 Salz</b> dazwischen, ganz unten in der Mitte die <b>🥣 Schale</b>. '+
+                           'Dann kam die Nacht. Wenn du das liest: koch sie fertig.'},
+  {t:'Vom Salz',         s:'Am Ufer, wo der Fluss den Sand ausgewaschen hat, findet man es. '+
+                           'Nicht in jeder Handvoll, aber in genug davon. Grab weiter.'},
+  {t:'Die Dörfer',       s:'Drei sind übrig. Sie stehen auf flachem Grund, man sieht sie von weitem. '+
+                           'In jedem steht eine Truhe, und in jeder Truhe lag mal ein Zettel.'},
+  {t:'Die Ernte',        s:'Man pflückt nicht von jedem Baum. Nur jeder fünfte trägt, und der trägt reichlich. '+
+                           'Wer alles abräumt, hat im nächsten Jahr nichts — also lass etwas hängen.'},
+  {t:'Von den Pilzen',   s:'Sie stehen im Schatten der Wälder, immer ein paar Schritte neben einem Baum. '+
+                           'Zwei genügen für den Topf. Der Rest ist Abendessen.'},
+  {t:'Die Schale',       s:'Drei Bretter im Bogen: links eins, rechts eins, unten in die Mitte das dritte. '+
+                           'Kein Kunststück — aber ohne sie hast du nichts, wo die Suppe hineinkann.'},
+  {t:'Von der Werkbank', s:'Vier Bretter im Quadrat, und aus zwei mal zwei werden drei mal drei. '+
+                           'Alles Größere geht nur dort. Stell sie hin, wo du sie wiederfindest.'},
+];
+const lore=new Set();                              // gelesene Notizen
+const loreAt=new Map();                            // "x,y,z" → Index in LORE
 
 // ------------------------------------------------------------------ Weltdaten
 const scenery=new Map();                 // "x,y,z" → Blocktyp (Bäume, Häuser, Truhen)
@@ -500,10 +550,13 @@ const chestSpots=[];
     if(scenery.has(K(mx,terrainH(mx,mz),mz))) continue;
     put('shroom',mx,terrainH(mx,mz),mz);
   }
-  // --- Truhen: eine je Dorf, der Rest verstreut auf ebenem Grasland
+  // --- Truhen: eine je Dorf, der Rest verstreut auf ebenem Grasland.
+  // Aus derselben Zufallsformel wie die Wälder, damit die Welt bei jedem
+  // Start dieselbe bleibt — sonst wandern die Rezepte von Runde zu Runde.
+  const rr=(a,b)=>a+r()*(b-a);
   for(let k=0;k<6000&&chestSpots.length<16;k++){
-    const x=Math.round(rnd(BOUND.x0+6,BOUND.x1-6));
-    const z=Math.round(rnd(BOUND.z0+6,BOUND.z1-6));
+    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6));
+    const z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
     if(Math.hypot(x-HOME.x,z-HOME.z)<12) continue;
     const h=treeSpot(x,z);
     if(h<0) continue;
@@ -511,19 +564,26 @@ const chestSpots=[];
     if(chestSpots.some(c=>Math.hypot(c.x-x,c.z-z)<18)) continue;
     chestSpots.push({x,y:h,z});
   }
-  // --- Truhen füllen; vier davon bekommen je eine Buchseite.
-  // Zwei Seiten liegen in Dorftruhen: Dörfer sieht man von weitem, damit ist
-  // der Einstieg ins Rezept sicher. Die anderen zwei muss man wirklich suchen.
-  const scattered=chestSpots.map((c,i)=>i).filter(i=>i>=VILLAGES.length)
-    .sort((a,b)=>hash2(a,7,99)-hash2(b,7,99));
-  const pageAt=new Map([[0,'page1'],[VILLAGES.length-1,'page2'],
-    [scattered[0],'page3'],[scattered[1],'page4']]);
+  // --- Rezepte auf die Truhen verteilen: nach Entfernung vom Startpunkt und
+  // nach Alltäglichkeit. Was man dauernd braucht, liegt in den nächsten
+  // Truhen; je weiter draußen, desto seltener das Rezept. Das Suppenrezept
+  // steckt in einer der drei entlegensten — dahin muss man wirklich wollen.
+  const byDist=chestSpots.map((c,i)=>i).sort((a,b)=>
+    Math.hypot(chestSpots[a].x-SPAWN.x,chestSpots[a].z-SPAWN.z)-
+    Math.hypot(chestSpots[b].x-SPAWN.x,chestSpots[b].z-SPAWN.z));
+  const recipeAt=new Map();
+  const far=byDist.slice(-3);
+  RECIPES.filter(x=>!x.secret&&!known.has(x.id)).sort((a,b)=>a.rank-b.rank)
+    .forEach((x,k)=>{ if(k<byDist.length-far.length) recipeAt.set(byDist[k],'rec_'+x.id); });
+  recipeAt.set(far[Math.floor(r()*far.length)],'rec_soup');
+
+  // --- Truhen füllen
   const LOOT=[['plank',3,8],['stick',2,6],['torch',2,5],['salt',1,3],['mushroom',1,4],
               ['dominik',1,3],['bowl',1,1],['stone',3,8],['dirt',2,6],['sword',1,1]];
   chestSpots.forEach((c,i)=>{
     put('chest',c.x,c.y,c.z);
     const items=[];
-    const p=pageAt.get(i);
+    const p=recipeAt.get(i);
     if(p) items.push({id:p,n:1});
     const cnt=2+Math.floor(r()*3);
     for(let k=0;k<cnt;k++){
@@ -533,6 +593,43 @@ const chestSpots=[];
     }
     chests.set(K(c.x,c.y,c.z),{items,opened:false});
   });
+
+  // --- Notizen in der Welt verteilen. Erst die Orte, an denen man ohnehin
+  // vorbeikommt, dann der Rest — die Reihenfolge entscheidet, welcher Text
+  // wo landet (siehe LORE).
+  const loreSpots=[];
+  const noteHere=(x,z)=>{
+    x=Math.round(x); z=Math.round(z);
+    if(loreSpots.length>=LORE.length) return false;
+    if(x<BOUND.x0+3||x>BOUND.x1-3||z<BOUND.z0+3||z>BOUND.z1-3) return false;
+    const y=terrainH(x,z);
+    if(y<SEA||scenery.has(K(x,y,z))) return false;   // y===SEA ist das flache Starttal
+    if(chestSpots.some(s=>Math.abs(s.x-x)<2&&Math.abs(s.z-z)<2)) return false;
+    if(loreSpots.some(s=>Math.hypot(s.x-x,s.z-z)<10)) return false;
+    loreSpots.push({x,y,z});
+    return true;
+  };
+  noteHere(SPAWN.x+4,SPAWN.z-4);                       // gleich am Startpunkt
+  for(const v of VILLAGES) noteHere(v.x+3,v.z+4);      // neben dem Dorfplatz
+  const peaks=[];                                      // die zwei höchsten Gipfel
+  for(let x=BOUND.x0+4;x<=BOUND.x1-4;x+=3)
+    for(let z=BOUND.z0+4;z<=BOUND.z1-4;z+=3){
+      const h=terrainH(x,z);
+      if(h>=16) peaks.push({x,z,h});
+    }
+  peaks.sort((a,b)=>b.h-a.h);
+  for(let k=0,n=0;k<peaks.length&&n<2;k++) if(noteHere(peaks[k].x,peaks[k].z)) n++;
+  for(let k=0,n=0;k<4000&&n<2;k++){                    // an den Furten
+    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6)), z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
+    if(riverAt(x,z).d>RIVER_W+3||terrainH(x,z)<=SEA) continue;
+    if(noteHere(x,z)) n++;
+  }
+  for(let k=0;k<9000&&loreSpots.length<LORE.length;k++){   // und verstreut
+    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6)), z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
+    if(treeSpot(x,z)<0) continue;
+    noteHere(x,z);
+  }
+  loreSpots.forEach((s,i)=>{ put('lore',s.x,s.y,s.z); loreAt.set(K(s.x,s.y,s.z),i); });
 })();
 
 // ------------------------------------------------------------------ Chunk-Vernetzung
@@ -687,9 +784,11 @@ const litAt=(x,z,r=14)=>torches.some(t=>Math.hypot(t.x-x,t.z-z)<r);
 // ------------------------------------------------------------------ Bewohner
 const CHARS=[
   {key:'manni',name:'Manni',h:1.9,x:-6,z:14,color:'#ff6b4a',
-   lines:['In den Truhen liegen alte Kochbuchseiten.','Nachts bleibe ich lieber im Licht.']},
+   lines:['In den Truhen liegen alte Rezeptzettel.','Nachts bleibe ich lieber im Licht.',
+          'Die Notizen hier herum kann man lesen.']},
   {key:'jannes',name:'Jannes',h:1.88,x:6,z:14,color:'#4ab0ff',
-   lines:['Dominiks wachsen an manchen Bäumen im Wald.','Vier Seiten. Dann kannst du die Suppe kochen.']},
+   lines:['Dominiks wachsen an manchen Bäumen im Wald.','Leg die Sachen ins Raster — wie beim Vorbild.',
+          'Das Suppenrezept? Weit draußen, sagt man.']},
 ];
 const texLoader=new THREE.TextureLoader();
 const loadTex=url=>new Promise((res,rej)=>texLoader.load(url,t=>{
@@ -789,7 +888,7 @@ function spawnMob(){
     new THREE.MeshLambertMaterial({map:benniTex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
   mesh.position.set(x,y+h/2,z); mesh.castShadow=true;
   scene.add(mesh);
-  mobs.push({x,z,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6)});
+  mobs.push({x,z,y,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6)});
 }
 function dropMob(m,i){
   scene.remove(m.mesh); m.mesh.geometry.dispose(); m.mesh.material.dispose();
@@ -807,6 +906,14 @@ function mobBlocked(x,z,fromY){
   const s=surfaceAt(x,z);
   return s-fromY>1.001||s<SEA-1;
 }
+// surfaceAt() rastet auf ganze Blöcke ein: ungebremst springt ein Benni bei
+// jedem Zellwechsel und flackert an Kanten hin und her. Also nachziehen statt
+// setzen — nur bei großen Sprüngen (Respawn) sofort.
+function mobY(m,dt){
+  const g=surfaceAt(m.x,m.z);
+  m.y=Math.abs(g-m.y)>2.5?g:lerp(m.y,g,Math.min(1,dt*11));
+  return m.y;
+}
 function updateMobs(dt){
   for(let i=mobs.length-1;i>=0;i--){
     // Ein Treffer kann zum Respawn führen, und der räumt die Umstehenden weg —
@@ -821,7 +928,7 @@ function updateMobs(dt){
       m.mesh.material.opacity=Math.max(0,(m.mesh.material.opacity??1)-dt*.7);
       m.mesh.material.transparent=true;
       if(d>44||m.mesh.material.opacity<=.02){ dropMob(m,i); continue; }
-      m.mesh.position.set(m.x,surfaceAt(m.x,m.z)+.98,m.z);
+      m.mesh.position.set(m.x,mobY(m,dt)+.98,m.z);
       continue;
     }
     if(d>1.9){
@@ -841,7 +948,7 @@ function updateMobs(dt){
         if(Math.abs(surfaceAt(m.x,m.z)-player.y)<2.2) hurtPlayer(MOB_DMG);
       }
     }
-    m.mesh.position.set(m.x,surfaceAt(m.x,m.z)+.98+Math.abs(Math.sin(m.bob))*.06,m.z);
+    m.mesh.position.set(m.x,mobY(m,dt)+.98+Math.abs(Math.sin(m.bob))*.06,m.z);
   }
 }
 function hurtPlayer(dmg){
@@ -964,6 +1071,7 @@ function useRight(){
     if(u==='chest') return openChest(target.cell);
     if(u==='bench') return openCraft('bench');
     if(u==='pot')   return openCraft('pot');
+    if(u==='lore')  return readLore(target.cell);
   }
   // 2. Essen
   if(it&&it.food){
@@ -1036,27 +1144,62 @@ function renderChest(){
 function takeFromChest(i){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
   const it=c.items[i]; if(!it) return;
+  const rec=ITEMS[it.id].recipe;
+  if(rec){                                   // Zettel gehen ins Rezeptbuch, nicht in den Rucksack
+    c.items.splice(i,1);
+    learnRecipe(rec);
+    updateHUD(); renderChest();
+    return;
+  }
   const rest=give(it.id,it.n);
   if(rest===it.n){ toast('🎒 Inventar voll.','warn',1400); return; }
-  const wasPage=ITEMS[it.id].page;
   it.n=rest;
   if(!it.n) c.items.splice(i,1);
-  if(wasPage&&!pages.has(wasPage)) pendingPage=it.id;
   SND.tap();
   updateHUD();
   renderChest();
 }
-function foundPage(id){
-  const p=ITEMS[id].page;
-  if(pages.has(p)) return;
-  pages.add(p);
+
+// ------------------------------------------------------------------ Rezeptbuch
+let pendingCard=null;                        // wird nach dem Truhenfenster gezeigt
+function learnRecipe(id){
+  const r=RECIPES.find(x=>x.id===id);
+  if(!r) return;
+  if(known.has(id)){ toast('📜 Das Rezept kennst du schon.','',1600); return; }
+  known.add(id);
   SND.book();
-  updateHUD();
-  const done=knowsSoup();
-  showModal(`<h2>📖 Kochbuchseite ${'I'.repeat(p).replace('IIII','IV')}</h2>
-    <div class="page">${PAGE_TEXT[p]}</div>
-    <p style="font-size:12px;opacity:.8">${pages.size}/4 Seiten gefunden.</p>
-    ${done?'<div class="page"><b>Das Rezept ist vollständig.</b> Stell einen 🍲 Kochtopf auf und koch die Dominik-Suppe.</div>':''}
+  pendingCard=r;
+  toast('📜 Rezept gelernt: '+ITEMS[r.out[0]].nm,'good',2600);
+}
+// Ein Muster als kleines Raster, so wie es ins Handwerksfeld gehört.
+function patHTML(r){
+  const rows=patRows(r);
+  const w=Math.max(...rows.map(x=>x.length));
+  let g='';
+  for(const row of rows) for(let x=0;x<w;x++)
+    g+=`<div class="pc">${row[x]?ITEMS[row[x]].ic:''}</div>`;
+  return `<div class="patwrap">
+    <div class="pat" style="grid-template-columns:repeat(${w},30px)">${g}</div>
+    <div class="arrow">➜</div>
+    <div class="pc res">${ITEMS[r.out[0]].ic}${r.out[1]>1?`<span class="n">${r.out[1]}</span>`:''}</div>
+    </div>`+
+    (r.shapeless?'<p style="font-size:11.5px;opacity:.7;text-align:center">Anordnung egal.</p>':'');
+}
+function recipeCard(r){
+  showModal(`<h2>📜 Rezept: ${ITEMS[r.out[0]].nm}</h2>${patHTML(r)}
+    <p style="font-size:12.5px;opacity:.85;text-align:center">
+      Steht ab jetzt im Rezeptbuch — <b>E</b> öffnet es.</p>
+    <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
+}
+
+// ------------------------------------------------------------------ Notizen lesen
+function readLore(cell){
+  const i=loreAt.get(K(cell.x,cell.y,cell.z));
+  if(i==null) return;
+  const l=LORE[i];
+  if(!lore.has(i)){ lore.add(i); SND.book(); updateHUD(); }
+  showModal(`<h2>📖 ${l.t}</h2><div class="page">${l.s}</div>
+    <p style="font-size:12px;opacity:.8;text-align:center">${lore.size}/${LORE.length} Notizen gelesen.</p>
     <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
 }
 
@@ -1066,40 +1209,149 @@ function winGame(){
   state.won=true;
   SND.win();
   showModal(`<h2>🍲 Dominik-Suppe!</h2>
-    <p>Sie ist fertig. Vier Seiten, ein Kochtopf, eine Suppe — Ziel erreicht.</p>
+    <p>Sie ist fertig. Ein Rezept vom Ende der Welt, ein Kochtopf, eine Suppe — Ziel erreicht.</p>
     <p style="font-size:12px;opacity:.8">⛏️ ${state.mined} Blöcke abgebaut · 🧱 ${state.placed} gesetzt ·
-    🧰 ${state.chests} Truhen · 🌙 Tag ${state.day} · 💀 ${state.deaths}× gestorben</p>
+    🧰 ${state.chests} Truhen · 📜 ${known.size}/${RECIPES.length} Rezepte · 📖 ${lore.size}/${LORE.length} Notizen ·
+    🌙 Tag ${state.day} · 💀 ${state.deaths}× gestorben</p>
     <div class="btnrow"><button class="primary" data-act="close">Weiterspielen</button></div>`);
 }
 
 // ------------------------------------------------------------------ Fenster
 const modal=el('modal'), mbox=el('mbox');
 let craftStation=null;
-function showModal(html){
+function showModal(html,keep){
+  const sc=mbox.scrollTop;
   mbox.innerHTML=html; modal.classList.remove('hidden'); state.paused=true;
+  mbox.scrollTop=keep?sc:0;              // beim Umsortieren nicht nach oben springen
   if(document.pointerLockElement) document.exitPointerLock();
 }
 function hideModal(){
+  clearGrid();                           // was im Raster liegt, gehört dem Spieler
+  swapRef=null;
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
   mining=false;
 }
 const modalOpen=()=>!modal.classList.contains('hidden');
 
-function recipeRow(r,station){
-  const st=canCraft(r,station);
-  const out=ITEMS[r.out[0]];
-  const cost=Object.entries(r.cost).map(([k,v])=>v+'× '+ITEMS[k].ic).join(' + ');
-  return `<div class="recipe${st===true?'':' off'}"><div class="ico">${out.ic}</div>
-    <div class="txt"><div class="nm">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
-    <div class="ds">${cost}${st===true?'':' · '+st}</div></div>
-    <button data-craft="${r.id}" ${st===true?'':'disabled'}>Bauen</button></div>`;
+// ------------------------------------------------------------------ Handwerksfeld
+// Immer neun Zellen, zeilenweise und drei breit. Im Inventar sind nur 0,1,3,4
+// sichtbar — dadurch passt kein Muster hinein, das breiter oder höher als zwei
+// ist, und die Werkbank braucht keine Sonderregel.
+const grid=Array(9).fill(null);
+let gridN=2;
+const gridCells=()=>gridN===3?[0,1,2,3,4,5,6,7,8]:[0,1,3,4];
+function clearGrid(){
+  for(let i=0;i<9;i++){
+    const s=grid[i]; if(!s) continue;
+    grid[i]=null;
+    const rest=give(s.id,s.n);
+    if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+  }
+}
+// Belegte Zellen auf den kleinsten Ausschnitt zuschneiden, damit dasselbe
+// Muster überall im Raster zählt.
+function gridShape(){
+  let x0=3,x1=-1,y0=3,y1=-1;
+  for(let y=0;y<3;y++) for(let x=0;x<3;x++){
+    if(!grid[y*3+x]) continue;
+    x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y);
+  }
+  if(x1<0) return null;
+  const rows=[];
+  for(let y=y0;y<=y1;y++){
+    const row=[];
+    for(let x=x0;x<=x1;x++) row.push(grid[y*3+x]?.id||null);
+    rows.push(row);
+  }
+  return rows;
+}
+const sameRows=(a,b)=>a.length===b.length&&a[0].length===b[0].length&&
+  a.every((r,y)=>r.every((v,x)=>v===b[y][x]));
+const mirrorRows=rows=>rows.map(r=>r.slice().reverse());
+function matchRecipe(){
+  const rows=gridShape();
+  if(!rows) return null;
+  const ids=grid.filter(Boolean).map(s=>s.id).sort();
+  for(const r of RECIPES){
+    if(r.station&&r.station!==craftStation) continue;
+    if(r.secret&&!known.has(r.id)) continue;          // die Suppe nur mit Rezept
+    if(r.shapeless){
+      const w=r.shapeless.slice().sort();
+      if(w.length===ids.length&&w.every((v,i)=>v===ids[i])) return r;
+    }else{
+      const p=patRows(r);
+      if(sameRows(p,rows)||sameRows(mirrorRows(p),rows)) return r;
+    }
+  }
+  return null;
+}
+function craftFromGrid(){
+  const r=matchRecipe();
+  if(!r){ SND.fail(); return false; }
+  for(let i=0;i<9;i++){ const s=grid[i]; if(s&&--s.n<=0) grid[i]=null; }
+  const rest=give(r.out[0],r.out[1]);
+  if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+  state.crafted++;
+  SND.craft();
+  const fresh=!known.has(r.id);
+  known.add(r.id);                       // selbst herausgefunden zählt auch
+  updateHUD();
+  if(r.id==='soup'&&!state.won){ winGame(); return true; }
+  toast(fresh?'📜 Rezept entdeckt: '+ITEMS[r.out[0]].nm
+             :ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' gebaut.','good',fresh?2600:1600);
+  renderCraft();
+  return true;
+}
+// Aus dem Rezeptbuch: Zutaten aus dem Inventar ins Raster legen.
+function fillFromBook(r){
+  const rows=patRows(r);
+  const w=Math.max(...rows.map(x=>x.length));
+  if(rows.length>gridN||w>gridN){ toast('🛠️ Dafür brauchst du eine Werkbank.','warn',1800); return false; }
+  if(r.station&&r.station!==craftStation){ toast('🍲 Dafür brauchst du einen Kochtopf.','warn',1800); return false; }
+  clearGrid();
+  const need=needList(rows);
+  for(const id in need)
+    if(countOf(id)<need[id]){ toast('Es fehlt: '+ITEMS[id].ic+' '+ITEMS[id].nm,'warn',1800); return false; }
+  rows.forEach((row,y)=>row.forEach((id,x)=>{
+    if(!id) return;
+    take(id,1); grid[y*3+x]={id,n:1};
+  }));
+  return true;
+}
+
+// ------------------------------------------------------------------ Fensterinhalt
+let swapRef=null;                        // {k:'i'|'g', i} — angeklickter Stapel
+const refGet=r=>r.k==='g'?grid[r.i]:slots[r.i];
+const refSet=(r,v)=>{ if(r.k==='g') grid[r.i]=v; else slots[r.i]=v; };
+const refOn=(k,i)=>swapRef&&swapRef.k===k&&swapRef.i===i?' on':'';
+function clickCell(ref){
+  if(!swapRef){ if(refGet(ref)) swapRef=ref; }
+  else if(swapRef.k===ref.k&&swapRef.i===ref.i) swapRef=null;
+  else{
+    const a=refGet(swapRef), b=refGet(ref);
+    if(a&&b&&a.id===b.id){
+      const t=Math.min(STACK-b.n,a.n);
+      b.n+=t; a.n-=t; if(a.n<=0) refSet(swapRef,null);
+    } else { refSet(swapRef,b); refSet(ref,a); }
+    swapRef=null;
+  }
+  SND.tap(); updateHUD(); renderCraft();
+}
+const stackHTML=s=>s?ITEMS[s.id].ic+`<span class="n">${s.n>1?s.n:''}</span>`:'';
+function craftHTML(){
+  const r=matchRecipe();
+  let h=`<div class="craft"><div class="cgrid c${gridN}">`;
+  h+=gridCells().map(i=>`<div class="cell${refOn('g',i)}" data-g="${i}">${stackHTML(grid[i])}</div>`).join('');
+  h+='</div><div class="arrow">➜</div>';
+  h+=`<div class="cell res${r?'':' empty'}" data-act="craft">`+
+     (r?ITEMS[r.out[0]].ic+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
+  if(gridN===2) h+='<p class="hint">2×2 — Größeres geht nur an der 🛠️ Werkbank.</p>';
+  else if(craftStation==='pot') h+='<p class="hint">Am Kochtopf. Hier entsteht die Suppe.</p>';
+  return h;
 }
 function invGrid(){
-  const cell=(i,cls)=>{
-    const s=slots[i];
-    return `<div class="cell ${cls}${i===swapFrom?' on':''}" data-slot="${i}">`+
-      (s?ITEMS[s.id].ic+`<span class="n">${s.n>1?s.n:''}</span>`:'')+'</div>';
-  };
+  const cell=(i,cls)=>
+    `<div class="cell ${cls}${refOn('i',i)}" data-slot="${i}">${stackHTML(slots[i])}</div>`;
   let h='<div class="invgrid">';
   for(let i=NBAR;i<NSLOT;i++) h+=cell(i,'');
   h+='</div><h3>Leiste</h3><div class="invgrid">';
@@ -1107,28 +1359,50 @@ function invGrid(){
   h+='</div>';
   return h;
 }
-let swapFrom=-1;
+const patLine=rows=>rows.map(r=>r.map(id=>id?ITEMS[id].ic:'·').join('')).join(' / ');
+function bookHTML(){
+  let h='', unknown=0;
+  for(const r of RECIPES.slice().sort((a,b)=>a.rank-b.rank)){
+    if(!known.has(r.id)){ unknown++; continue; }
+    const rows=patRows(r);
+    const w=Math.max(...rows.map(x=>x.length));
+    const st=(rows.length>gridN||w>gridN)?'🛠️ Werkbank nötig'
+            :(r.station==='pot'&&craftStation!=='pot')?'🍲 Kochtopf nötig'
+            :!haveAll(rows)?'Material fehlt':'';
+    const out=ITEMS[r.out[0]];
+    h+=`<div class="recipe${st?' off':''}"><div class="ico">${out.ic}</div>
+      <div class="txt"><div class="nm">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
+      <div class="ds">${patLine(rows)}${st?' · '+st:''}</div></div>
+      <button data-craft="${r.id}"${st?' disabled':''}>Bauen</button></div>`;
+  }
+  if(unknown) h+=`<div class="recipe off"><div class="ico">❓</div><div class="txt">
+    <div class="nm">${unknown} unbekannt${unknown===1?'es Rezept':'e Rezepte'}</div>
+    <div class="ds">Zettel liegen in 🧰 Truhen — oder leg es selbst richtig ins Raster</div></div></div>`;
+  return h;
+}
 function openCraft(station){
-  craftStation=station||null;
-  const title=station==='pot'?'🍲 Kochtopf':station==='bench'?'🛠️ Werkbank':'🎒 Inventar';
-  let h='<h2>'+title+'</h2>'+invGrid();
-  h+='<h3>Bauen</h3>';
-  const list=RECIPES.filter(r=>!r.secret||knowsSoup());
-  h+=list.map(r=>recipeRow(r,craftStation)).join('');
-  if(!knowsSoup())
-    h+=`<div class="recipe off"><div class="ico">📖</div><div class="txt">
-      <div class="nm">Dominik-Suppe</div><div class="ds">Rezept unbekannt — ${pages.size}/4 Seiten</div></div></div>`;
-  h+='<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>';
-  showModal(h);
+  clearGrid();                           // sonst stranden Zutaten in Zellen,
+  craftStation=station||null;            // die das kleinere Raster nicht zeigt
+  gridN=station?3:2;
+  renderCraft(false);
+}
+function renderCraft(keep=true){
+  const title=craftStation==='pot'?'🍲 Kochtopf':craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
+  showModal('<h2>'+title+'</h2>'+craftHTML()+'<h3>Rucksack</h3>'+invGrid()+
+    '<h3>📜 Rezeptbuch</h3>'+bookHTML()+
+    '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',keep);
 }
 function openIntro(){
   showModal(`<h2>⛏️ ErnteDominiksFest</h2>
   <p>Überlebe. Bau ab, bau auf, halte die Bennis aus der Nacht heraus.</p>
-  <p>In <b>🧰 Truhen</b> liegen vier Seiten eines Kochbuchs. Zusammen ergeben sie das Rezept
-  der <b>🍲 Dominik-Suppe</b> — das ist dein Ziel.</p>
+  <p>Gebaut wird im <b>Raster</b>: Zutaten hineinlegen wie beim Vorbild, 2×2 im Rucksack,
+  3×3 an der <b>🛠️ Werkbank</b>. Wer ein Muster richtig legt, hat das Rezept entdeckt.</p>
+  <p><b>📜 Rezeptzettel</b> liegen in <b>🧰 Truhen</b> — die alltäglichen nah am Tal, die seltenen
+  weit draußen. Das Rezept der <b>🍲 Dominik-Suppe</b> liegt ganz am Rand der Welt.
+  <b>📖 Notizen</b> stehen überall herum und erzählen, wie das alles zusammenhängt.</p>
   <div class="kbd">
     <b>WASD</b> laufen &nbsp; <b>⇧</b> rennen &nbsp; <b>␣</b> springen<br>
-    <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / essen<br>
+    <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / lesen / essen<br>
     <b>E</b> Inventar &nbsp; <b>1-9</b> Leiste &nbsp; <b>Rad</b> wechseln &nbsp; <b>P</b> Pause
   </div>
   <div class="btnrow"><button class="primary" data-act="start">Los geht's</button></div>`);
@@ -1136,45 +1410,34 @@ function openIntro(){
 function togglePause(){
   if(modalOpen()){ hideModal(); return; }
   showModal(`<h2>⏸️ Pause</h2>
-    <p style="font-size:12.5px;opacity:.85">📖 ${pages.size}/4 Seiten · 🧰 ${state.chests} Truhen ·
+    <p style="font-size:12.5px;opacity:.85">📜 ${known.size}/${RECIPES.length} Rezepte ·
+    📖 ${lore.size}/${LORE.length} Notizen · 🧰 ${state.chests} Truhen ·
     ⛏️ ${state.mined} abgebaut · 🧱 ${state.placed} gesetzt · 🌙 Tag ${state.day}</p>
     <div class="btnrow">
       <button data-act="help">❓ Hilfe</button>
       <button class="primary" data-act="close">Weiter</button></div>`);
 }
 mbox.addEventListener('click',e=>{
-  const b=e.target.closest('button,[data-slot],[data-chest]');
+  const b=e.target.closest('button,[data-slot],[data-chest],[data-g],[data-act]');
   if(!b) return;
   e.stopPropagation();
   ac();
-  if(b.dataset.craft!=null&&b.dataset.craft!==''){
+  if(b.dataset.craft){
     const r=RECIPES.find(x=>x.id===b.dataset.craft);
-    if(r&&doCraft(r,craftStation)){ updateHUD(); if(!state.won) openCraft(craftStation); }
+    if(r&&fillFromBook(r)) craftFromGrid();
+    else renderCraft();
     return;
   }
   if(b.dataset.chest!=null){ takeFromChest(+b.dataset.chest); return; }
-  if(b.dataset.slot!=null){
-    const i=+b.dataset.slot;
-    if(swapFrom<0){ if(slots[i]) swapFrom=i; }
-    else if(swapFrom===i) swapFrom=-1;
-    else{
-      const a=slots[swapFrom];
-      if(slots[i]&&a&&slots[i].id===a.id){
-        const room=STACK-slots[i].n, t=Math.min(room,a.n);
-        slots[i].n+=t; a.n-=t; if(a.n<=0) slots[swapFrom]=null;
-      } else { slots[swapFrom]=slots[i]; slots[i]=a; }
-      swapFrom=-1;
-    }
-    SND.tap(); updateHUD(); openCraft(craftStation);
-    return;
-  }
+  if(b.dataset.slot!=null){ clickCell({k:'i',i:+b.dataset.slot}); return; }
+  if(b.dataset.g!=null){ clickCell({k:'g',i:+b.dataset.g}); return; }
   const act=b.dataset.act;
+  if(act==='craft'){ craftFromGrid(); return; }
   if(act==='close'){
-    swapFrom=-1;
-    // Beim Schließen einer Truhe direkt die Buchseite lesen, falls eine dabei war
-    const pend=pendingPage; pendingPage=null;
+    // Beim Schließen der Truhe den frisch gefundenen Zettel zeigen
+    const pend=pendingCard; pendingCard=null;
     hideModal();
-    if(pend) foundPage(pend);
+    if(pend) recipeCard(pend);
   }
   else if(act==='takeall'){
     const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
@@ -1183,12 +1446,15 @@ mbox.addEventListener('click',e=>{
   else if(act==='help') openIntro();
   else if(act==='start'){ localStorage.setItem('edf_seen','1'); hideModal(); state.started=true; }
 });
-let pendingPage=null;
 
 // ------------------------------------------------------------------ Bewegung
-const PR=.32, GRAV=26, JUMP=8.4, EYE=1.62;
+const PR=.32, GRAV=26, JUMP=8.4, EYE=1.62, PH=1.8, EPS=1e-4;
+// Der Spieler füllt [py, py+PH), ein Block y deckt [y, y+1) ab. Berührung ist
+// noch keine Überschneidung — sonst zieht die Schwerkraft ihn jedes Bild ein
+// Stück in den Boden, der Aufsetzer schiebt ihn zurück, und das Bild zittert.
+// Der Rand muss darum knapp *innerhalb* des Körpers liegen, nicht darüber.
 function collides(px,py,pz){
-  const y0=Math.floor(py+.02), y1=Math.floor(py+1.75);
+  const y0=Math.floor(py+EPS), y1=Math.floor(py+PH-EPS);
   for(let bx=Math.round(px-PR);bx<=Math.round(px+PR);bx++)
     for(let bz=Math.round(pz-PR);bz<=Math.round(pz+PR);bz++){
       if(Math.abs(px-bx)>=.5+PR||Math.abs(pz-bz)>=.5+PR) continue;
@@ -1366,7 +1632,8 @@ function updateHUD(){
   const ff=Math.ceil(player.food/2), fmx=player.maxfood/2;
   let fs=''; for(let i=0;i<fmx;i++) fs+=i<ff?'🍗':'▪️';
   if(foodEl.textContent!==fs) foodEl.textContent=fs;
-  el('hPages').textContent=pages.size;
+  el('hRec').textContent=known.size;
+  el('hLore').textContent=lore.size;
   el('book').classList.toggle('full',knowsSoup());
   const sig=slots.map(s=>s?s.id+s.n:'-').join(',')+'|'+player.sel;
   if(sig!==hudCache&&hotEls){
@@ -1382,7 +1649,10 @@ function updateHUD(){
 
 // ------------------------------------------------------------------ Eingabe
 const canvas=renderer.domElement;
-canvas.addEventListener('contextmenu',e=>e.preventDefault());
+// Rechtsklick gehört dem Spiel, nicht dem Browser. Am Dokument und in der
+// Capture-Phase, sonst schlüpft das Menü über der Inventarleiste, den Knöpfen
+// und den Fenstern durch — die liegen über dem Canvas.
+addEventListener('contextmenu',e=>{e.preventDefault();return false;},{capture:true});
 canvas.addEventListener('mousedown',e=>{
   ac();
   if(modalOpen()) return;
@@ -1490,6 +1760,8 @@ Promise.all([
   buildWorld();
   emitTorches();
   player.y=player.viewY=surfaceAt(player.x,player.z);
+  el('hRecMax').textContent=RECIPES.length;
+  el('hLoreMax').textContent=LORE.length;
   resize(); updateHUD();
   el('boot').remove();
   if(localStorage.getItem('edf_seen')){ state.paused=false; state.started=true; }
@@ -1501,12 +1773,13 @@ Promise.all([
 });
 
 // ------------------------------------------------------------------ Debug-API
-window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,pages,chests,torches,mobs,
+window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid,chests,torches,mobs,
   blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
   give:(id,n)=>give(id,n), take,countOf,
   get target(){return target;},
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
+  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
     player.y=player.viewY=player.fallFrom=surfaceAt(player.x,player.z);
@@ -1518,5 +1791,5 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,pages,chests,torches,mobs,
     breakBlock(target.cell.x,target.cell.y,target.cell.z,t); updateTarget(); return true; },
   place(){ useRight(); },
   setDayT(v){ state.dayT=v; updateNight(0); },
-  tick(sec){ const s=.05; for(let t=0;t<sec;t+=s) update(s); },
+  tick(sec,s=.05){ for(let t=0;t<sec;t+=s) update(s); },
 };
