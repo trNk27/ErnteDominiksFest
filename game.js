@@ -809,7 +809,10 @@ function mobBlocked(x,z,fromY){
 }
 function updateMobs(dt){
   for(let i=mobs.length-1;i>=0;i--){
+    // Ein Treffer kann zum Respawn führen, und der räumt die Umstehenden weg —
+    // die Liste schrumpft also mitten in der Schleife.
     const m=mobs[i];
+    if(!m) continue;
     if(m.hurtT>0) m.hurtT-=dt;
     m.mesh.material.color.setRGB(1,m.hurtT>0?.4:1,m.hurtT>0?.4:1);
     const dx=player.x-m.x, dz=player.z-m.z, d=Math.hypot(dx,dz)||1;
