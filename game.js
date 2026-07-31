@@ -138,7 +138,8 @@ function surfaceTex(x,z,h){
 
 // ------------------------------------------------------------------ Zustand
 const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
-  mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,won:false,checkT:0};
+  mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,won:false,checkT:0,
+  spikes:0};                            // verworfene Maus-Ausreisser, siehe unten
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
@@ -330,7 +331,7 @@ const BLOCKS={
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
   pot    :{tex:'pot',   hard:2.2, drop:'pot',    nm:'Kochtopf',pick:true, use:'pot'},
   chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
-  dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik'},
+  dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik', size:.62, alpha:true},
   shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz'},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
   lore   :{tex:'note',  hard:0,   drop:null,     nm:'Alte Notiz', use:'lore', noBreak:true},
@@ -421,8 +422,26 @@ for(const r of RECIPES)
 // statt eines kaputten Bildes.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
                      'stick','bowl','dominik','mushroom','salt','sword','axe','pick','soup']);
-const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+id+'.png'
+// Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
+const ICON_ALT={dominik:'dominik_face'};
+const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png'
                  :ITEMS[id]?.recipe?'./sprites/items/page1.png':null;
+// Was ein Gegenstand kann, in einer Zeile — für die Schwebehilfe.
+function itemNote(id){
+  const it=ITEMS[id]; if(!it) return '';
+  const p=[];
+  if(it.recipe) p.push('Rezeptzettel — beim Nehmen gelernt');
+  if(it.food) p.push('🍗 sättigt um '+it.food);
+  if(it.dmg) p.push('⚔️ Schaden '+it.dmg);
+  if(it.axe) p.push('🪓 schnell bei Holz');
+  if(it.pick) p.push('⛏️ schnell bei Stein');
+  if(it.torch) p.push('🔥 hält Bennis fern');
+  if(it.block) p.push('setzbar');
+  const used=RECIPES.filter(r=>patRows(r).some(row=>row.includes(id)))
+    .filter(r=>known.has(r.id)).map(r=>ITEMS[r.out[0]].nm);
+  if(used.length) p.push('Zutat für '+used.slice(0,3).join(', ')+(used.length>3?' …':''));
+  return p.join(' · ');
+}
 function icon(id,cls=''){
   const it=ITEMS[id];
   if(!it) return '';
@@ -711,8 +730,11 @@ const CHUNK=24, VIEW=145;
 const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
 const FACE_N={py:[0,1,0],ny:[0,-1,0],px:[1,0,0],nx:[-1,0,0],pz:[0,0,1],nz:[0,0,-1]};
 const UVQ=[0,0, 1,0, 1,1, 0,1];
-function faceVerts(dir,x,y,z){
-  const x0=x-.5,x1=x+.5,y0=y,y1=y+1,z0=z-.5,z1=z+.5;
+// s<1 schrumpft den Würfel um die Zellmitte — für Sachen, die keinen ganzen
+// Block ausfüllen sollen, etwa die Dominiks an den Bäumen.
+function faceVerts(dir,x,y,z,s=1){
+  const h=s/2, cy=y+.5;
+  const x0=x-h,x1=x+h,y0=cy-h,y1=cy+h,z0=z-h,z1=z+h;
   switch(dir){
     case 'py': return [x0,y1,z1, x1,y1,z1, x1,y1,z0, x0,y1,z0];
     case 'ny': return [x0,y0,z0, x1,y0,z0, x1,y0,z1, x0,y0,z1];
@@ -734,9 +756,9 @@ function buildChunk(ci,cj){
   const x1=Math.min(bx+CHUNK-1,BOUND.x1), z1=Math.min(bz+CHUNK-1,BOUND.z1);
   c.cx=bx+CHUNK/2; c.cz=bz+CHUNK/2;
   const buf={};
-  const add=(mat,dir,x,y,z)=>{
+  const add=(mat,dir,x,y,z,s)=>{
     const b=buf[mat]||(buf[mat]={p:[],n:[],u:[],i:[]});
-    const v=faceVerts(dir,x,y,z), nv=FACE_N[dir], base=b.p.length/3;
+    const v=faceVerts(dir,x,y,z,s), nv=FACE_N[dir], base=b.p.length/3;
     b.p.push(...v);
     for(let k=0;k<4;k++) b.n.push(nv[0],nv[1],nv[2]);
     b.u.push(...UVQ);
@@ -756,6 +778,13 @@ function buildChunk(ci,cj){
     for(let y=lo;y<=hi;y++){
       const t=blockAt(x,y,z);
       if(!t) continue;
+      const sz=BLOCKS[t]?.size;
+      if(sz){
+        // Ein geschrumpfter Würfel steht frei in der Zelle: alle sechs Seiten
+        // müssen mit, sonst fehlt die Hälfte, sobald ein Blatt daneben hängt.
+        for(const d in FACE_N) add(t,d,x,y,z,sz);
+        continue;
+      }
       if(!blockAt(x,y+1,z)) add(t,'py',x,y,z);
       if(!blockAt(x,y-1,z)) add(t,'ny',x,y,z);
       if(!blockAt(x+1,y,z)) add(t,'px',x,y,z);
@@ -776,6 +805,12 @@ function buildChunk(ci,cj){
     g.computeBoundingSphere();
     const opts={map:mat==='water'?TEX.water:blockTex(mat)};
     if(mat==='water'){ opts.transparent=true; opts.opacity=.82; }
+    else if(BLOCKS[mat]?.alpha){
+      // Durchsichtige Ecken werden weggeschnitten, dadurch bleibt die runde
+      // Form der Frucht stehen statt eines Kastens. Beide Seiten, sonst
+      // schaut man durch die Vorderseite ins Nichts.
+      opts.transparent=true; opts.alphaTest=.5; opts.side=THREE.DoubleSide;
+    }
     const mesh=new THREE.Mesh(g,new THREE.MeshLambertMaterial(opts));
     mesh.receiveShadow=true; mesh.castShadow=false;
     mesh.visible=c.visible;
@@ -1095,7 +1130,7 @@ const crackMesh=new THREE.Mesh(new THREE.BoxGeometry(1.004,1.004,1.004),crackMat
 crackMesh.visible=false; crackMesh.frustumCulled=false; crackMesh.renderOrder=2;
 scene.add(crackMesh);
 let crackStage=-1;
-function showCrack(cell,frac){
+function showCrack(cell,frac,type){
   if(!cell||frac<=0){
     if(crackMesh.visible){ crackMesh.visible=false; crackStage=-1; }
     return;
@@ -1103,6 +1138,7 @@ function showCrack(cell,frac){
   const i=clamp(Math.floor(frac*CRACKS.length),0,CRACKS.length-1);
   if(i!==crackStage){ crackStage=i; crackMat.map=CRACKS[i]; crackMat.needsUpdate=true; }
   crackMesh.position.set(cell.x,cell.y+.5,cell.z);
+  crackMesh.scale.setScalar(BLOCKS[type]?.size||1);   // um die kleine Frucht herum
   crackMesh.visible=true;
 }
 
@@ -1128,7 +1164,7 @@ function updateMining(dt){
   if(mineT%.22<dt*breakSpeed(t)) SND.dig();
   bar.style.display='block';
   bar.firstElementChild.style.width=clamp(mineT/b.hard,0,1)*100+'%';
-  showCrack(target.cell,mineT/b.hard);
+  showCrack(target.cell,mineT/b.hard,t);
   if(mineT>=b.hard){
     mineT=0; mineKey='';
     showCrack(null,0);
@@ -1237,7 +1273,8 @@ function renderChest(){
   }
   h+='<div class="btnrow">'+(c.items.length?'<button data-act="takeall">Alles nehmen</button>':'')+
      '<button class="primary" data-act="close">Schließen</button></div>';
-  showModal(h);
+  showModal(h,true);
+  updateItemTip();
 }
 function takeFromChest(i,one){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
@@ -1449,6 +1486,40 @@ function dropCarry(){                    // beim Schließen zurück in den Rucks
   carry=null;
   drawCarry();
 }
+// ------------------------------------------------------------------ Schwebehilfe
+// Der Name kommt nicht aus dem Markup, sondern beim Zeigen frisch aus den
+// Daten — sonst müsste jede Zelle ihn doppelt führen und könnte veralten.
+const tipEl=el('itip');
+function itemUnder(node){
+  if(!node) return null;
+  const d=node.dataset;
+  if(d.slot!=null) return slots[+d.slot]?.id||null;
+  if(d.bar!=null) return slots[+d.bar]?.id||null;
+  if(d.g!=null) return grid[+d.g]?.id||null;
+  if(d.chest!=null&&openChestCell){
+    const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
+    return c?.items[+d.chest]?.id||null;
+  }
+  if(d.act==='craft') return matchRecipe()?.out[0]||null;
+  return null;
+}
+function updateItemTip(){
+  // Beim Tragen hängt der Stapel schon am Zeiger, da stört der Kasten nur.
+  if(carry||document.pointerLockElement){ tipEl.style.display='none'; return; }
+  const node=document.elementFromPoint?.(mouseX,mouseY);
+  const cell=node&&node.closest?.('[data-slot],[data-bar],[data-g],[data-chest],[data-act]');
+  const id=itemUnder(cell);
+  if(!id){ tipEl.style.display='none'; return; }
+  const note=itemNote(id);
+  tipEl.innerHTML=`<b>${ITEMS[id].nm}</b>`+(note?`<i>${note}</i>`:'');
+  tipEl.style.display='block';
+  // An der rechten oder unteren Kante nach innen klappen
+  const w=tipEl.offsetWidth, h=tipEl.offsetHeight;
+  const x=mouseX+16+w>innerWidth?mouseX-16-w:mouseX+16;
+  const y=mouseY+18+h>innerHeight?mouseY-10-h:mouseY+18;
+  tipEl.style.transform=`translate(${Math.max(4,x)}px,${Math.max(4,y)}px)`;
+}
+
 const carryEl=el('carry');
 let mouseX=0, mouseY=0;
 function moveCarry(){ carryEl.style.transform=`translate(${mouseX-22}px,${mouseY-22}px)`; }
@@ -1515,6 +1586,7 @@ function renderCraft(keep=true){
     '<h3>📜 Rezeptbuch</h3>'+bookHTML()+
     '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',keep);
   drawCarry();
+  updateItemTip();          // der Zeiger steht still, aber die Zelle ist neu
 }
 function openIntro(){
   showModal(`<h2>⛏️ ErnteDominiksFest</h2>
@@ -1758,7 +1830,7 @@ function buildHotbar(){
   hotEls=[];
   for(let i=0;i<NBAR;i++){
     const d=document.createElement('div');
-    d.className='slot';
+    d.className='slot'; d.dataset.bar=i;
     d.innerHTML='<span class="i"></span><span class="n"></span>';
     d.addEventListener('pointerdown',e=>{
       e.stopPropagation(); e.preventDefault();
@@ -1802,17 +1874,33 @@ canvas.addEventListener('mousedown',e=>{
 });
 addEventListener('mouseup',e=>{ if(e.button===0){ mining=false; mineT=0; } });
 addEventListener('blur',()=>{ mining=false; for(const k in keys) keys[k]=false; });
+// Unter Pointer-Lock schiebt der Browser den unsichtbaren Zeiger von Zeit zu
+// Zeit in die Bildmitte zurück. Dreht man länger in eine Richtung, kommt genau
+// dann ein einzelnes Ereignis mit einem Sprung von fast Bildschirmbreite —
+// und die Sicht reisst mitten in der Drehung weg. Solche Ausreisser sind keine
+// Handbewegung: ein sehr schneller Schlenker bringt es auf rund 300 Pixel je
+// Ereignis, das Zurücksetzen auf ein Vielfaches davon. Also verwerfen.
+// Dasselbe beim frischen Einfangen der Maus, wo das erste Ereignis den Weg
+// seit der letzten Position mitbringt.
+let lockFresh=false;
+function lookSpike(){ return Math.max(400,Math.min(innerWidth,innerHeight)*.5); }
 document.addEventListener('mousemove',e=>{
   if(document.pointerLockElement===canvas){
-    player.yaw-=e.movementX*.0022;
-    player.pitch=clamp(player.pitch-e.movementY*.0022,-1.45,1.45);
+    const dx=e.movementX||0, dy=e.movementY||0;
+    if(lockFresh){ lockFresh=false; return; }
+    const s=lookSpike();
+    if(Math.abs(dx)>s||Math.abs(dy)>s){ state.spikes++; return; }
+    player.yaw-=dx*.0022;
+    player.pitch=clamp(player.pitch-dy*.0022,-1.45,1.45);
     return;
   }
   mouseX=e.clientX; mouseY=e.clientY;
   if(carry) moveCarry();
+  updateItemTip();
 });
 document.addEventListener('pointerlockchange',()=>{
-  if(document.pointerLockElement!==canvas){ mining=false; }
+  if(document.pointerLockElement!==canvas) mining=false;
+  else lockFresh=true;
 });
 canvas.addEventListener('wheel',e=>{
   if(modalOpen()) return;
@@ -1892,20 +1980,16 @@ const preload=src=>new Promise(res=>{
 const UISPRITES=['heart_full','heart_half','heart_empty','food_full','food_half','food_empty',
                  'icon_bag','icon_book','icon_pause'];
 Promise.all([
-  ...[...ICONS].map(id=>preload('./sprites/items/'+id+'.png')),
+  ...[...ICONS].map(id=>preload(iconSrc(id))),
   preload('./sprites/items/page1.png'),
   ...UISPRITES.map(n=>preload('./sprites/ui/'+n+'.png')),
   ...CHARS.map(c=>loadTex(c.key+'.png').then(t=>{c.tex=t;})),
   loadTex('benni.png').then(t=>{benniTex=t;}),
-  loadTex('dominik.png').then(t=>{
-    const c=document.createElement('canvas'); c.width=c.height=64;
-    const g=c.getContext('2d');
-    g.fillStyle='#3b2a1e'; g.fillRect(0,0,64,64);
-    g.drawImage(t.image,100,150,812,812,0,0,64,64);
-    const tx=new THREE.CanvasTexture(c);
-    tx.colorSpace=THREE.SRGBColorSpace;
-    tx.magFilter=THREE.NearestFilter; tx.minFilter=THREE.NearestMipmapLinearFilter;
-    TEX.dominik=tx;
+  // Die Frucht trägt sein Gesicht: fertig zusammengesetzt in
+  // sprites/items/dominik_face.png, durchsichtig rundherum.
+  loadTex('./sprites/items/dominik_face.png').then(t=>{
+    t.magFilter=THREE.NearestFilter; t.minFilter=THREE.NearestMipmapLinearFilter;
+    TEX.dominik=t;
   }),
 ]).then(()=>{
   setupChars();
@@ -1933,7 +2017,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
   learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
-  clickCell,takeFromChest,hideModal,showCrack,CRACKS,
+  clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,faceVerts,
   carried(){return carry;},
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);

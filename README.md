@@ -80,6 +80,9 @@ Vorbild: Der angeklickte Stapel hängt am Mauszeiger, bis du ihn wieder irgendwo
 Stimmt das Muster, erscheint rechts das Ergebnis — anklicken, fertig. Was danach noch im
 Raster oder am Zeiger hängt, wandert beim Schließen zurück in den Rucksack.
 
+Fährst du mit dem Zeiger über einen Gegenstand, steht daneben, was er kann: wie sehr er
+sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
+
 - Im Rucksack ist das Raster **2×2**.
 - Eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf) macht daraus **3×3**. Alles, was
   breiter oder höher als zwei ist, geht nur dort.
@@ -131,8 +134,9 @@ jedem Start dieselbe, kein Speicherstand nötig.
 
 - **Berge** bis 25 Blöcke hoch, ab 9 Fels, ab 18 Schnee.
 - **Zwei Flüsse** durch Westen und Norden, mit Sandufern und Furten.
-- **Wälder** in zusammenhängenden Gebieten; an manchen Bäumen hängen **🍑 Dominiks**,
-  im Schatten stehen **🍄 Pilze**.
+- **Wälder** in zusammenhängenden Gebieten; an manchen Bäumen hängen **🍑 Dominiks** —
+  kleine Früchte, keine ganzen Blöcke, und auf jeder Seite grinst Dominik selbst.
+  Im Schatten stehen **🍄 Pilze**.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
 - **16 Truhen**, drei davon in Dörfern; **12 Notizen** zum Lesen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
