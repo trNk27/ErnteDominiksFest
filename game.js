@@ -260,6 +260,61 @@ const TEX={
   }),
 };
 
+// ------------------------------------------------------------------ Bruchbilder
+// Zehn Stufen wie im Vorbild. Jede erbt die Risse der vorigen und setzt neue
+// dazu — der Block zerspringt also sichtbar, statt bloß dunkler zu werden.
+// Gezeichnet wird auf durchsichtigem Grund, das Bild liegt später über der
+// echten Textur.
+const CRACKS=(()=>{
+  const S=16, N=10, C=7.5, rr=mulberry(90210);
+  // Ein Riss ist eine Linie, kein Fleck: von der Mitte nach außen, leicht
+  // mäandernd. Später kommen Abzweige dazu. Jede Stufe zeigt mehr Linien und
+  // zieht die vorhandenen weiter Richtung Rand.
+  function ray(x,y,ang,steps){
+    const path=[];
+    for(let k=0;k<steps;k++){
+      ang+=(rr()-.5)*.55;
+      x+=Math.cos(ang)*.72; y+=Math.sin(ang)*.72;
+      if(x<-.4||y<-.4||x>S-.6||y>S-.6) break;
+      const key=Math.round(y)*S+Math.round(x);
+      if(path[path.length-1]!==key) path.push(key);
+    }
+    return {path,x,y,ang};
+  }
+  const lines=[], LN=9;
+  for(let i=0;i<LN;i++){
+    const a=(i/LN)*Math.PI*2+(rr()-.5)*.5;
+    const r=ray(C,C,a,26);
+    lines.push(r.path);
+    if(r.path.length>4){                       // ein Abzweig auf halber Strecke
+      const at=r.path[Math.floor(r.path.length*.55)];
+      lines.push(ray(at%S,(at/S)|0,a+(rr()>.5?1:-1)*.9,9).path);
+    }
+  }
+  const out=[];
+  for(let s=0;s<N;s++){
+    const t=(s+1)/N;
+    const set=new Set();
+    const shown=Math.min(lines.length,Math.ceil(lines.length*(s+1.2)/N));
+    for(let i=0;i<shown;i++){
+      const p=lines[i], len=Math.ceil(p.length*Math.min(1,t*1.25));
+      for(let k=0;k<len;k++) set.add(p[k]);
+    }
+    out.push(pixTex(g=>{
+      for(const k of set){
+        const x=k%S, y=(k/S)|0;
+        // Erst die Aufhellung darunter, dann der dunkle Riss darüber —
+        // sonst überschreibt die Kante den Riss selbst.
+        g.fillStyle='rgba(255,255,255,.16)'; g.fillRect(x,Math.max(0,y-1),1,1);
+      }
+      for(const k of set){
+        g.fillStyle='rgba(0,0,0,.7)'; g.fillRect(k%S,(k/S)|0,1,1);
+      }
+    },S));
+  }
+  return out;
+})();
+
 // ------------------------------------------------------------------ Blöcke
 // tex   Texturname · hard Abbauzeit in Sekunden · drop Item-Id beim Abbau
 const BLOCKS={
@@ -1029,6 +1084,28 @@ function updateTarget(){
 }
 
 // ------------------------------------------------------------------ Abbauen & Setzen
+// Die Risse liegen als eigener Würfel knapp über dem Block. Ein Hauch größer
+// und mit polygonOffset, sonst streiten sich die beiden Flächen um die Tiefe
+// und das Bild flimmert.
+const crackMat=new THREE.MeshBasicMaterial({
+  transparent:true, depthWrite:false, polygonOffset:true,
+  polygonOffsetFactor:-4, polygonOffsetUnits:-4
+});
+const crackMesh=new THREE.Mesh(new THREE.BoxGeometry(1.004,1.004,1.004),crackMat);
+crackMesh.visible=false; crackMesh.frustumCulled=false; crackMesh.renderOrder=2;
+scene.add(crackMesh);
+let crackStage=-1;
+function showCrack(cell,frac){
+  if(!cell||frac<=0){
+    if(crackMesh.visible){ crackMesh.visible=false; crackStage=-1; }
+    return;
+  }
+  const i=clamp(Math.floor(frac*CRACKS.length),0,CRACKS.length-1);
+  if(i!==crackStage){ crackStage=i; crackMat.map=CRACKS[i]; crackMat.needsUpdate=true; }
+  crackMesh.position.set(cell.x,cell.y+.5,cell.z);
+  crackMesh.visible=true;
+}
+
 let mining=false, mineT=0, mineKey='';
 function breakSpeed(type){
   const b=BLOCKS[type];
@@ -1040,17 +1117,21 @@ function breakSpeed(type){
 }
 function updateMining(dt){
   const bar=el('mine');
-  if(!mining||!target||state.paused){ bar.style.display='none'; mineT=0; mineKey=''; return; }
+  if(!mining||!target||state.paused){
+    bar.style.display='none'; mineT=0; mineKey=''; showCrack(null,0); return;
+  }
   const t=target.type, b=BLOCKS[t];
-  if(b.noBreak){ bar.style.display='none'; return; }
+  if(b.noBreak){ bar.style.display='none'; showCrack(null,0); return; }
   const k=K(target.cell.x,target.cell.y,target.cell.z);
   if(k!==mineKey){ mineKey=k; mineT=0; }
   mineT+=dt*breakSpeed(t);
   if(mineT%.22<dt*breakSpeed(t)) SND.dig();
   bar.style.display='block';
   bar.firstElementChild.style.width=clamp(mineT/b.hard,0,1)*100+'%';
+  showCrack(target.cell,mineT/b.hard);
   if(mineT>=b.hard){
     mineT=0; mineKey='';
+    showCrack(null,0);
     breakBlock(target.cell.x,target.cell.y,target.cell.z,t);
   }
 }
@@ -1158,7 +1239,7 @@ function renderChest(){
      '<button class="primary" data-act="close">Schließen</button></div>';
   showModal(h);
 }
-function takeFromChest(i){
+function takeFromChest(i,one){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
   const it=c.items[i]; if(!it) return;
   const rec=ITEMS[it.id].recipe;
@@ -1168,10 +1249,11 @@ function takeFromChest(i){
     updateHUD(); renderChest();
     return;
   }
-  const rest=give(it.id,it.n);
-  if(rest===it.n){ toast('🎒 Inventar voll.','warn',1400); return; }
-  it.n=rest;
-  if(!it.n) c.items.splice(i,1);
+  const want=one?1:it.n;                     // rechts nimmt einzeln aus der Truhe
+  const rest=give(it.id,want);
+  if(rest===want){ toast('🎒 Inventar voll.','warn',1400); return; }
+  it.n-=want-rest;
+  if(it.n<=0) c.items.splice(i,1);
   SND.tap();
   updateHUD();
   renderChest();
@@ -1244,7 +1326,7 @@ function showModal(html,keep){
 }
 function hideModal(){
   clearGrid();                           // was im Raster liegt, gehört dem Spieler
-  swapRef=null;
+  dropCarry();
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
   mining=false;
 }
@@ -1337,28 +1419,50 @@ function fillFromBook(r){
 }
 
 // ------------------------------------------------------------------ Fensterinhalt
-let swapRef=null;                        // {k:'i'|'g', i} — angeklickter Stapel
+// Der aufgenommene Stapel hängt am Mauszeiger. Links nimmt und legt alles,
+// rechts genau ein Stück — damit lässt sich ein Muster auslegen, ohne den
+// ganzen Stapel wieder auseinandersortieren zu müssen.
+let carry=null;
 const refGet=r=>r.k==='g'?grid[r.i]:slots[r.i];
 const refSet=(r,v)=>{ if(r.k==='g') grid[r.i]=v; else slots[r.i]=v; };
-const refOn=(k,i)=>swapRef&&swapRef.k===k&&swapRef.i===i?' on':'';
-function clickCell(ref){
-  if(!swapRef){ if(refGet(ref)) swapRef=ref; }
-  else if(swapRef.k===ref.k&&swapRef.i===ref.i) swapRef=null;
-  else{
-    const a=refGet(swapRef), b=refGet(ref);
-    if(a&&b&&a.id===b.id){
-      const t=Math.min(STACK-b.n,a.n);
-      b.n+=t; a.n-=t; if(a.n<=0) refSet(swapRef,null);
-    } else { refSet(swapRef,b); refSet(ref,a); }
-    swapRef=null;
-  }
+function clickCell(ref,one){
+  const cur=refGet(ref);
+  if(!carry){
+    if(!cur) return;
+    if(one){ carry={id:cur.id,n:1}; if(--cur.n<=0) refSet(ref,null); }
+    else { carry=cur; refSet(ref,null); }
+  } else if(!cur){
+    if(one){ refSet(ref,{id:carry.id,n:1}); if(--carry.n<=0) carry=null; }
+    else { refSet(ref,carry); carry=null; }
+  } else if(cur.id===carry.id){
+    const t=Math.min(one?1:carry.n,STACK-cur.n);
+    if(!t) return;
+    cur.n+=t; carry.n-=t; if(carry.n<=0) carry=null;
+  } else if(one) return;                 // getauscht wird nur mit voller Hand
+  else { refSet(ref,carry); carry=cur; }
   SND.tap(); updateHUD(); renderCraft();
+}
+function dropCarry(){                    // beim Schließen zurück in den Rucksack
+  if(!carry) return;
+  const rest=give(carry.id,carry.n);
+  if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+  carry=null;
+  drawCarry();
+}
+const carryEl=el('carry');
+let mouseX=0, mouseY=0;
+function moveCarry(){ carryEl.style.transform=`translate(${mouseX-22}px,${mouseY-22}px)`; }
+function drawCarry(){
+  if(!carry){ carryEl.style.display='none'; return; }
+  carryEl.innerHTML=icon(carry.id)+(carry.n>1?`<span class="n">${carry.n}</span>`:'');
+  carryEl.style.display='flex';
+  moveCarry();
 }
 const stackHTML=s=>s?icon(s.id)+`<span class="n">${s.n>1?s.n:''}</span>`:'';
 function craftHTML(){
   const r=matchRecipe();
   let h=`<div class="craft"><div class="cgrid c${gridN}">`;
-  h+=gridCells().map(i=>`<div class="cell${refOn('g',i)}" data-g="${i}">${stackHTML(grid[i])}</div>`).join('');
+  h+=gridCells().map(i=>`<div class="cell" data-g="${i}">${stackHTML(grid[i])}</div>`).join('');
   h+='</div><div class="arrow">➜</div>';
   h+=`<div class="cell res${r?'':' empty'}" data-act="craft">`+
      (r?icon(r.out[0])+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
@@ -1368,7 +1472,7 @@ function craftHTML(){
 }
 function invGrid(){
   const cell=(i,cls)=>
-    `<div class="cell ${cls}${refOn('i',i)}" data-slot="${i}">${stackHTML(slots[i])}</div>`;
+    `<div class="cell ${cls}" data-slot="${i}">${stackHTML(slots[i])}</div>`;
   let h='<div class="invgrid">';
   for(let i=NBAR;i<NSLOT;i++) h+=cell(i,'');
   h+='</div><h3>Leiste</h3><div class="invgrid">';
@@ -1407,8 +1511,10 @@ function openCraft(station){
 function renderCraft(keep=true){
   const title=craftStation==='pot'?'🍲 Kochtopf':craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
   showModal('<h2>'+title+'</h2>'+craftHTML()+'<h3>Rucksack</h3>'+invGrid()+
+    '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
     '<h3>📜 Rezeptbuch</h3>'+bookHTML()+
     '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',keep);
+  drawCarry();
 }
 function openIntro(){
   showModal(`<h2>⛏️ ErnteDominiksFest</h2>
@@ -1435,8 +1541,20 @@ function togglePause(){
       <button data-act="help">❓ Hilfe</button>
       <button class="primary" data-act="close">Weiter</button></div>`);
 }
+// Zellen hören auf mousedown, sonst käme die rechte Maustaste nie an:
+// ein Rechtsklick löst gar kein click-Ereignis aus.
+mbox.addEventListener('mousedown',e=>{
+  const c=e.target.closest('[data-slot],[data-g],[data-chest]');
+  if(!c) return;
+  e.preventDefault(); e.stopPropagation();
+  ac();
+  const one=e.button===2;
+  if(c.dataset.chest!=null) takeFromChest(+c.dataset.chest,one);
+  else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
+  else clickCell({k:'g',i:+c.dataset.g},one);
+});
 mbox.addEventListener('click',e=>{
-  const b=e.target.closest('button,[data-slot],[data-chest],[data-g],[data-act]');
+  const b=e.target.closest('button,[data-act]');
   if(!b) return;
   e.stopPropagation();
   ac();
@@ -1446,9 +1564,6 @@ mbox.addEventListener('click',e=>{
     else renderCraft();
     return;
   }
-  if(b.dataset.chest!=null){ takeFromChest(+b.dataset.chest); return; }
-  if(b.dataset.slot!=null){ clickCell({k:'i',i:+b.dataset.slot}); return; }
-  if(b.dataset.g!=null){ clickCell({k:'g',i:+b.dataset.g}); return; }
   const act=b.dataset.act;
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='close'){
@@ -1691,7 +1806,10 @@ document.addEventListener('mousemove',e=>{
   if(document.pointerLockElement===canvas){
     player.yaw-=e.movementX*.0022;
     player.pitch=clamp(player.pitch-e.movementY*.0022,-1.45,1.45);
+    return;
   }
+  mouseX=e.clientX; mouseY=e.clientY;
+  if(carry) moveCarry();
 });
 document.addEventListener('pointerlockchange',()=>{
   if(document.pointerLockElement!==canvas){ mining=false; }
@@ -1815,6 +1933,8 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
   learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
+  clickCell,takeFromChest,hideModal,showCrack,CRACKS,
+  carried(){return carry;},
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
     player.y=player.viewY=player.fallFrom=surfaceAt(player.x,player.z);

@@ -7,11 +7,23 @@
 <link rel="icon" href="data:,">
 <title>ErnteDominiksFest</title>
 <style>
+  /* Pixelschrift, lokal unter vendor/font (SIL Open Font License 1.1).
+     Variabel, deshalb deckt eine Datei 400 bis 700 ab. */
+  @font-face{
+    font-family:'Pixelify Sans';
+    src:url('./vendor/font/pixelify-sans-latin.woff2') format('woff2');
+    font-weight:400 700;font-style:normal;font-display:swap;
+  }
+
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;overflow:hidden;background:#0e1a0e}
   body{
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;
+    font-family:'Pixelify Sans',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;
     user-select:none;-webkit-user-select:none;
+  }
+  /* Der harte Schattenversatz gehört zum Klötzchen-Look dazu. */
+  #hud,#vitals,#toasts,#tip,#mbox h2,#mbox h3,.recipe .nm,#hotbar .slot .n{
+    text-shadow:2px 2px 0 rgba(0,0,0,.5)
   }
   canvas{display:block;position:absolute;inset:0;width:100%;height:100%}
   button{font-family:inherit;color:inherit}
@@ -61,7 +73,7 @@
   /* Name des angepeilten Blocks */
   #tip{
     position:absolute;left:50%;top:calc(50% + 36px);transform:translateX(-50%);
-    font-size:11.5px;font-weight:700;opacity:.6;text-shadow:0 1px 3px #000;white-space:nowrap
+    font-size:12.5px;font-weight:700;opacity:.65;text-shadow:0 1px 3px #000;white-space:nowrap
   }
 
   /* ---------- Treffer-Overlay ---------- */
@@ -109,12 +121,24 @@
     font-size:19px;cursor:pointer
   }
   #mbox .cell.bar{background:rgba(255,255,255,.12)}
-  #mbox .cell.on{border-color:#ffd76a;background:rgba(255,215,106,.2)}
-  #mbox .cell .n{
-    position:absolute;right:2px;bottom:0;font-size:10px;font-weight:800;
-    text-shadow:1px 1px 0 #000,-1px 1px 0 #000
+  #mbox .cell:hover{border-color:rgba(255,215,106,.65);background:rgba(255,215,106,.12)}
+
+  /* ---------- Stapel am Mauszeiger ---------- */
+  #carry{
+    position:fixed;left:0;top:0;z-index:50;width:44px;height:44px;display:none;
+    align-items:center;justify-content:center;font-size:21px;pointer-events:none;
+    filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))
   }
-  #mbox h3{font-size:11px;opacity:.7;margin:10px 0 0;text-transform:uppercase;letter-spacing:.5px}
+  #carry img.ic{width:38px;height:38px}
+  #carry .n{
+    position:absolute;right:0;bottom:-1px;font-size:12px;font-weight:800;
+    text-shadow:1px 1px 0 #000,-1px 1px 0 #000,1px -1px 0 #000
+  }
+  #mbox .cell .n{
+    position:absolute;right:3px;bottom:1px;font-size:11.5px;font-weight:800;
+    text-shadow:1px 1px 0 #000,-1px 1px 0 #000,1px -1px 0 #000
+  }
+  #mbox h3{font-size:12px;opacity:.7;margin:10px 0 0;text-transform:uppercase;letter-spacing:.5px}
 
   /* ---------- Gegenstandsbildchen ---------- */
   /* Ein Sprite füllt seine Zelle zu gut drei Vierteln; fehlt es, steht an
@@ -168,7 +192,7 @@
   }
   .toast{
     background:rgba(12,22,12,.9);border:1px solid #4a774a;border-radius:16px;
-    padding:5px 13px;font-size:12.5px;font-weight:700;text-align:center;animation:ti .2s ease-out
+    padding:6px 14px;font-size:13px;font-weight:700;text-align:center;animation:ti .2s ease-out
   }
   .toast.good{border-color:#7dff8a;color:#c9ffcf}
   .toast.warn{border-color:#ffb33c;color:#ffd76a}
@@ -186,9 +210,9 @@
     background:#1a2e1a;border:2px solid #4a774a;border-radius:16px;padding:14px;
     width:100%;max-width:560px;max-height:94%;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.6)
   }
-  #mbox h2{color:#ffd76a;font-size:19px;text-align:center;margin-bottom:7px}
-  #mbox p{font-size:13px;line-height:1.5;margin-bottom:7px}
-  #mbox .kbd{font-size:12.5px;opacity:.85;line-height:1.7}
+  #mbox h2{color:#ffd76a;font-size:21px;letter-spacing:.5px;text-align:center;margin-bottom:7px}
+  #mbox p{font-size:13.5px;line-height:1.6;margin-bottom:7px}
+  #mbox .kbd{font-size:13px;opacity:.85;line-height:1.85}
   #mbox .kbd b{
     display:inline-block;min-width:22px;text-align:center;background:#0f1c0f;border-radius:5px;
     border:1px solid #4a774a;padding:1px 5px;margin-right:5px;font-size:11.5px
@@ -204,8 +228,8 @@
   }
   .recipe .ico img.ic{width:100%;height:100%}
   .recipe .txt{flex:1;min-width:0}
-  .recipe .nm{font-weight:800;font-size:13px}
-  .recipe .ds{font-size:11px;opacity:.8;line-height:1.3}
+  .recipe .nm{font-weight:800;font-size:14px}
+  .recipe .ds{font-size:12px;opacity:.8;line-height:1.3}
   .recipe button{
     background:#b0722a;border:none;border-radius:8px;padding:7px 10px;
     font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap
@@ -223,7 +247,7 @@
   .btnrow button:active{transform:scale(.97)}
   .page{
     background:#2b2415;border:1px solid #7a6338;border-radius:10px;padding:10px 12px;
-    font-size:13px;line-height:1.55;color:#f0e2bd;margin-bottom:6px
+    font-size:14px;line-height:1.65;color:#f0e2bd;margin-bottom:6px
   }
   .page b{color:#ffd76a}
 
@@ -258,6 +282,7 @@
   <div id="hotbar"></div>
 
   <div id="modal" class="hidden"><div id="mbox"></div></div>
+  <div id="carry"></div>
 </div>
 
 <div id="boot">⛏️<br>Welt wird erzeugt …</div>

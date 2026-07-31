@@ -50,9 +50,9 @@ wie für die Bennis.
 
 ## Abbauen und Bauen
 
-Linke Maustaste **halten**, bis der Balken unterm Fadenkreuz voll ist — dann fällt der
-Block ins Inventar. Mit dem passenden Werkzeug geht es rund dreimal so schnell, Stein
-ohne 🪓/⛏️ dagegen zäh.
+Linke Maustaste **halten**: im Block bilden sich **Risse**, die von der Mitte nach außen
+wachsen. Sind sie über die ganze Fläche gelaufen, fällt der Block ins Inventar. Mit dem
+passenden Werkzeug geht es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
 
 | Block | Ergibt | Womit schneller |
 |---|---|---|
@@ -70,8 +70,15 @@ In dich selbst oder in einen Benni hinein baust du nicht.
 ## Bauen im Raster
 
 `E` öffnet den Rucksack mit dem Handwerksfeld. Zutaten werden **hineingelegt** wie beim
-Vorbild: anklicken, ins Raster klicken. Stimmt das Muster, erscheint rechts das Ergebnis —
-anklicken, fertig. Was danach noch im Raster liegt, wandert beim Schließen zurück.
+Vorbild: Der angeklickte Stapel hängt am Mauszeiger, bis du ihn wieder irgendwo ablegst.
+
+| | |
+|---|---|
+| **Linke Maustaste** | nimmt und legt den **ganzen Stapel**; auf einen fremden Stapel geklickt, tauscht sie beide |
+| **Rechte Maustaste** | nimmt und legt **genau eins** — so verteilst du ein Muster, ohne den Stapel vorher zu teilen |
+
+Stimmt das Muster, erscheint rechts das Ergebnis — anklicken, fertig. Was danach noch im
+Raster oder am Zeiger hängt, wandert beim Schließen zurück in den Rucksack.
 
 - Im Rucksack ist das Raster **2×2**.
 - Eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf) macht daraus **3×3**. Alles, was
@@ -139,6 +146,7 @@ die ganze Welt.
 ## Dateien
 
 - `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
+- `vendor/font/` — Pixelify Sans als Schrift (SIL Open Font License 1.1, `OFL.txt` liegt dabei)
 - `*.png` — die Charaktere und Dominik als Frucht
 - `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch
 - `sprites/ui/` — Herzen, Essensbalken und die Knöpfe oben rechts
