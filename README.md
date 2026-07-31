@@ -60,7 +60,7 @@ passenden Werkzeug geht es rund dreimal so schnell, Stein ohne 🪓/⛏️ dageg
 | 🪵 Holzstamm | Holzstamm | 🪓 Axt |
 | 🍃 Laub | manchmal einen 🥢 Stock | — |
 | 🪨 Stein / 🧱 Ziegel | Stein, Ziegel | ⛏️ Spitzhacke |
-| 🍑 Dominik | Dominik (Essen + Zutat) | — |
+| 🍑 Dominik | Dominik (Essen + Zutat) | — · hängt hoch, bau dir was drunter |
 | 🍄 Pilz | Pilz (Essen + Zutat) | — |
 
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
@@ -134,9 +134,11 @@ jedem Start dieselbe, kein Speicherstand nötig.
 
 - **Berge** bis 25 Blöcke hoch, ab 9 Fels, ab 18 Schnee.
 - **Zwei Flüsse** durch Westen und Norden, mit Sandufern und Furten.
-- **Wälder** in zusammenhängenden Gebieten; an manchen Bäumen hängen **🍑 Dominiks** —
-  kleine Früchte, keine ganzen Blöcke, und auf jeder Seite grinst Dominik selbst.
-  Im Schatten stehen **🍄 Pilze**.
+- **Wälder** in zusammenhängenden Gebieten aus **hohen Bäumen** — zehn bis zwölf Blöcke
+  Stamm, darüber die Krone. An jedem fünften hängen unter dem Laub **🍑 Dominiks**:
+  zwei gekreuzte Flächen statt eines Klotzes, mit Dominiks Gesicht darauf. Man geht
+  durch sie hindurch, und vom Boden kommt man **nicht** heran — dazu müssen zwei bis
+  vier Blöcke untergebaut werden. Im Schatten stehen **🍄 Pilze**.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
 - **16 Truhen**, drei davon in Dörfern; **12 Notizen** zum Lesen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.

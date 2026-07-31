@@ -331,7 +331,8 @@ const BLOCKS={
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
   pot    :{tex:'pot',   hard:2.2, drop:'pot',    nm:'Kochtopf',pick:true, use:'pot'},
   chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
-  dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik', size:.62, alpha:true},
+  dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik',
+           cross:true, size:.85, alpha:true, pass:true},
   shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz'},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
   lore   :{tex:'note',  hard:0,   drop:null,     nm:'Alte Notiz', use:'lore', noBreak:true},
@@ -572,14 +573,20 @@ function safeSpot(){
 }
 
 // ------------------------------------------------------------------ Landschaft
+// Die Krone: zwei breite Lagen und eine schmale obendrauf. An einem langen
+// Stamm sähe eine einzelne breite Lage aus wie ein Besen.
 const TREE_TOP=[];
 (function treeShape(){
-  for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++)
-    if(Math.abs(x)+Math.abs(z)<=2) TREE_TOP.push([x,0,z]);
+  for(const dy of [0,1])
+    for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++)
+      if(Math.abs(x)+Math.abs(z)<=2) TREE_TOP.push([x,dy,z]);
   for(let x=-1;x<=1;x++) for(let z=-1;z<=1;z++)
-    if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,1,z]);
-  TREE_TOP.push([0,2,0]);
+    if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,2,z]);
 })();
+// Die Dominiks hängen unter der Krone, und die hängt hoch: vom Boden aus
+// kommt man mit REACH nicht heran, es braucht zwei, drei gesetzte Blöcke.
+const TRUNK_MIN=10;
+const FRUIT_OFF=[[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,-1],[1,-1],[-1,1]];
 // Nur auf ebenem Grasland: Hänge, Ufer und Fels bleiben frei.
 function treeSpot(x,z){
   const h=terrainH(x,z);
@@ -618,18 +625,20 @@ const chestSpots=[];
       if(hash2(x,z,55)>(dens>.54?.13:.022)) continue;
       const h=treeSpot(x,z);
       if(h<0) continue;
-      const trunk=3+(hash2(x,z,56)>.5?1:0);
+      const trunk=TRUNK_MIN+Math.floor(hash2(x,z,56)*3);
       for(let y=0;y<trunk;y++) put('log',x,h+y,z);
       for(const [dx,dy,dz] of TREE_TOP) put('leaf',x+dx,h+trunk-1+dy,z+dz);
       trees.push({x,z,h,trunk});
       n++;
     }
-  // --- Jeder fünfte Baum trägt Dominiks
+  // --- Jeder fünfte Baum trägt Dominiks. Sie hängen eine Lage unter der
+  // Krone, jeder direkt unter einem Blatt — und damit ausser Reichweite.
   for(const t of trees){
     if(hash2(t.x,t.z,77)>.22) continue;
-    const y=t.h+t.trunk-1;
-    for(const [dx,dz] of [[2,0],[-2,0],[0,2],[0,-2]]){
-      if(hash2(t.x+dx,t.z+dz,78)>.6) continue;
+    const y=t.h+t.trunk-2;
+    for(const [dx,dz] of FRUIT_OFF){
+      if(hash2(t.x+dx,t.z+dz,78)>.5) continue;
+      if(scenery.has(K(t.x+dx,y,t.z+dz))) continue;
       put('dominik',t.x+dx,y,t.z+dz);
     }
   }
@@ -730,11 +739,8 @@ const CHUNK=24, VIEW=145;
 const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
 const FACE_N={py:[0,1,0],ny:[0,-1,0],px:[1,0,0],nx:[-1,0,0],pz:[0,0,1],nz:[0,0,-1]};
 const UVQ=[0,0, 1,0, 1,1, 0,1];
-// s<1 schrumpft den Würfel um die Zellmitte — für Sachen, die keinen ganzen
-// Block ausfüllen sollen, etwa die Dominiks an den Bäumen.
-function faceVerts(dir,x,y,z,s=1){
-  const h=s/2, cy=y+.5;
-  const x0=x-h,x1=x+h,y0=cy-h,y1=cy+h,z0=z-h,z1=z+h;
+function faceVerts(dir,x,y,z){
+  const x0=x-.5,x1=x+.5,y0=y,y1=y+1,z0=z-.5,z1=z+.5;
   switch(dir){
     case 'py': return [x0,y1,z1, x1,y1,z1, x1,y1,z0, x0,y1,z0];
     case 'ny': return [x0,y0,z0, x1,y0,z0, x1,y0,z1, x0,y0,z1];
@@ -743,6 +749,16 @@ function faceVerts(dir,x,y,z,s=1){
     case 'pz': return [x0,y0,z1, x1,y0,z1, x1,y1,z1, x0,y1,z1];
     default  : return [x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0];
   }
+}
+// Zwei senkrechte Flächen über Kreuz, wie die Blumen im Vorbild. Sie hängen
+// oben in der Zelle, damit die Frucht am Laub darüber zu kleben scheint statt
+// in der Luft zu schweben. s ist die Kantenlänge, quer wie hoch.
+const UPN=[0,1,0];
+function crossVerts(i,x,y,z,s){
+  const o=s/(2*Math.SQRT2), y1=y+1, y0=y+1-s;
+  return i===0
+    ? [x-o,y0,z-o, x+o,y0,z+o, x+o,y1,z+o, x-o,y1,z-o]
+    : [x-o,y0,z+o, x+o,y0,z-o, x+o,y1,z-o, x-o,y1,z+o];
 }
 const chunks=new Map();
 const NCH=Math.ceil((BOUND.x1-BOUND.x0+1)/CHUNK);
@@ -756,14 +772,15 @@ function buildChunk(ci,cj){
   const x1=Math.min(bx+CHUNK-1,BOUND.x1), z1=Math.min(bz+CHUNK-1,BOUND.z1);
   c.cx=bx+CHUNK/2; c.cz=bz+CHUNK/2;
   const buf={};
-  const add=(mat,dir,x,y,z,s)=>{
+  const addQuad=(mat,v,nv)=>{
     const b=buf[mat]||(buf[mat]={p:[],n:[],u:[],i:[]});
-    const v=faceVerts(dir,x,y,z,s), nv=FACE_N[dir], base=b.p.length/3;
+    const base=b.p.length/3;
     b.p.push(...v);
     for(let k=0;k<4;k++) b.n.push(nv[0],nv[1],nv[2]);
     b.u.push(...UVQ);
     b.i.push(base,base+1,base+2, base,base+2,base+3);
   };
+  const add=(mat,dir,x,y,z)=>addQuad(mat,faceVerts(dir,x,y,z),FACE_N[dir]);
   for(let x=bx;x<=x1;x++) for(let z=bz;z<=z1;z++){
     const H=terrainH(x,z);
     let lo=H-1, hi=H-1;
@@ -778,11 +795,12 @@ function buildChunk(ci,cj){
     for(let y=lo;y<=hi;y++){
       const t=blockAt(x,y,z);
       if(!t) continue;
-      const sz=BLOCKS[t]?.size;
-      if(sz){
-        // Ein geschrumpfter Würfel steht frei in der Zelle: alle sechs Seiten
-        // müssen mit, sonst fehlt die Hälfte, sobald ein Blatt daneben hängt.
-        for(const d in FACE_N) add(t,d,x,y,z,sz);
+      if(BLOCKS[t]?.cross){
+        // Kein Würfel, sondern zwei gekreuzte Flächen — beidseitig sichtbar,
+        // also keine Nachbarprüfung: die Frucht hängt ohnehin frei.
+        const s=BLOCKS[t].size||1;
+        addQuad(t,crossVerts(0,x,y,z,s),UPN);
+        addQuad(t,crossVerts(1,x,y,z,s),UPN);
         continue;
       }
       if(!blockAt(x,y+1,z)) add(t,'py',x,y,z);
@@ -894,7 +912,7 @@ const CHARS=[
    lines:['In den Truhen liegen alte Rezeptzettel.','Nachts bleibe ich lieber im Licht.',
           'Die Notizen hier herum kann man lesen.']},
   {key:'jannes',name:'Jannes',h:1.88,x:6,z:14,color:'#4ab0ff',
-   lines:['Dominiks wachsen an manchen Bäumen im Wald.','Leg die Sachen ins Raster — wie beim Vorbild.',
+   lines:['Dominiks hängen hoch. Bau dir was drunter.','Leg die Sachen ins Raster — wie beim Vorbild.',
           'Das Suppenrezept? Weit draußen, sagt man.']},
 ];
 const texLoader=new THREE.TextureLoader();
@@ -1663,7 +1681,12 @@ function collides(px,py,pz){
   for(let bx=Math.round(px-PR);bx<=Math.round(px+PR);bx++)
     for(let bz=Math.round(pz-PR);bz<=Math.round(pz+PR);bz++){
       if(Math.abs(px-bx)>=.5+PR||Math.abs(pz-bz)>=.5+PR) continue;
-      for(let y=y0;y<=y1;y++) if(blockAt(bx,y,bz)) return true;
+      for(let y=y0;y<=y1;y++){
+        const t=blockAt(bx,y,bz);
+        // Die Dominiks sind zwei dünne Flächen, kein Klotz — man geht hindurch,
+        // statt beim Hochbauen an einer unsichtbaren Ecke hängenzubleiben.
+        if(t&&!BLOCKS[t]?.pass) return true;
+      }
     }
   return false;
 }
@@ -2017,7 +2040,8 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
   learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
-  clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,faceVerts,
+  clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
+  faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
   carried(){return carry;},
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
