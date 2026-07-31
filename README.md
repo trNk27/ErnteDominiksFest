@@ -38,8 +38,10 @@ wie für die Bennis.
 
 ## Überleben
 
-- **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bei 0 wachst du am
-  Startpunkt wieder auf und behältst dein Zeug.
+- **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bis drei Blöcke
+  Fallhöhe passiert nichts, darüber kostet jeder weitere Block. Nach einem Treffer bist
+  du kurz unverwundbar. Bei 0 wachst du am Startpunkt wieder auf, behältst dein Zeug und
+  hast ein paar Sekunden Ruhe, bis es weitergeht.
 - **🍗 Hunger** — läuft langsam leer. Iss 🍑 Dominiks, 🍄 Pilze oder die fertige Suppe
   (rechte Maustaste mit dem Essen in der Hand). Ist der Balken voll, heilst du dich
   langsam selbst; ist er leer, kostet es Leben.
@@ -107,6 +109,8 @@ jedem Start dieselbe, kein Speicherstand nötig.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
 - **16 Truhen**, drei davon in Dörfern.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
+- Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
+  tiefer gräbst du dich nicht.
 
 Gezeichnet wird nicht Würfel für Würfel, sondern **chunkweise nur die freiliegenden
 Flächen**. Ein abgebauter oder gesetzter Block vernetzt genau seinen Chunk neu, nicht

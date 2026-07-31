@@ -58,6 +58,8 @@ const BOUND={x0:-60,x1:60,z0:-60,z1:60};
 const HOME={x:0,z:5,r:26,fade:13};      // flaches Starttal
 const SEA=0;                            // Wasserspiegel der Flüsse
 const RIVER_BED=-2, RIVER_W=4.5;
+const BEDROCK=-12;                      // tiefer geht es nicht — hier ist Schluss
+const SPAWN={x:0,z:18};
 
 // ------------------------------------------------------------------ Geländeform
 function hash2(x,z,s){
@@ -140,7 +142,7 @@ const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
-  bob:0,stepT:0,atkCd:0,hurtT:0,sel:0};
+  bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0};
 
 // ------------------------------------------------------------------ Toasts
 function toast(msg,type='',ms=3000){
@@ -243,6 +245,7 @@ const TEX={
     g.fillStyle='#2c3035'; g.fillRect(0,0,s,3); g.fillRect(0,s-2,s,2);
     g.fillStyle='#6b7279'; g.fillRect(2,5,12,1);
   }),
+  bedrock:noiseTex(['#3a3a3e','#2c2c30','#4a4a4f','#232326'],44),
   shroom :noiseTex(['#c3352e','#b02c26','#d43e36'],43,(g,s)=>{
     g.fillStyle='#f2ece0';
     g.fillRect(3,3,3,3); g.fillRect(10,5,3,3); g.fillRect(6,10,3,3);
@@ -267,8 +270,11 @@ const BLOCKS={
   chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
   dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik'},
   shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz'},
+  bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
 };
-const blockTex=t=>TEX[BLOCKS[t].tex];
+// Fällt auf einen unbekannten Typ zurück, statt die Vernetzung zu sprengen:
+// eine kaputte Textur ist ein Schönheitsfehler, eine Ausnahme killt die Schleife.
+const blockTex=t=>TEX[BLOCKS[t]?.tex]||TEX.stone;
 
 // ------------------------------------------------------------------ Gegenstände
 const ITEMS={
@@ -385,6 +391,7 @@ function put(t,x,y,z){ scenery.set(K(x,y,z),t); noteRange(x,z,y); }
 function terrainType(x,z,y){
   const H=terrainH(x,z);
   if(y>=H) return null;
+  if(y<=BEDROCK) return 'bedrock';        // unzerstörbarer Boden der Welt
   if(y===H-1) return surfaceTex(x,z,H);
   if(y>=H-3) return 'dirt';
   return 'rock';
@@ -405,8 +412,22 @@ function surfaceAt(x,z){
   x=Math.round(x); z=Math.round(z);
   let y=terrainH(x,z);
   while(y<64&&blockAt(x,y,z)) y++;
-  while(y>-12&&!blockAt(x,y-1,z)) y--;
+  while(y>BEDROCK&&!blockAt(x,y-1,z)) y--;
   return y;
+}
+// Erster Platz mit festem Boden und zwei freien Blöcken darüber. Wer sich am
+// Startpunkt einen Schacht gegraben hat, landet sonst beim Sterben in der Luft
+// und fällt endlos in dieselbe Grube zurück.
+function safeSpot(){
+  for(let r=0;r<14;r++)
+    for(let dx=-r;dx<=r;dx++) for(let dz=-r;dz<=r;dz++){
+      if(Math.max(Math.abs(dx),Math.abs(dz))!==r) continue;
+      const x=SPAWN.x+dx, z=SPAWN.z+dz;
+      if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) continue;
+      const y=surfaceAt(x,z);
+      if(y>SEA-2&&blockAt(x,y-1,z)&&!blockAt(x,y,z)&&!blockAt(x,y+1,z)) return {x,y,z};
+    }
+  return {x:SPAWN.x,y:surfaceAt(SPAWN.x,SPAWN.z),z:SPAWN.z};
 }
 
 // ------------------------------------------------------------------ Landschaft
@@ -603,8 +624,11 @@ function markDirty(x,z){
 }
 function flushChunks(){
   if(!_dirtyChunks.size) return;
-  for(const k of _dirtyChunks){ const [i,j]=k.split(',').map(Number); buildChunk(i,j); }
+  // Erst leeren, dann bauen: ginge dabei etwas schief, bliebe der Chunk sonst
+  // für immer schmutzig und risse jedes weitere Bild mit sich.
+  const todo=[..._dirtyChunks];
   _dirtyChunks.clear();
+  for(const k of todo){ const [i,j]=k.split(',').map(Number); buildChunk(i,j); }
 }
 function setBlock(x,y,z,type){
   edits.set(K(x,y,z),type||null);
@@ -818,9 +842,10 @@ function updateMobs(dt){
   }
 }
 function hurtPlayer(dmg){
-  if(state.paused) return;
+  if(state.paused||player.invT>0) return;
   player.hp=clamp(player.hp-dmg,0,player.maxhp);
   player.hurtT=.35;
+  player.invT=.5;                        // kurze Unverwundbarkeit wie im Vorbild
   SND.hurt();
   if(player.hp<=0) respawn();
   updateHUD();
@@ -828,8 +853,12 @@ function hurtPlayer(dmg){
 function respawn(){
   state.deaths++;
   player.hp=player.maxhp; player.food=Math.max(6,player.food);
-  player.x=0; player.z=18; player.vy=0;
-  player.y=player.viewY=surfaceAt(player.x,player.z);
+  const s=safeSpot();
+  player.x=s.x; player.z=s.z; player.vy=0; player.onGround=true;
+  player.y=player.viewY=player.fallFrom=s.y;
+  player.invT=2.5;                       // Gnadenfrist, sonst campen Bennis den Punkt
+  for(let i=mobs.length-1;i>=0;i--)      // und die Umstehenden verziehen sich
+    if(Math.hypot(mobs[i].x-s.x,mobs[i].z-s.z)<10) dropMob(mobs[i],i);
   toast('💀 Du bist gestorben. Dein Kram bleibt bei dir.','bad',3600);
   updateHUD();
 }
@@ -1202,18 +1231,25 @@ function updatePlayer(dt){
     if(player.onGround&&keys.Space){ player.vy=JUMP; player.onGround=false; }
     player.vy-=GRAV*dt;
     let ny=player.y+player.vy*dt;
+    let fall=0;
     if(player.vy<=0){
       if(collides(player.x,ny,player.z)){
         ny=Math.floor(ny)+1;
-        if(!player.onGround&&player.vy<-6) SND.land();
+        if(!player.onGround){
+          if(player.vy<-6) SND.land();
+          fall=player.fallFrom-ny;               // Sturzhöhe für den Schaden
+        }
         player.vy=0; player.onGround=true;
       } else player.onGround=false;
     } else {
       if(collides(player.x,ny,player.z)){ ny=player.y; player.vy=0; }
       player.onGround=false;
     }
-    if(ny<-14){ respawn(); ny=player.y; }
+    if(player.onGround||ny>player.fallFrom) player.fallFrom=ny;
+    if(ny<BEDROCK-6){ respawn(); ny=player.y; fall=0; }  // normal unerreichbar
     player.y=ny;
+    // Erst jetzt Schaden, sonst überschreibt die Höhe von oben einen Respawn.
+    if(fall>3) hurtPlayer(Math.max(1,Math.round(fall-3)));
   }
 
   // Kamera: Höhe weich nachziehen, sonst ruckelt jede Stufe
@@ -1232,6 +1268,7 @@ function updatePlayer(dt){
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   if(player.atkCd>0) player.atkCd-=dt;
+  if(player.invT>0) player.invT-=dt;
   if(player.hurtT>0){ player.hurtT-=dt; el('hurt').style.opacity=Math.max(0,player.hurtT); }
   else el('hurt').style.opacity=0;
 }
@@ -1409,13 +1446,19 @@ function update(dt){
   state.checkT+=dt;
   if(state.checkT>=.5){ state.checkT=0; updateHUD(); }
 }
-let last=performance.now();
+let last=performance.now(), frameErrs=0;
 function frame(now){
+  // Nächstes Bild zuerst anfordern: ein Fehler in update() soll die Schleife
+  // nicht abreißen lassen, sonst friert das ganze Spiel ein.
+  requestAnimationFrame(frame);
   let dt=Math.min((now-last)/1000,.1); last=now;
   dt*=(window.__speed||1);
-  update(dt);
-  renderer.render(scene,camera);
-  requestAnimationFrame(frame);
+  try{
+    update(dt);
+    renderer.render(scene,camera);
+  }catch(e){
+    if(++frameErrs<4) console.error(e);
+  }
 }
 function resize(){
   const w=innerWidth,h=innerHeight;
@@ -1461,7 +1504,10 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,pages,chests,torches,mobs,
   get target(){return target;},
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
-  tp(x,z,yaw){ player.x=x; player.z=z; player.y=player.viewY=surfaceAt(x,z);
+  tp(x,z,yaw){
+    player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
+    player.y=player.viewY=player.fallFrom=surfaceAt(player.x,player.z);
+    player.vy=0; player.onGround=true;
     if(yaw!=null) player.yaw=yaw; updatePlayer(0); updateTarget(); },
   look(yaw,pitch){ player.yaw=yaw; player.pitch=pitch; updatePlayer(0); updateTarget(); },
   mine(){ if(!target) return false; const t=target.type;
