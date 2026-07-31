@@ -1623,77 +1623,111 @@ function updateAction(dt){
 }
 
 // ------------------------------------------------------------------ Eingabe
-const isTouch=matchMedia('(pointer: coarse)').matches;
 const keys={};
 const move={x:0,y:0};
-let stickId=null,stickOx=0,stickOy=0,lookId=null,lookX=0,lookY=0;
-const stickEl=el('stick');
 const layer=el('touchlayer');
 
+// Mouse click handling for block manipulation
 layer.addEventListener('pointerdown',e=>{
   ac(); startGameIfNeeded();
-  try{ layer.setPointerCapture(e.pointerId); }catch(err){}
-  if(e.pointerType==='mouse'&&!isTouch){
-    if(document.pointerLockElement===renderer.domElement){ attack(); return; }
-    lookId=e.pointerId; lookX=e.clientX; lookY=e.clientY;
+  
+  // Left click - destroy/break block
+  if(e.button === 0 || (e.pointerType === 'mouse' && e.buttons === 1)){
+    if(document.pointerLockElement===renderer.domElement){
+      // Check if we're looking at a block to break
+      if(target && (target.kind === 'block' || target.kind === 'ground')){
+        e.preventDefault();
+        const b = target.kind === 'block' ? target.block : null;
+        if(b && breakBlock(b)){
+          payBuild(buildDef(b.type), -1);
+          SND.chop();
+          updateHUD();
+        }
+        return;
+      }
+      // Otherwise attack
+      attack();
+      return;
+    }
+    // Request pointer lock on first click
     renderer.domElement.requestPointerLock?.();
     return;
   }
-  if(e.clientX<innerWidth*.5&&stickId===null){
-    stickId=e.pointerId; stickOx=e.clientX; stickOy=e.clientY;
-    stickEl.style.left=(e.clientX-59)+'px'; stickEl.style.top=(e.clientY-59)+'px';
-    stickEl.classList.add('on');
-  } else if(lookId===null){
-    lookId=e.pointerId; lookX=e.clientX; lookY=e.clientY;
+  
+  // Right click - place block
+  if(e.button === 2 || (e.pointerType === 'mouse' && e.buttons === 2)){
+    if(document.pointerLockElement===renderer.domElement && target && target.kind === 'ground'){
+      e.preventDefault();
+      const b = curBuild();
+      const pl = target.place;
+      if(buildStock(b) >= 1 && placeBlocked(pl.x, pl.y, pl.z) === true){
+        payBuild(b, 1);
+        placeBlock(pl.x, pl.y, pl.z, b.id);
+        state.placed++;
+        updateHUD();
+      }
+      return;
+    }
   }
 });
+
 layer.addEventListener('pointermove',e=>{
-  if(e.pointerId===stickId){
-    const dx=e.clientX-stickOx, dy=e.clientY-stickOy, d=Math.hypot(dx,dy), max=52;
-    const k=d>max?max/d:1;
-    move.x=clamp(dx/max,-1,1); move.y=clamp(dy/max,-1,1);
-    stickEl.querySelector('.knob').style.transform=`translate(${dx*k}px,${dy*k}px)`;
-  } else if(e.pointerId===lookId){
-    if(document.pointerLockElement) return;
-    const s=.0042;
-    player.yaw-=(e.clientX-lookX)*s;
-    player.pitch=clamp(player.pitch-(e.clientY-lookY)*s,-1.45,1.45);
-    lookX=e.clientX; lookY=e.clientY;
-  }
+  if(document.pointerLockElement===renderer.domElement) return;
+  // Only handle camera look when not in pointer lock
+  const s=.0042;
+  player.yaw-=(e.clientX-lookX)*s;
+  player.pitch=clamp(player.pitch-(e.clientY-lookY)*s,-1.45,1.45);
+  lookX=e.clientX; lookY=e.clientY;
 });
-const endPointer=e=>{
-  if(e.pointerId===stickId){
-    stickId=null; move.x=move.y=0;
-    stickEl.classList.remove('on');
-    stickEl.querySelector('.knob').style.transform='';
-  }
-  if(e.pointerId===lookId) lookId=null;
-};
-layer.addEventListener('pointerup',endPointer);
-layer.addEventListener('pointercancel',endPointer);
+
+let lookX=0, lookY=0;
+
+layer.addEventListener('pointerup',e=>{});
+layer.addEventListener('pointercancel',e=>{});
+
 document.addEventListener('mousemove',e=>{
   if(document.pointerLockElement===renderer.domElement){
     player.yaw-=e.movementX*.0022;
     player.pitch=clamp(player.pitch-e.movementY*.0022,-1.45,1.45);
   }
 });
+
+// Prevent context menu on right click
+layer.addEventListener('contextmenu', e => e.preventDefault());
+
 addEventListener('keydown',e=>{
   keys[e.code]=true;
   if(e.code==='Escape'&&document.pointerLockElement) document.exitPointerLock();
-  if(['KeyE','Space','Digit1','Digit2','Digit3','Digit4'].includes(e.code)){
-    e.preventDefault(); startGameIfNeeded();
-    const i=e.code==='KeyE'||e.code==='Space'?0:+e.code.slice(5)-1;
-    if(actEls[i]) startAction(actEls[i].a);
+  
+  // E key opens inventory
+  if(e.code==='KeyE'){
+    e.preventDefault(); 
+    ac();
+    if(modal.classList.contains('hidden')){
+      openInventory();
+    } else {
+      hideModal();
+    }
+    return;
   }
+  
+  // Number keys for hotbar selection
+  if(['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8'].includes(e.code)){
+    e.preventDefault(); startGameIfNeeded();
+    const i=+e.code.slice(5)-1;
+    if(i < HOT.length && HOT[i].build != null){
+      player.blockI=HOT[i].build;
+      targetSig='';
+      SND.tap(); updateHUD();
+    }
+    return;
+  }
+  
   if(e.code==='KeyF'){ e.preventDefault(); attack(); }
   if(e.code==='KeyR'){ e.preventDefault(); dismount(); }
-  if(e.code==='KeyB'){ e.preventDefault(); runAction('pickblk',target); }
-  if(e.code==='KeyI'){ e.preventDefault(); ac();
-    modal.classList.contains('hidden')?openInventory():hideModal(); }
   if(e.code==='KeyP') togglePause();
 });
 addEventListener('keyup',e=>{keys[e.code]=false;});
-el('fight').addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();ac();attack();});
 function dismount(){
   if(!player.driving) return;
   player.driving=false;
@@ -1858,8 +1892,7 @@ function updateHUD(){
   // Waffe
   const w=WEAPONS[activeWeapon()];
   el('weapon').innerHTML=w.ic+'<span>'+w.nm+(w.ranged?' 🍑'+player.carry:'')+'</span>';
-  el('fight').style.display=(mobs.length||state.night)?'flex':'none';
-  el('fight').textContent=w.ic;
+
   const sig=HOT.map(h=>h.get()).join('|')+'|'+player.blockI;
   if(sig!==hotCache){
     hotCache=sig;
@@ -2013,9 +2046,7 @@ function openInventory(){
   showModal(h);
 }
 function showIntro(){
-  const ctrl=isTouch
-    ? 'Links wischen = laufen · rechts wischen = umsehen · Aktionen rechts unten antippen.'
-    : 'WASD laufen · Maus umsehen · <b>E</b> Aktion · <b>F</b> zuschlagen · <b>B</b> Baustoff · <b>I</b> Inventar.';
+  const ctrl='WASD laufen · Maus umsehen · <b>E</b> Inventar · <b>Linke Maustaste</b> abbauen · <b>Rechte Maustaste</b> platzieren · <b>F</b> angreifen · <b>1-4</b> Baustoff wählen · <b>P</b> Pause';
   showModal(`<h2>🌳 ErnteDominiksFest</h2>
   <p style="font-size:14px">Züchte Dominiks auf Bäumen, ernte die Köpfe und verkauf sie im Dorf.
   <b>Kein Zeitdruck, kein Game Over.</b></p>
@@ -2141,7 +2172,7 @@ Promise.all([
   rebuildBlocks();
   resize(); updateHUD(); updateQuestUI();
   el('boot').remove();
-  el('hint').innerHTML=isTouch?'':'WASD laufen · Maus umsehen<br>E Aktion · F schlagen · B Baustoff · I Inventar · P Pause';
+  el('hint').innerHTML='WASD laufen · Maus umsehen<br>E Inventar · Linke Maustaste abbauen · Rechte Maustaste platzieren · F angreifen · 1-4 Baustoff · P Pause';
   if(localStorage.getItem('edf3d_tut')){ state.paused=false; state.started=true; }
   else showIntro();
   requestAnimationFrame(frame);
