@@ -18,136 +18,93 @@
 
   #ui{position:absolute;inset:0;pointer-events:none;z-index:10}
 
-  /* ---------- HUD oben ---------- */
-  #hud{
-    position:absolute;top:6px;left:8px;right:8px;display:flex;align-items:flex-start;gap:8px;
+  /* ---------- Kopfzeile: nur Ziel-Fortschritt und Pause ---------- */
+  #hud{position:absolute;top:8px;left:10px;right:10px;display:flex;align-items:flex-start;gap:8px}
+  #book{
+    background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.14);border-radius:11px;
+    padding:5px 10px;font-size:13px;font-weight:800;backdrop-filter:blur(6px)
   }
-  #stats{
-    display:flex;flex-wrap:wrap;gap:3px 10px;background:rgba(12,22,12,.72);
-    border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:5px 10px;
-    font-size:13px;font-weight:700;backdrop-filter:blur(6px);max-width:56vw;
-  }
-  #daywrap{width:46px;height:6px;background:#0b160b;border-radius:3px;display:inline-block;vertical-align:middle;overflow:hidden}
-  #daybar{display:block;height:100%;width:0;background:linear-gradient(90deg,#ffd76a,#ff9d3c)}
+  #book.full{border-color:#ffd76a;color:#ffd76a}
   #topbtns{margin-left:auto;display:flex;gap:6px;pointer-events:auto}
   #topbtns button{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.16);border-radius:11px;
-    width:40px;height:40px;font-size:17px;cursor:pointer;backdrop-filter:blur(6px);
+    width:38px;height:38px;font-size:16px;cursor:pointer;backdrop-filter:blur(6px)
   }
   #topbtns button:active{transform:scale(.92)}
 
   /* ---------- Fadenkreuz ---------- */
   #cross{
     position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-    width:22px;height:22px;opacity:.85;transition:opacity .15s,transform .15s
+    width:22px;height:22px;opacity:.85;transition:opacity .15s,transform .12s
   }
   #cross i{position:absolute;background:#fff;border-radius:2px;box-shadow:0 0 3px rgba(0,0,0,.7)}
   #cross i:nth-child(1){left:50%;top:0;width:2px;height:7px;margin-left:-1px}
   #cross i:nth-child(2){left:50%;bottom:0;width:2px;height:7px;margin-left:-1px}
   #cross i:nth-child(3){top:50%;left:0;height:2px;width:7px;margin-top:-1px}
   #cross i:nth-child(4){top:50%;right:0;height:2px;width:7px;margin-top:-1px}
-  #cross.hot{transform:translate(-50%,-50%) scale(1.35);opacity:1}
+  #cross.hot{transform:translate(-50%,-50%) scale(1.3);opacity:1}
   #cross.hot i{background:#ffd76a}
+  #cross.swing{transform:translate(-50%,-50%) rotate(38deg) scale(1.5)}
 
-  /* ---------- Zielanzeige + Aktionen ---------- */
-  #target{
-    position:absolute;right:10px;bottom:12px;
-    width:min(46vw,270px);display:flex;flex-direction:column;align-items:stretch;gap:5px;
-    pointer-events:auto
+  /* Abbau-Fortschritt direkt unterm Fadenkreuz */
+  #mine{
+    position:absolute;left:50%;top:calc(50% + 22px);transform:translateX(-50%);
+    width:56px;height:5px;background:rgba(0,0,0,.45);border-radius:3px;overflow:hidden;display:none
   }
-  #target.hidden{display:none}
-  #tname{
-    background:rgba(12,22,12,.8);border:1px solid rgba(255,255,255,.16);border-radius:10px;
-    padding:4px 9px;font-size:12.5px;font-weight:800;text-align:center;backdrop-filter:blur(6px)
-  }
-  #tname small{display:block;font-size:10.5px;font-weight:600;opacity:.85;margin-top:1px}
-  .act{
-    position:relative;display:flex;align-items:center;gap:8px;overflow:hidden;
-    background:rgba(30,58,30,.9);border:1px solid rgba(255,255,255,.2);border-radius:12px;
-    padding:9px 11px;font-size:14px;font-weight:800;cursor:pointer;text-align:left;
-    backdrop-filter:blur(6px);
-  }
-  .act .ic{font-size:17px;flex:0 0 auto;position:relative}
-  .act .tx{position:relative;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .act .sub{position:relative;font-size:10.5px;font-weight:700;opacity:.75;flex:0 0 auto}
-  .act .prog{position:absolute;inset:0 auto 0 0;width:0;background:rgba(255,215,106,.4)}
-  .act:active{transform:scale(.97)}
-  .act.off{opacity:.5}
-  .act.key::after{
-    content:attr(data-key);position:absolute;right:5px;top:3px;font-size:8.5px;opacity:.55;font-weight:700
-  }
-  .act.prim{background:rgba(176,114,42,.92)}
+  #mine i{display:block;height:100%;width:0;background:#ffd76a}
 
-  /* ---------- Herzen & Waffe ---------- */
+  /* Name des angepeilten Blocks */
+  #tip{
+    position:absolute;left:50%;top:calc(50% + 36px);transform:translateX(-50%);
+    font-size:11.5px;font-weight:700;opacity:.6;text-shadow:0 1px 3px #000;white-space:nowrap
+  }
+
+  /* ---------- Treffer-Overlay ---------- */
+  #hurt{
+    position:absolute;inset:0;opacity:0;pointer-events:none;
+    box-shadow:inset 0 0 90px 20px rgba(190,20,20,.85);transition:opacity .12s
+  }
+
+  /* ---------- Herzen & Hunger ---------- */
   #vitals{
-    position:absolute;left:10px;bottom:58px;
-    display:flex;flex-direction:column;gap:4px;align-items:flex-start
+    position:absolute;left:50%;bottom:62px;transform:translateX(-50%);
+    width:min(92vw,440px);display:flex;justify-content:space-between;
+    font-size:14px;letter-spacing:-1px;line-height:1;text-shadow:0 1px 3px #000
   }
-  #hearts{font-size:13px;letter-spacing:-1px;text-shadow:0 1px 3px #000;line-height:1}
-  #weapon{
-    display:flex;align-items:center;gap:5px;background:rgba(12,22,12,.72);
-    border:1px solid rgba(255,255,255,.16);border-radius:9px;padding:3px 8px;
-    font-size:16px;font-weight:800;backdrop-filter:blur(6px)
-  }
-  #weapon span{font-size:11px;font-weight:700;opacity:.85}
 
-  /* ---------- Hotbar (Minecraft-Stil) ---------- */
-  #hotbar{
-    position:absolute;left:50%;bottom:8px;
-    transform:translateX(calc(-50% - 74px));
-    display:flex;gap:4px
-  }
+  /* ---------- Inventarleiste ---------- */
+  #hotbar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:4px}
   #hotbar .slot{
-    position:relative;width:42px;height:42px;border:2px solid rgba(255,255,255,.32);
-    background:rgba(12,22,12,.66);border-radius:6px;display:flex;align-items:center;
-    justify-content:center;font-size:19px;backdrop-filter:blur(4px)
+    position:relative;width:44px;height:44px;border:2px solid rgba(255,255,255,.3);
+    background:rgba(12,22,12,.6);border-radius:6px;display:flex;align-items:center;
+    justify-content:center;font-size:21px;backdrop-filter:blur(4px);
+    cursor:pointer;pointer-events:auto
   }
-  #hotbar .slot.pick{cursor:pointer;pointer-events:auto}
-  #hotbar .slot.pick:active{transform:scale(.93)}
-  #hotbar .slot.sel{border-color:#ffd76a;background:rgba(80,64,20,.8);box-shadow:0 0 0 2px rgba(255,215,106,.28)}
-  #hotbar .gap{width:9px}
+  #hotbar .slot.sel{border-color:#fff;background:rgba(90,90,60,.7);box-shadow:0 0 0 2px rgba(255,255,255,.25)}
   #hotbar .slot .n{
     position:absolute;right:3px;bottom:1px;font-size:11px;font-weight:800;
     text-shadow:1px 1px 0 #000,-1px 1px 0 #000
   }
-  #hotbar .slot.warn{border-color:#ff9d3c;background:rgba(70,30,10,.7)}
+  @media (max-height:420px){#hotbar .slot{width:36px;height:36px;font-size:17px}}
 
   /* ---------- Inventarfenster ---------- */
-  #mbox .invgrid{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 2px}
-  #mbox .invcell{
-    width:60px;padding:5px 2px;border:1px solid rgba(255,255,255,.16);border-radius:9px;
-    background:rgba(255,255,255,.05);text-align:center;font-size:9.5px;font-weight:700;
-    line-height:1.25;overflow:hidden
+  #mbox .invgrid{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin:6px 0}
+  #mbox .cell{
+    position:relative;aspect-ratio:1;border:1px solid rgba(255,255,255,.16);border-radius:7px;
+    background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;
+    font-size:19px;cursor:pointer
   }
-  #mbox .invcell .ic{display:block;font-size:17px;margin-bottom:1px}
-  #mbox .invcell .nm{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #mbox .invcell .n{display:block;opacity:.78;font-size:10px}
-  #mbox .invcell.tap{cursor:pointer}
-  #mbox .invcell.tap:active{transform:scale(.94)}
-  #mbox .invcell.on{border-color:#ffd76a;background:rgba(255,215,106,.16)}
-  #mbox .invcell.dim{opacity:.38}
-  #mbox h3{font-size:11px;opacity:.7;margin:8px 0 0;text-transform:uppercase;letter-spacing:.5px}
-
-  /* ---------- Aufgaben-Banner ---------- */
-  #quest{
-    position:absolute;left:50%;top:50px;transform:translateX(-50%);
-    background:rgba(12,22,12,.82);border:1px solid #ffd76a;border-radius:12px;
-    padding:5px 14px;font-size:13px;font-weight:700;text-align:center;
-    backdrop-filter:blur(6px);max-width:64vw;display:none
+  #mbox .cell.bar{background:rgba(255,255,255,.12)}
+  #mbox .cell.on{border-color:#ffd76a;background:rgba(255,215,106,.2)}
+  #mbox .cell .n{
+    position:absolute;right:2px;bottom:0;font-size:10px;font-weight:800;
+    text-shadow:1px 1px 0 #000,-1px 1px 0 #000
   }
-  #quest b{color:#ffd76a;margin-right:6px}
-  #quest small{display:block;font-size:10.5px;opacity:.72;font-weight:600;margin-top:1px}
-
-  /* ---------- Alarm-Pfeile ---------- */
-  .alert{
-    position:absolute;font-size:19px;transform:translate(-50%,-50%);
-    filter:drop-shadow(0 1px 3px #000);transition:opacity .2s
-  }
-  .alert b{position:absolute;left:50%;top:100%;transform:translateX(-50%);font-size:9px;font-weight:800}
+  #mbox h3{font-size:11px;opacity:.7;margin:10px 0 0;text-transform:uppercase;letter-spacing:.5px}
 
   /* ---------- Toasts ---------- */
   #toasts{
-    position:absolute;left:50%;top:100px;transform:translateX(-50%);
+    position:absolute;left:50%;top:86px;transform:translateX(-50%);
     display:flex;flex-direction:column;gap:4px;align-items:center;width:max-content;max-width:80vw
   }
   .toast{
@@ -172,12 +129,28 @@
   }
   #mbox h2{color:#ffd76a;font-size:19px;text-align:center;margin-bottom:7px}
   #mbox p{font-size:13px;line-height:1.5;margin-bottom:7px}
-  #mbox .cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-  @media (max-width:620px){#mbox .cols{grid-template-columns:1fr}}
-  .tut li{font-size:12.5px;line-height:1.45;margin:0 0 5px 17px}
+  #mbox .kbd{font-size:12.5px;opacity:.85;line-height:1.7}
+  #mbox .kbd b{
+    display:inline-block;min-width:22px;text-align:center;background:#0f1c0f;border-radius:5px;
+    border:1px solid #4a774a;padding:1px 5px;margin-right:5px;font-size:11.5px
+  }
+  .recipe{
+    display:flex;align-items:center;gap:8px;background:#22401f;border:1px solid #3a5f37;
+    border-radius:10px;padding:6px 8px;margin-bottom:5px
+  }
+  .recipe.off{opacity:.45}
+  .recipe .ico{font-size:20px}
+  .recipe .txt{flex:1;min-width:0}
+  .recipe .nm{font-weight:800;font-size:13px}
+  .recipe .ds{font-size:11px;opacity:.8;line-height:1.3}
+  .recipe button{
+    background:#b0722a;border:none;border-radius:8px;padding:7px 10px;
+    font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap
+  }
+  .recipe button:disabled{background:#3b3b3b;opacity:.6;cursor:default}
   .btnrow{
     display:flex;gap:8px;margin-top:10px;position:sticky;bottom:-14px;
-    background:#1a2e1a;padding:8px 0 14px;z-index:2
+    background:#1a2e1a;padding:8px 0 6px;z-index:2
   }
   .btnrow button{
     flex:1;background:#3f6b3f;border:none;border-radius:10px;padding:11px;
@@ -185,21 +158,11 @@
   }
   .btnrow button.primary{background:#b0722a}
   .btnrow button:active{transform:scale(.97)}
-  .shopitem{
-    display:flex;align-items:center;gap:8px;background:#22401f;border:1px solid #3a5f37;
-    border-radius:10px;padding:7px
+  .page{
+    background:#2b2415;border:1px solid #7a6338;border-radius:10px;padding:10px 12px;
+    font-size:13px;line-height:1.55;color:#f0e2bd;margin-bottom:6px
   }
-  .shopitem .ico{font-size:20px}
-  .shopitem .txt{flex:1;min-width:0}
-  .shopitem .nm{font-weight:800;font-size:13px}
-  .shopitem .ds{font-size:10.5px;opacity:.8;line-height:1.3}
-  .shopitem .own{font-size:10px;color:#ffd76a;font-weight:700}
-  .shopitem button{
-    background:#b0722a;border:none;border-radius:8px;padding:8px 9px;
-    font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap
-  }
-  .shopitem button:disabled{background:#3b3b3b;opacity:.6}
-  #shopmoney{text-align:center;font-weight:800;color:#ffd76a;margin-bottom:8px}
+  .page b{color:#ffd76a}
 
   /* ---------- Ladebildschirm ---------- */
   #boot{
@@ -212,36 +175,26 @@
 
 <div id="ui">
   <div id="hud">
-    <div id="stats">
-      <span>\u26cf\ufe0f <b id="hMoney">0</b> \u20ac</span>
-      <span>\ud83c\udf51 <b id="hSold">0</b> verkauft</span>
-      <span><b id="hDay">\u2600\ufe0f 1</b> <span id="daywrap"><i id="daybar"></i></span></span>
-      <span>\u26cf\ufe0f <b id="hPrice">12</b> \u20ac</span>
-    </div>
+    <div id="book">📖 <b id="hPages">0</b>/4</div>
     <div id="topbtns">
-      <button id="btnBag" title="Inventar">\ud83c\udf92</button>
-      <button id="btnPause" title="Pause">\u23f8\ufe0f</button>
+      <button id="btnBag" title="Inventar (E)">🎒</button>
+      <button id="btnPause" title="Pause (P)">⏸️</button>
     </div>
   </div>
 
   <div id="cross"><i></i><i></i><i></i><i></i></div>
+  <div id="mine"><i></i></div>
+  <div id="tip"></div>
   <div id="hurt"></div>
-  <div id="vitals"><div id="hearts">\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f\u2764\ufe0f</div><div id="weapon"></div></div>
-  <div id="alerts"></div>
-  <div id="quest"></div>
+  <div id="vitals"><div id="hearts"></div><div id="food"></div></div>
   <div id="toasts"></div>
 
   <div id="hotbar"></div>
 
-  <div id="target" class="hidden">
-    <div id="tname"></div>
-    <div id="tacts"></div>
-  </div>
-
   <div id="modal" class="hidden"><div id="mbox"></div></div>
 </div>
 
-<div id="boot">\ud83c\udf33<br>Dominik-Plantage wird angelegt \u2026</div>
+<div id="boot">⛏️<br>Welt wird erzeugt …</div>
 
 <script type="module" src="./game.js"></script>
 </body>

@@ -1,16 +1,12 @@
-# 🌳 ErnteDominiksFest — Klötzchen-Survival
+# ⛏️ ErnteDominiksFest — Klötzchen-Survival
 
-Ein satirisches Minecraft-artiges Spiel in **Ego-Perspektive**, gebaut fürs **Handy im
-Querformat**. Die Welt besteht aus Blöcken: du hackst Holz, klopfst Stein, **setzt und
-baust Blöcke ab**, baust an der Werkbank Werkzeug und züchtest Bäume, an denen
-**Dominik-Köpfe** als Frucht hängen.
+Ein Minecraft-artiges Survival-Spiel in **Ego-Perspektive**, im Browser, ohne Installation.
+Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt sie wieder**
+(rechte Maustaste), stellst dir an der Werkbank Werkzeug her und hältst nachts die
+**Bennis** aus. Kein Punktestand, keine Aufgabenliste — nur überleben.
 
-Um die Plantage herum liegt eine **erzeugte Landschaft** aus Bergen, Flüssen, Wäldern
-und Dörfern — 121 × 121 Blöcke, bei jedem Start dieselbe.
-
-**Kein Zeitdruck, kein Game Over.** Das Ziel ist einfach: möglichst viele Dominiks
-verkaufen. Vom Geld kaufst du Waffen, Rüstung und einen Traktor — denn **nachts kommen
-die Bennis**.
+**Ziel:** In **🧰 Truhen** überall in der Welt liegen vier Seiten eines alten Kochbuchs.
+Zusammen ergeben sie das Rezept der **🍲 Dominik-Suppe**. Wer sie kocht, hat gewonnen.
 
 ## Spielen
 
@@ -22,121 +18,99 @@ python3 -m http.server 8000
 # dann http://localhost:8000/ im Browser öffnen
 ```
 
+Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wieder frei.
+
 ## Steuerung
 
-| | Handy | Desktop |
+| Taste | Wirkung |
+|---|---|
+| `W` `A` `S` `D` | laufen · `⇧ Shift` rennen |
+| `␣ Leertaste` | springen |
+| Maus | umsehen |
+| **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
+| **Rechte Maustaste** | Block setzen · Truhe/Werkbank/Kochtopf benutzen · Essen |
+| `E` | Inventar mit Bauliste |
+| `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
+| `P` | Pause |
+
+Eine Stufe steigst du automatisch hoch, ab zwei Blöcken ist es eine Wand — für dich
+wie für die Bennis.
+
+## Überleben
+
+- **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bei 0 wachst du am
+  Startpunkt wieder auf und behältst dein Zeug.
+- **🍗 Hunger** — läuft langsam leer. Iss 🍑 Dominiks, 🍄 Pilze oder die fertige Suppe
+  (rechte Maustaste mit dem Essen in der Hand). Ist der Balken voll, heilst du dich
+  langsam selbst; ist er leer, kostet es Leben.
+- **🌙 Nacht** — ab der Dämmerung tauchen Bennis auf. **🔥 Fackeln** halten sie in weitem
+  Umkreis fern, ein ⚔️ Steinschwert räumt auf, eine zwei Blöcke hohe Mauer auch.
+
+## Abbauen und Bauen
+
+Linke Maustaste **halten**, bis der Balken unterm Fadenkreuz voll ist — dann fällt der
+Block ins Inventar. Mit dem passenden Werkzeug geht es rund dreimal so schnell, Stein
+ohne 🪓/⛏️ dagegen zäh.
+
+| Block | Ergibt | Womit schneller |
 |---|---|---|
-| Laufen | links wischen (Joystick) | `WASD` / Pfeiltasten, `Shift` rennen |
-| Umsehen | rechts wischen | Maus |
-| Aktionen | Buttons rechts unten antippen | `E`, `1`–`4` |
-| Zuschlagen | roter Knopf rechts | `F` oder Mausklick |
-| Baustoff wechseln | Platz in der Inventarleiste antippen | `B` |
-| Inventar | 🎒 oben rechts | `I` |
-| Aussteigen | Aktion am Traktor | `R` |
-| Pause | ⏸️ oben rechts | `P` |
+| 🟩 Gras / 🟫 Erde / 🟨 Sand / ❄️ Schnee | Erde, Sand, Schnee (Sand manchmal 🧂 Salz) | — |
+| 🪵 Holzstamm | Holzstamm | 🪓 Axt |
+| 🍃 Laub | manchmal einen 🥢 Stock | — |
+| 🪨 Stein / 🧱 Ziegel | Stein, Ziegel | ⛏️ Spitzhacke |
+| 🍑 Dominik | Dominik (Essen + Zutat) | — |
+| 🍄 Pilz | Pilz (Essen + Zutat) | — |
 
-Auf dem Bildschirm liegen nur noch drei Knöpfe: 🎒 Inventar, ⏸️ Pause und der
-Angriffsknopf, der nur auftaucht, wenn Bennis unterwegs sind. Alles andere läuft
-über das Fadenkreuz und die Inventarleiste.
+Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
+Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
+In dich selbst oder in einen Benni hinein baust du nicht.
 
-## Tag
+## Bauliste
 
-Bäume pflanzen, gießen, schneiden, spritzen, ernten — und im Dorf verkaufen. Das
-Gärtnern ist entspannt: eine volle Gießkanne hält **gut drei Minuten**, ein Baum
-vertrocknet erst nach **über vier Minuten** Vernachlässigung, und **Blattläuse fressen
-nur die Ernte** statt den Baum zu töten.
+`E` öffnet Inventar und Bauliste. Die einfachen Sachen gehen überall, alles Weitere
+braucht eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf), die Suppe einen aufgestellten
+**🍲 Kochtopf**.
 
-Im Dorf liegen **Laden, Feststand, Werkbank und Brunnen dicht beieinander** — Manni
-verkauft, Jannes kauft deine Ernte (Dominiks zum Tagespreis, Basketbälle für 6 €).
+| Ergebnis | Zutaten | Wo |
+|---|---|---|
+| 🟧 Bretter ×4 | 1 🪵 | überall |
+| 🥢 Stock ×4 | 2 🟧 | überall |
+| 🛠️ Werkbank | 4 🟧 | überall |
+| 🔥 Fackel ×4 | 2 🥢 + 1 🪨 | überall |
+| 🥣 Schale ×2 | 3 🟧 | Werkbank |
+| ⛏️ Spitzhacke | 3 🪨 + 2 🥢 | Werkbank |
+| 🪓 Axt | 3 🪨 + 2 🥢 | Werkbank |
+| ⚔️ Steinschwert | 2 🪨 + 1 🥢 | Werkbank |
+| 🧱 Ziegel ×4 | 2 🪨 + 2 🟨 | Werkbank |
+| 🍲 Kochtopf | 6 🪨 + 1 🟧 | Werkbank |
+| **🍲 Dominik-Suppe** | 1 🥣 + 3 🍑 + 2 🍄 + 1 🧂 | Kochtopf, Rezept nötig |
 
-## Nacht
+## Das Rezept
 
-Ab der Dämmerung tauchen **Bennis** auf und rempeln dich um. Stirbst du, wachst du beim
-Laden auf und verlierst die Hälfte deiner getragenen Dominiks — mehr passiert nicht.
+Die vier Kochbuchseiten liegen in Truhen. **Zwei stecken in Dorftruhen** — Dörfer sieht
+man von weitem, damit ist der Einstieg sicher. Die anderen beiden liegen irgendwo
+draußen; oben links steht, wie viele du schon hast. Erst mit allen vier tauchen Rezept
+und Zutatenliste in der Bauliste auf.
 
-| Gegenmittel | Wirkung |
-|---|---|
-| 🔥 Fackeln | in ihrem Umkreis spawnen keine Bennis |
-| 🏏 Knüppel / ⚔️ Schwert | Nahkampf, Schwert tötet in 2 Treffern |
-| 🔫 Dominik-Kanone | Fernkampf — verschießt deine Dominiks als Munition |
-| 🪖 Helm / 🦺 Warnweste | weniger Schaden |
-| 🚜 Traktor | doppelt so schnell und überfährt Bennis einfach |
-
-Erledigte Bennis lassen 🏀 Basketbälle fallen, die Jannes dir abkauft.
-
-## Rohstoffe & Werkbank
-
-| Ressource | Woher |
-|---|---|
-| 🪵 Holz | Waldbäume hacken (wachsen nach) |
-| 🪨 Stein | Felsen im Steinbruch abklopfen |
-| 🍑 Dominik | vom eigenen Baum ernten |
-
-An der Werkbank entstehen daraus Samen, Fackeln, Knüppel, Steinschwert, Spray, Kompost
-sowie Gießkanne, Erntekorb, Schere und Stiefel — meist günstiger als im Laden.
+Truhen enthalten außerdem Vorräte: Bretter, Stöcke, Fackeln, Salz, Pilze, Dominiks,
+Schalen, Stein — gelegentlich auch ein Schwert.
 
 ## Die Welt
 
-Rings um die Plantage erzeugt das Spiel aus einer festen Zufallsformel eine Landschaft
-von **121 × 121 Blöcken** — sie sieht bei jedem Start gleich aus, kein Speicherstand
-nötig.
+Aus einer festen Zufallsformel entsteht eine Landschaft von **121 × 121 Blöcken** — bei
+jedem Start dieselbe, kein Speicherstand nötig.
 
-- **Berge** bis 25 Blöcke Höhe, ab 9 Fels, ab 18 Schnee. Du läufst sie hoch: **eine
-  Stufe pro Schritt** ist begehbar, steilere Kanten sind Wand.
-- **Zwei Flüsse** ziehen durch Westen und Norden, mit Sandufern. Tiefes Wasser hält
-  dich auf — aber jeder Fluss hat **Furten**, an denen du hinüberwatest. Wo keine ist,
-  hilft eine selbst gebaute **Brücke**.
-- **Wälder** stehen in zusammenhängenden Gebieten auf ebenem Grasland, nicht als
-  Streusel über die Karte.
-- **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Sie stehen auf
-  eingeebneten Terrassen, damit nichts schwebt.
+- **Berge** bis 25 Blöcke hoch, ab 9 Fels, ab 18 Schnee.
+- **Zwei Flüsse** durch Westen und Norden, mit Sandufern und Furten.
+- **Wälder** in zusammenhängenden Gebieten; an manchen Bäumen hängen **🍑 Dominiks**,
+  im Schatten stehen **🍄 Pilze**.
+- **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
+- **16 Truhen**, drei davon in Dörfern.
+- Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
 
-Die **Plantage samt Dorfkern liegt in einem flachen Tal** — dort ändert sich nichts,
-Beete und Wege sind wie gehabt. Rund 95 % der Karte sind zu Fuß erreichbar.
-
-Der Boden wird nicht als Würfel gezeichnet, sondern **chunkweise als sichtbare
-Flächen**: von einer Geländesäule sieht man fast nur die Oberseite, das spart rund
-drei Viertel der Dreiecke.
-
-## Bauen und Abbauen
-
-Holz und Stein wandern nicht nur in die Werkbank: **überall in der Welt setzt du daraus
-Blöcke**. Visier den Boden oder einen gesetzten Block an — „Block setzen" baut an der
-angepeilten Seite an, „Block abbauen" holt ihn wieder weg und **gibt das Material
-vollständig zurück**. Der letzte Hotbar-Platz zeigt den gewählten Baustoff und wie viele
-davon dein Vorrat noch hergibt.
-
-| Baustoff | Kosten |
-|---|---|
-| 🟫 Bretter | 1 🪵 |
-| 🟤 Stamm | 2 🪵 |
-| ⬜ Steinblock | 1 🪨 |
-| 🧱 Mauerstein | 1 🪨 + 1 🪵 |
-
-Gestapelt wird **fünf Blöcke über dem Gelände**, egal ob im Tal oder auf einem Berg.
-Blöcke brauchen Anschluss an den Boden, an einen Nachbarblock oder an eine Felswand —
-frei in der Luft schwebt nichts. Auf Beeten, in Gebäuden und da, wo du gerade stehst,
-lässt sich nichts setzen.
-
-**Ein Block ist eine Stufe, zwei sind eine Wand.** Auf einen einzelnen Block steigst du
-hinauf; ab zwei Blöcken hält die Mauer dich auf — und die Bennis auch. Eine Mauer um die
-Plantage ist damit eine echte Alternative zu Fackeln und Schwert. Über Wasser gebaut
-wird daraus eine Brücke ans andere Ufer.
-
-## Inventar
-
-Unten liegt die **Inventarleiste**: links die Vorräte (Kanne, Ernte, Samen, Holz, Stein,
-Fackeln), rechts die vier Baustoffe. Ein Tipp auf einen Baustoff-Platz wählt ihn aus,
-der aktive ist gelb umrandet; die Zahl sagt, wie viele davon dein Material noch hergibt.
-
-Der 🎒-Knopf oben rechts öffnet das **volle Inventar** mit allen Beständen, Rohstoffen
-und der Ausrüstung. Dort wählst du auch **Baustoff und Waffe** direkt aus.
-
-## Einstieg
-
-Sieben kurze Aufgaben führen durch den Kreislauf (pflanzen → gießen → Holz → Stein →
-ernten → verkaufen → bauen). Oben steht, was dran ist, ein ⭐ zeigt den Weg. Solange das
-Tutorial läuft, tauchen **keine Bennis** auf.
+Gezeichnet wird nicht Würfel für Würfel, sondern **chunkweise nur die freiliegenden
+Flächen**. Ein abgebauter oder gesetzter Block vernetzt genau seinen Chunk neu, nicht
+die ganze Welt.
 
 ## Dateien
 
