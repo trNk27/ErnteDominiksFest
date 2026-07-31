@@ -359,6 +359,23 @@ const RECIPES=[
 for(const r of RECIPES)
   ITEMS['rec_'+r.id]={ic:'📜',nm:'Rezept: '+ITEMS[r.out[0]].nm,recipe:r.id};
 
+// ------------------------------------------------------------------ Bildchen
+// Für jeden Gegenstand liegt ein Sprite unter sprites/items/<id>.png, die
+// Rezeptzettel teilen sich eines. Das Emoji bleibt als alt-Text stehen: fehlt
+// der Ordner (oder lädt eine Datei nicht), zeigt der Browser wieder Emoji
+// statt eines kaputten Bildes.
+const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
+                     'stick','bowl','dominik','mushroom','salt','sword','axe','pick','soup']);
+const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+id+'.png'
+                 :ITEMS[id]?.recipe?'./sprites/items/page1.png':null;
+function icon(id,cls=''){
+  const it=ITEMS[id];
+  if(!it) return '';
+  const src=iconSrc(id);
+  return src?`<img class="ic ${cls}" src="${src}" alt="${it.ic}" draggable="false">`
+            :`<span class="ic ${cls}">${it.ic}</span>`;
+}
+
 // Die zwei offensichtlichen kennt man von zu Hause, der Rest will gefunden
 // oder ausprobiert werden.
 const known=new Set(['plank','stick']);
@@ -1133,7 +1150,7 @@ function renderChest(){
   if(!c.items.length) h+='<p style="text-align:center;opacity:.7">Leer.</p>';
   else{
     h+='<div class="invgrid">'+c.items.map((it,i)=>
-      `<div class="cell" data-chest="${i}">${ITEMS[it.id].ic}<span class="n">${it.n>1?it.n:''}</span></div>`
+      `<div class="cell" data-chest="${i}">${icon(it.id)}<span class="n">${it.n>1?it.n:''}</span></div>`
     ).join('')+'</div>';
     h+='<p style="font-size:11.5px;opacity:.7;text-align:center">Anklicken zum Mitnehmen</p>';
   }
@@ -1177,11 +1194,11 @@ function patHTML(r){
   const w=Math.max(...rows.map(x=>x.length));
   let g='';
   for(const row of rows) for(let x=0;x<w;x++)
-    g+=`<div class="pc">${row[x]?ITEMS[row[x]].ic:''}</div>`;
+    g+=`<div class="pc">${row[x]?icon(row[x]):''}</div>`;
   return `<div class="patwrap">
     <div class="pat" style="grid-template-columns:repeat(${w},30px)">${g}</div>
     <div class="arrow">➜</div>
-    <div class="pc res">${ITEMS[r.out[0]].ic}${r.out[1]>1?`<span class="n">${r.out[1]}</span>`:''}</div>
+    <div class="pc res">${icon(r.out[0])}${r.out[1]>1?`<span class="n">${r.out[1]}</span>`:''}</div>
     </div>`+
     (r.shapeless?'<p style="font-size:11.5px;opacity:.7;text-align:center">Anordnung egal.</p>':'');
 }
@@ -1337,14 +1354,14 @@ function clickCell(ref){
   }
   SND.tap(); updateHUD(); renderCraft();
 }
-const stackHTML=s=>s?ITEMS[s.id].ic+`<span class="n">${s.n>1?s.n:''}</span>`:'';
+const stackHTML=s=>s?icon(s.id)+`<span class="n">${s.n>1?s.n:''}</span>`:'';
 function craftHTML(){
   const r=matchRecipe();
   let h=`<div class="craft"><div class="cgrid c${gridN}">`;
   h+=gridCells().map(i=>`<div class="cell${refOn('g',i)}" data-g="${i}">${stackHTML(grid[i])}</div>`).join('');
   h+='</div><div class="arrow">➜</div>';
   h+=`<div class="cell res${r?'':' empty'}" data-act="craft">`+
-     (r?ITEMS[r.out[0]].ic+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
+     (r?icon(r.out[0])+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
   if(gridN===2) h+='<p class="hint">2×2 — Größeres geht nur an der 🛠️ Werkbank.</p>';
   else if(craftStation==='pot') h+='<p class="hint">Am Kochtopf. Hier entsteht die Suppe.</p>';
   return h;
@@ -1359,7 +1376,8 @@ function invGrid(){
   h+='</div>';
   return h;
 }
-const patLine=rows=>rows.map(r=>r.map(id=>id?ITEMS[id].ic:'·').join('')).join(' / ');
+const patLine=rows=>rows.map(r=>r.map(id=>id?icon(id,'mini'):'<i class="dot"></i>').join(''))
+                        .join('<b class="sep">/</b>');
 function bookHTML(){
   let h='', unknown=0;
   for(const r of RECIPES.slice().sort((a,b)=>a.rank-b.rank)){
@@ -1370,7 +1388,7 @@ function bookHTML(){
             :(r.station==='pot'&&craftStation!=='pot')?'🍲 Kochtopf nötig'
             :!haveAll(rows)?'Material fehlt':'';
     const out=ITEMS[r.out[0]];
-    h+=`<div class="recipe${st?' off':''}"><div class="ico">${out.ic}</div>
+    h+=`<div class="recipe${st?' off':''}"><div class="ico">${icon(r.out[0])}</div>
       <div class="txt"><div class="nm">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
       <div class="ds">${patLine(rows)}${st?' · '+st:''}</div></div>
       <button data-craft="${r.id}"${st?' disabled':''}>Bauen</button></div>`;
@@ -1607,7 +1625,18 @@ function cullChunks(){
 }
 
 // ------------------------------------------------------------------ HUD
-let hotEls=null, hudCache='';
+let hotEls=null, hudCache='', hpCache='', foodCache='';
+// Zehn Symbole zu je zwei Punkten. Mit den halben Sprites zeigt der Balken
+// jetzt auch ungerade Werte richtig an statt aufzurunden.
+function vitalBar(v,max,kind,on,off){
+  let h='';
+  for(let i=0;i<max/2;i++){
+    const part=clamp(v-i*2,0,2);                 // Essen läuft in Bruchteilen leer
+    const nm=part>=2?'full':part>=1?'half':'empty';
+    h+=`<img class="vit" src="./sprites/ui/${kind}_${nm}.png" alt="${part>=1?on:off}">`;
+  }
+  return h;
+}
 function buildHotbar(){
   const box=el('hotbar');
   box.innerHTML='';
@@ -1624,14 +1653,10 @@ function buildHotbar(){
   }
 }
 function updateHUD(){
-  const hearts=el('hearts');
-  const full=Math.ceil(player.hp/2), fmax=player.maxhp/2;
-  let hs=''; for(let i=0;i<fmax;i++) hs+=i<full?'❤️':'🖤';
-  if(hearts.textContent!==hs) hearts.textContent=hs;
-  const foodEl=el('food');
-  const ff=Math.ceil(player.food/2), fmx=player.maxfood/2;
-  let fs=''; for(let i=0;i<fmx;i++) fs+=i<ff?'🍗':'▪️';
-  if(foodEl.textContent!==fs) foodEl.textContent=fs;
+  const hs=vitalBar(player.hp,player.maxhp,'heart','❤️','🖤');
+  if(hs!==hpCache){ hpCache=hs; el('hearts').innerHTML=hs; }
+  const fs=vitalBar(player.food,player.maxfood,'food','🍗','▪️');
+  if(fs!==foodCache){ foodCache=fs; el('food').innerHTML=fs; }
   el('hRec').textContent=known.size;
   el('hLore').textContent=lore.size;
   el('book').classList.toggle('full',knowsSoup());
@@ -1640,7 +1665,7 @@ function updateHUD(){
     hudCache=sig;
     for(let i=0;i<NBAR;i++){
       const s=slots[i], d=hotEls[i];
-      d.querySelector('.i').textContent=s?ITEMS[s.id].ic:'';
+      d.querySelector('.i').innerHTML=s?icon(s.id):'';
       d.querySelector('.n').textContent=s&&s.n>1?s.n:'';
       d.classList.toggle('sel',i===player.sel);
     }
@@ -1741,7 +1766,17 @@ function resize(){
 addEventListener('resize',resize);
 
 // ------------------------------------------------------------------ Start
+// Sprites vorladen, damit die Leiste nicht erst leer ist und dann aufploppt.
+// Fehlt eines, wird nicht abgebrochen — dann greift der alt-Text.
+const preload=src=>new Promise(res=>{
+  const i=new Image(); i.onload=i.onerror=()=>res(); i.src=src;
+});
+const UISPRITES=['heart_full','heart_half','heart_empty','food_full','food_half','food_empty',
+                 'icon_bag','icon_book','icon_pause'];
 Promise.all([
+  ...[...ICONS].map(id=>preload('./sprites/items/'+id+'.png')),
+  preload('./sprites/items/page1.png'),
+  ...UISPRITES.map(n=>preload('./sprites/ui/'+n+'.png')),
   ...CHARS.map(c=>loadTex(c.key+'.png').then(t=>{c.tex=t;})),
   loadTex('benni.png').then(t=>{benniTex=t;}),
   loadTex('dominik.png').then(t=>{
@@ -1779,7 +1814,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid
   get target(){return target;},
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
-  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,
+  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
     player.y=player.viewY=player.fallFrom=surfaceAt(player.x,player.z);

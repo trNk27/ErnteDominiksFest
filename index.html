@@ -22,14 +22,19 @@
   #hud{position:absolute;top:8px;left:10px;right:10px;display:flex;align-items:flex-start;gap:8px}
   #book{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.14);border-radius:11px;
-    padding:5px 10px;font-size:13px;font-weight:800;backdrop-filter:blur(6px)
+    padding:5px 10px;font-size:13px;font-weight:800;backdrop-filter:blur(6px);
+    display:flex;align-items:center;gap:3px
   }
+  #book img{width:16px;height:16px;object-fit:contain}
+  #book img:nth-of-type(2){margin-left:9px}
   #book.full{border-color:#ffd76a;color:#ffd76a}
   #topbtns{margin-left:auto;display:flex;gap:6px;pointer-events:auto}
   #topbtns button{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.16);border-radius:11px;
-    width:38px;height:38px;font-size:16px;cursor:pointer;backdrop-filter:blur(6px)
+    width:38px;height:38px;font-size:16px;cursor:pointer;backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center
   }
+  #topbtns button img{width:21px;height:21px;object-fit:contain}
   #topbtns button:active{transform:scale(.92)}
 
   /* ---------- Fadenkreuz ---------- */
@@ -69,7 +74,12 @@
   #vitals{
     position:absolute;left:50%;bottom:62px;transform:translateX(-50%);
     width:min(92vw,440px);display:flex;justify-content:space-between;
-    font-size:14px;letter-spacing:-1px;line-height:1;text-shadow:0 1px 3px #000
+    font-size:14px;line-height:1;text-shadow:0 1px 3px #000
+  }
+  #vitals>div{display:flex;gap:1px}
+  #vitals img.vit{
+    width:16px;height:16px;object-fit:contain;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.8))
   }
 
   /* ---------- Inventarleiste ---------- */
@@ -81,6 +91,10 @@
     cursor:pointer;pointer-events:auto
   }
   #hotbar .slot.sel{border-color:#fff;background:rgba(90,90,60,.7);box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+  #hotbar .slot .i{
+    display:flex;align-items:center;justify-content:center;
+    width:100%;height:100%;pointer-events:none
+  }
   #hotbar .slot .n{
     position:absolute;right:3px;bottom:1px;font-size:11px;font-weight:800;
     text-shadow:1px 1px 0 #000,-1px 1px 0 #000
@@ -101,6 +115,21 @@
     text-shadow:1px 1px 0 #000,-1px 1px 0 #000
   }
   #mbox h3{font-size:11px;opacity:.7;margin:10px 0 0;text-transform:uppercase;letter-spacing:.5px}
+
+  /* ---------- Gegenstandsbildchen ---------- */
+  /* Ein Sprite füllt seine Zelle zu gut drei Vierteln; fehlt es, steht an
+     seiner Stelle der alt-Text — dann greift die Schriftgröße der Zelle. */
+  img.ic{width:78%;height:78%;object-fit:contain;pointer-events:none}
+  .cell img.ic{filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))}
+  img.ic.mini{width:15px;height:15px;vertical-align:-3px;display:inline-block}
+  .ds .dot{
+    display:inline-block;width:15px;height:15px;vertical-align:-3px;position:relative
+  }
+  .ds .dot::after{
+    content:'';position:absolute;left:6px;top:7px;width:3px;height:3px;
+    border-radius:50%;background:currentColor;opacity:.4
+  }
+  .ds .sep{margin:0 4px;opacity:.45;font-weight:400}
 
   /* ---------- Handwerksfeld 2x2 / 3x3 ---------- */
   .craft{
@@ -128,6 +157,7 @@
     display:flex;align-items:center;justify-content:center;font-size:17px
   }
   .patwrap .pc.res{width:38px;height:38px;font-size:21px;border-color:#b0722a;background:rgba(176,114,42,.22)}
+  .patwrap .pc img.ic{width:82%;height:82%}
   .patwrap .pc .n{position:absolute;right:2px;bottom:0;font-size:10px;font-weight:800;
     text-shadow:1px 1px 0 #000,-1px 1px 0 #000}
 
@@ -168,7 +198,11 @@
     border-radius:10px;padding:6px 8px;margin-bottom:5px
   }
   .recipe.off{opacity:.45}
-  .recipe .ico{font-size:20px}
+  .recipe .ico{
+    font-size:20px;width:28px;height:28px;flex:none;
+    display:flex;align-items:center;justify-content:center
+  }
+  .recipe .ico img.ic{width:100%;height:100%}
   .recipe .txt{flex:1;min-width:0}
   .recipe .nm{font-weight:800;font-size:13px}
   .recipe .ds{font-size:11px;opacity:.8;line-height:1.3}
@@ -204,11 +238,13 @@
 
 <div id="ui">
   <div id="hud">
-    <div id="book">📜 <b id="hRec">0</b>/<span id="hRecMax">0</span>
-      &nbsp; 📖 <b id="hLore">0</b>/<span id="hLoreMax">0</span></div>
+    <div id="book">
+      <img src="./sprites/items/page1.png" alt="📜"><b id="hRec">0</b>/<span id="hRecMax">0</span>
+      <img src="./sprites/ui/icon_book.png" alt="📖"><b id="hLore">0</b>/<span id="hLoreMax">0</span>
+    </div>
     <div id="topbtns">
-      <button id="btnBag" title="Inventar (E)">🎒</button>
-      <button id="btnPause" title="Pause (P)">⏸️</button>
+      <button id="btnBag" title="Inventar (E)"><img src="./sprites/ui/icon_bag.png" alt="🎒"></button>
+      <button id="btnPause" title="Pause (P)"><img src="./sprites/ui/icon_pause.png" alt="⏸️"></button>
     </div>
   </div>
 

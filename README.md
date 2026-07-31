@@ -140,3 +140,10 @@ die ganze Welt.
 
 - `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
 - `*.png` — die Charaktere und Dominik als Frucht
+- `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch
+- `sprites/ui/` — Herzen, Essensbalken und die Knöpfe oben rechts
+
+Die Sprites sind Gegenstände auf durchsichtigem Grund, keine Kachelmuster —
+die Blockflächen der Welt entstehen weiterhin als Pixelrauschen im Code.
+Fehlt ein Bild, zeigt der Browser den `alt`-Text, und das ist wieder das Emoji
+von vorher; das Spiel läuft also auch ohne den Ordner.
