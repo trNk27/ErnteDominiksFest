@@ -58,9 +58,12 @@ const REACH=4.6;
 const BOUND={x0:-72,x1:72,z0:-72,z1:72};
 const HOME={x:0,z:5,r:26,fade:13};      // flaches Starttal
 const SEA=0;                            // Wasserspiegel der Flüsse
-const RIVER_BED=-2, RIVER_W=4.5;
+// Die Rinne ist tief genug zum Schwimmen; die flachen Stellen bleiben Furten.
+const RIVER_BED=-4, RIVER_W=4.5;
+const WATER_Y=SEA;                      // Oberkante des Wassers
 const BEDROCK=-12;                      // tiefer geht es nicht — hier ist Schluss
 const SPAWN={x:0,z:18};
+const MARKET={x:-6,z:14};               // Manni und sein Stand, gleich beim Start
 
 // ------------------------------------------------------------------ Geländeform
 function hash2(x,z,s){
@@ -144,9 +147,10 @@ function surfaceTex(x,z,h){
 // ------------------------------------------------------------------ Zustand
 const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
   mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,trades:0,won:false,checkT:0,
+  underwater:false,
   spikes:0};                            // verworfene Maus-Ausreisser, siehe unten
 
-const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,yaw:0,pitch:-.05,
+const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
   bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0};
 
@@ -273,10 +277,23 @@ const TEX={
       g.fillStyle='#e8604c'; g.fillRect(x,y,1,1);
     }
   }),
-  shroom :noiseTex(['#c3352e','#b02c26','#d43e36'],43,(g,s)=>{
-    g.fillStyle='#f2ece0';
-    g.fillRect(3,3,3,3); g.fillRect(10,5,3,3); g.fillRect(6,10,3,3);
-    g.fillStyle='#e8dcc0'; g.fillRect(0,12,s,4);
+  // Pilz: roter Hut mit weißen Tupfen auf hellem Stiel, freigestellt — er
+  // steht als gekreuzte Fläche im Gras und nicht mehr als Klotz.
+  shroom :pixTex(g=>{
+    g.fillStyle='#e8dcc0'; g.fillRect(6,8,4,8);            // Stiel
+    g.fillStyle='#d6cbb0'; g.fillRect(6,8,1,8);
+    const cap=['#c3352e','#b02c26','#d43e36'], r=mulberry(43);
+    for(let y=2;y<9;y++){
+      const w=y<3?4:y<4?6:y<6?7:8;                          // Hut, unten breiter
+      for(let x=8-w;x<8+w;x++){
+        if(x<1||x>14) continue;
+        g.fillStyle=cap[Math.floor(r()*cap.length)];
+        g.fillRect(x,y,1,1);
+      }
+    }
+    g.fillStyle='#f2ece0';                                  // Tupfen
+    g.fillRect(4,5,2,2); g.fillRect(10,4,2,2); g.fillRect(7,3,2,2); g.fillRect(12,7,2,1);
+    g.fillStyle='#8e2620'; g.fillRect(1,8,14,1);            // Hutrand als Schatten
   }),
   note   :noiseTex(['#e6d9b4','#ddcea3','#efe4c6'],45,(g,s)=>{
     g.fillStyle='#8a7245'; g.fillRect(0,0,s,1); g.fillRect(0,s-1,s,1);
@@ -359,9 +376,12 @@ const BLOCKS={
   chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
   dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik',
            cross:true, size:.85, alpha:true, pass:true},
-  shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz'},
+  // Alles, was wächst, steht als gekreuzte Fläche im Gelände: man geht
+  // hindurch, und es verdeckt nichts (siehe fills()).
+  shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz',
+           cross:true, size:.8, sit:true, alpha:true, pass:true},
   pepper :{tex:'pepper',hard:.25, drop:'pepper', nm:'Pfefferstrauch',
-           cross:true, alpha:true, pass:true},
+           cross:true, size:.95,sit:true, alpha:true, pass:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
   lore   :{tex:'note',  hard:0,   drop:null,     nm:'Alte Notiz', use:'lore', noBreak:true},
@@ -606,13 +626,24 @@ const solidAt=(x,y,z)=>!!blockAt(Math.round(x),Math.floor(y),Math.round(z));
 // Pfefferstrauch die Grasnarbe. Zum Verdecken zählt also nur, was voll ist.
 const fills=t=>!!t&&!BLOCKS[t]?.cross;
 const fillsAt=(x,y,z)=>fills(blockAt(x,y,z));
+// Wasser ist kein Block, sondern der Raum unter dem Wasserspiegel über einem
+// Flussbett. Es fließt nicht: wo das Gelände über den Spiegel reicht, ist
+// trocken, und ein gesetzter Block verdrängt das Wasser aus seiner Zelle.
+function waterAt(x,y,z){
+  if(y>=WATER_Y) return false;
+  const bx=Math.round(x), bz=Math.round(z);
+  if(bx<BOUND.x0||bx>BOUND.x1||bz<BOUND.z0||bz>BOUND.z1) return false;
+  if(terrainH(bx,bz)>=WATER_Y) return false;
+  return !blockAt(bx,Math.floor(y),bz);
+}
 
-// Oberkante der Säule: erste freie Höhe über festem Grund.
+// Oberkante der Säule: erste freie Höhe über festem Grund. Gewächse zählen
+// nicht mit — sonst stünde ein Benni auf einem Pilz wie auf einer Stufe.
 function surfaceAt(x,z){
   x=Math.round(x); z=Math.round(z);
   let y=terrainH(x,z);
-  while(y<64&&blockAt(x,y,z)) y++;
-  while(y>BEDROCK&&!blockAt(x,y-1,z)) y--;
+  while(y<64&&fillsAt(x,y,z)) y++;
+  while(y>BEDROCK&&!fillsAt(x,y-1,z)) y--;
   return y;
 }
 // Erster Platz mit festem Boden und zwei freien Blöcken darüber. Wer sich am
@@ -674,6 +705,16 @@ const traderSpots=[];                    // wo die Jannessen stehen, in TRADES-R
       if(hi===0) chestSpots.push({x:vx+hx+1,y:vy+1,z:vz+hz+2});
       if(hi===1) houseSpots.push({x:vx+hx+2,z:vz+hz+2});
     });
+  }
+  // --- Manni-Markt: vier Pfosten, ein Dach, ein Tresen. Er steht im flachen
+  // Starttal und zeigt seine Theke dem Startpunkt zu, damit man beim ersten
+  // Umsehen davorsteht.
+  {
+    const {x:mx,z:mz}=MARKET, my=terrainH(mx,mz);
+    for(const [px,pz] of [[-2,-2],[2,-2],[-2,2],[2,2]])
+      for(let dy=0;dy<3;dy++) put('log',mx+px,my+dy,mz+pz);
+    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('plank',mx+dx,my+3,mz+dz);
+    for(let dx=-1;dx<=1;dx++) put('plank',mx+dx,my,mz+2);      // Tresen zum Startpunkt
   }
   // --- Wälder: Rauschen gibt die Dichte, Dörfer und Starttal bleiben frei
   const r=mulberry(4711);
@@ -842,12 +883,14 @@ function faceVerts(dir,x,y,z){
     default  : return [x1,y0,z0, x0,y0,z0, x0,y1,z0, x1,y1,z0];
   }
 }
-// Zwei senkrechte Flächen über Kreuz, wie die Blumen im Vorbild. Sie hängen
-// oben in der Zelle, damit die Frucht am Laub darüber zu kleben scheint statt
-// in der Luft zu schweben. s ist die Kantenlänge, quer wie hoch.
+// Zwei senkrechte Flächen über Kreuz, wie die Blumen im Vorbild. s ist die
+// Kantenlänge, quer wie hoch. Gewachsenes steht auf dem Boden seiner Zelle
+// (sit), Gepflücktes hängt oben drin — die Frucht soll am Laub darüber
+// kleben und nicht in der Luft schweben.
 const UPN=[0,1,0];
-function crossVerts(i,x,y,z,s){
-  const o=s/(2*Math.SQRT2), y1=y+1, y0=y+1-s;
+function crossVerts(i,x,y,z,s,sit){
+  const o=s/(2*Math.SQRT2);
+  const y0=sit?y:y+1-s, y1=sit?y+s:y+1;
   return i===0
     ? [x-o,y0,z-o, x+o,y0,z+o, x+o,y1,z+o, x-o,y1,z-o]
     : [x-o,y0,z+o, x+o,y0,z-o, x+o,y1,z-o, x-o,y1,z+o];
@@ -890,9 +933,9 @@ function buildChunk(ci,cj){
       if(BLOCKS[t]?.cross){
         // Kein Würfel, sondern zwei gekreuzte Flächen — beidseitig sichtbar,
         // also keine Nachbarprüfung: die Frucht hängt ohnehin frei.
-        const s=BLOCKS[t].size||1;
-        addQuad(t,crossVerts(0,x,y,z,s),UPN);
-        addQuad(t,crossVerts(1,x,y,z,s),UPN);
+        const s=BLOCKS[t].size||1, sit=BLOCKS[t].sit;
+        addQuad(t,crossVerts(0,x,y,z,s,sit),UPN);
+        addQuad(t,crossVerts(1,x,y,z,s,sit),UPN);
         continue;
       }
       if(!fillsAt(x,y+1,z)) add(t,'py',x,y,z);
@@ -914,7 +957,8 @@ function buildChunk(ci,cj){
     g.setIndex(b.i);
     g.computeBoundingSphere();
     const opts={map:mat==='water'?TEX.water:blockTex(mat)};
-    if(mat==='water'){ opts.transparent=true; opts.opacity=.82; }
+    // Beidseitig: von unten schaut man beim Schwimmen gegen die Oberfläche.
+    if(mat==='water'){ opts.transparent=true; opts.opacity=.78; opts.side=THREE.DoubleSide; }
     else if(BLOCKS[mat]?.alpha){
       // Durchsichtige Ecken werden weggeschnitten, dadurch bleibt die runde
       // Form der Frucht stehen statt eines Kastens. Beide Seiten, sonst
@@ -1084,7 +1128,14 @@ function updateDrops(dt){
       if(Math.abs(d.vx)<.06&&Math.abs(d.vz)<.06){ d.vx=0; d.vz=0; }
     }
 
-    d.vy-=DROP_GRAV*dt;                  // senkrecht
+    // Senkrecht. Im Wasser treibt es auf und schaukelt an der Oberfläche,
+    // statt auf dem Grund zu verschwinden — Weggeworfenes soll man
+    // wiederfinden, auch wenn es in den Fluss fällt.
+    const wet=waterAt(d.x,d.y+.15,d.z);
+    if(wet){
+      d.vy=Math.min(d.vy+18*dt,1.2);
+      const f=Math.max(0,1-dt*5); d.vx*=f; d.vz*=f;
+    } else d.vy-=DROP_GRAV*dt;
     let ny=d.y+d.vy*dt;
     const bx=Math.round(d.x), bz=Math.round(d.z);
     if(d.vy<=0){
@@ -1100,9 +1151,20 @@ function updateDrops(dt){
         d.rest=true;
       } else d.rest=false;
     }
+    if(wet&&ny>WATER_Y-.42){ ny=WATER_Y-.42; d.vy=0; d.rest=true; }
     d.y=ny;
     if(d.y<BEDROCK-4){ removeDrop(d); continue; }   // normal unerreichbar
 
+    // Was vor Mannis Tresen liegen bleibt, nimmt er an — aber nur Dominiks,
+    // alles andere lässt er liegen.
+    if(d.rest&&d.id==='dominik'&&marketChar&&
+       Math.hypot(d.x-marketChar.x,d.z-marketChar.z)<MARKET_R&&
+       Math.abs(d.y-marketChar.y)<2.5){
+      const n=d.n;
+      removeDrop(d);
+      marketTake(n);
+      continue;
+    }
     if(d.pickT<=0&&Math.hypot(d.x-player.x,d.z-player.z)<PICK_R&&
        Math.abs(d.y-player.y)<2.2&&!state.paused){
       const rest=give(d.id,d.n);
@@ -1234,9 +1296,12 @@ const TRADES=[
    ask:'Du willst das Suppenrezept? Dann koch mir erst beides vor: Kompott und Pfanne.'},
 ];
 const CHARS=[
-  {key:'manni',name:'Manni',h:1.9,x:-6,z:14,color:'#ff6b4a',
-   lines:['Rezepte gibt es bei den Jannessen — gegen Essen.','Nachts bleibe ich lieber im Licht.',
-          'Die Notizen hier herum kann man lesen.']},
+  {key:'manni',name:'Manni-Markt',h:1.9,x:MARKET.x,z:MARKET.z,color:'#ff6b4a',
+   market:{pending:0,sold:0},
+   lines:['Drei Dominiks über den Tresen — und du kriegst was.',
+          'Was du kriegst? Weiß ich vorher auch nicht.',
+          'Rezepte gibt es nebenan bei den Jannessen.',
+          'Wirf ruhig, ich fang das schon.']},
 ];
 // Alle heißen Jannes, alle sehen gleich aus, alle wollen etwas anderes.
 TRADES.forEach((t,i)=>{
@@ -1282,6 +1347,7 @@ function setupChars(){
     const g=new THREE.Group();
     const y=surfaceAt(c.x,c.z);
     c.y=y;
+    if(c.market) marketChar=c;
     g.position.set(c.x,y,c.z);
     const asp=c.tex.image.width/c.tex.image.height;
     const bb=new THREE.Mesh(new THREE.PlaneGeometry(c.h*asp,c.h),
@@ -1306,6 +1372,60 @@ function say(c,txt,ms=4200){
   c.bubble.position.y=c.h+.75+bh*.5;
   c.bubble.visible=true; c.bubbleT=ms/1000;
 }
+// ------------------------------------------------------------------ Manni-Markt
+// Manni verkauft nicht gegen Knöpfe, sondern gegen Geworfenes: drei 🍑 über
+// den Tresen, und irgendetwas kommt zurück. Was, entscheidet der Zufall —
+// deshalb steht auf dem Preisschild auch nur ein Fragezeichen.
+const MARKET_PRICE=3, MARKET_R=2.6;
+// id, Menge, Gewicht. Baustoff ist häufig, Werkzeug selten, Pampe der Witz.
+const WARES=[['plank',4,5],['stick',4,4],['stone',5,5],['brick',4,3],['sand',4,3],
+             ['dirt',5,3],['torch',3,4],['snow',3,2],['log',2,3],['bowl',1,2],
+             ['mushroom',1,2],['salt',1,2],['pepper',1,2],['sword',1,1],['junk',1,1]];
+let marketChar=null;
+function pickWare(){
+  let t=0;
+  for(const w of WARES) t+=w[2];
+  let r=Math.random()*t;
+  for(const [id,n,w] of WARES){ r-=w; if(r<=0) return [id,n]; }
+  return ['plank',4];
+}
+function giveWare(){
+  const [id,n]=pickWare();
+  // Er wirft es zurück, in die Richtung, aus der geworfen wurde.
+  const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
+  spawnDrop(id,n,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.6,2.4,dz/l*2.6,.5);
+  SND.chest();
+  say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
+  toast('🛒 '+ITEMS[id].ic+' '+n+'× '+ITEMS[id].nm,'good',2600);
+}
+function marketTake(n){
+  const m=marketChar.market;
+  m.pending+=n;
+  let sold=0;
+  while(m.pending>=MARKET_PRICE){ m.pending-=MARKET_PRICE; m.sold++; sold++; giveWare(); }
+  if(!sold){
+    SND.tap();
+    toast('🛒 Manni nimmt an — noch '+(MARKET_PRICE-m.pending)+'× 🍑','',1800);
+  }
+}
+function openMarket(c){
+  const m=c.market;
+  showModal(`<h2>🛒 Manni-Markt</h2>
+    <p style="text-align:center;font-size:13px">Wirf mir <b>drei 🍑 Dominiks</b> über den
+    Tresen — mit <b>Q</b>, ich fang das schon. Dafür kriegst du irgendetwas aus der Kiste.
+    Was, das weiß ich vorher selbst nicht.</p>
+    <div class="patwrap">
+      <div class="pat" style="grid-template-columns:repeat(1,30px)">
+        <div class="pc" data-want="dominik">${icon('dominik')}<span class="n">${MARKET_PRICE}</span></div>
+      </div>
+      <div class="arrow">➜</div>
+      <div class="pc res">❓</div>
+    </div>
+    <p style="font-size:12px;opacity:.8;text-align:center">
+      Auf dem Tresen liegen ${m.pending}/${MARKET_PRICE} · ${m.sold}× gehandelt</p>
+    <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
+}
+
 const DONE_LINES=['Gut gehandelt. Das Rezept hast du ja jetzt.',
                   'Frag ruhig nochmal nach, ich zeig es dir wieder.',
                   'Mehr hab ich nicht — geh weiter, es gibt noch andere von uns.'];
@@ -1515,8 +1635,12 @@ function showCrack(cell,frac,type){
   }
   const i=clamp(Math.floor(frac*CRACKS.length),0,CRACKS.length-1);
   if(i!==crackStage){ crackStage=i; crackMat.map=CRACKS[i]; crackMat.needsUpdate=true; }
-  crackMesh.position.set(cell.x,cell.y+.5,cell.z);
-  crackMesh.scale.setScalar(BLOCKS[type]?.size||1);   // um die kleine Frucht herum
+  // Um die kleinen Gewächse herum sitzen die Risse genau da, wo sie stehen:
+  // unten in der Zelle, wenn sie wachsen, oben, wenn sie hängen.
+  const b=BLOCKS[type], s=b?.size||1;
+  crackMesh.position.set(cell.x,
+    !b?.cross?cell.y+.5:b.sit?cell.y+s/2:cell.y+1-s/2, cell.z);
+  crackMesh.scale.setScalar(s);
   crackMesh.visible=true;
 }
 
@@ -1589,6 +1713,7 @@ function useRight(){
   // seine eigene Ware auf.
   if(aimed){
     if(aimed.trade) return openTrade(aimed);
+    if(aimed.market) return openMarket(aimed);
     say(aimed,pick(aimed.lines),4200);
     return;
   }
@@ -2043,6 +2168,9 @@ function openIntro(){
   <p>Abgebautes fällt als <b>Würfel</b> zu Boden — hingehen, aufheben. Mit <b>Q</b> wirfst du
   selbst etwas heraus. So wird auch gekocht: Zutaten in den <b>🍲 Kochtopf</b> werfen,
   Rechtsklick, warten. Passt es zusammen, kommt ein Gericht heraus; sonst Pampe.</p>
+  <p>Gleich neben dem Startpunkt steht der <b>🛒 Manni-Markt</b>: wirf <b>drei 🍑</b> über den
+  Tresen, und du bekommst irgendetwas dafür zurück. Im <b>Wasser</b> schwimmst du —
+  <b>␣</b> hoch, <b>⇧</b> runter; hineinspringen tut nicht weh.</p>
   <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der Welt.
   Sie wollen <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> oder ein fertiges Gericht und zeigen dir dafür,
   wie das nächste geht. Zutaten baust du selbst ab: 🧂 Salz sitzt tief im Fels,
@@ -2104,6 +2232,10 @@ mbox.addEventListener('click',e=>{
 
 // ------------------------------------------------------------------ Bewegung
 const PR=.32, GRAV=26, JUMP=8.4, EYE=1.62, PH=1.8, EPS=1e-4;
+const FALL_FREE=4;                      // so tief geht es ohne Schaden
+// Schwimmen: SWIM_UP ist das Tempo hoch wie runter, FLOAT_Y die Höhe, auf der
+// man von selbst treibt — gerade so, dass die Augen über dem Spiegel liegen.
+const SWIM_UP=3.4, SWIM_ACC=15, FLOAT_Y=WATER_Y-1.42;
 // Der Spieler füllt [py, py+PH), ein Block y deckt [y, y+1) ab. Berührung ist
 // noch keine Überschneidung — sonst zieht die Schwerkraft ihn jedes Bild ein
 // Stück in den Boden, der Aufsetzer schiebt ihn zurück, und das Bild zittert.
@@ -2133,23 +2265,34 @@ function updatePlayer(dt){
   }
   const len=Math.hypot(mx,mz);
   if(len>1){ mx/=len; mz/=len; }
+  // Zwei Blicke ins Wasser: einer knapp über die Füße — steht man drin? — und
+  // einer knapp darunter. Der zweite hält den Auftrieb noch einen Moment
+  // aufrecht, während man sich über die Böschung schiebt; ohne ihn käme man
+  // aus einer tiefen Rinne nie wieder heraus, weil einen die Schwerkraft
+  // genau an der Wasserlinie wieder zurückzieht.
+  const wet=waterAt(player.x,player.y+.25,player.z)||
+            waterAt(player.x,player.y-.1,player.z);
+  player.wet=wet;
+  state.underwater=waterAt(player.x,player.viewY+EYE,player.z);
   const sprint=(keys.ShiftLeft||keys.ShiftRight)?1.42:1;
-  const sp=4.8*sprint;
+  const sp=wet?3.0:4.8*sprint;           // Wasser bremst, Rennen hilft dort nicht
   const sin=Math.sin(player.yaw), cos=Math.cos(player.yaw);
   const dx=(mx*cos+mz*sin)*sp*dt;
   const dz=(-mx*sin+mz*cos)*sp*dt;
 
   // Waagerecht, Achse für Achse — mit automatischer Stufe von einem Block.
+  // Die Stufe geht auch im Wasser: sonst klebt man an der Böschung fest.
+  const canStep=player.onGround||wet;
   let nx=clamp(player.x+dx,BOUND.x0-.4,BOUND.x1+.4);
   if(collides(nx,player.y,player.z)){
-    if(player.onGround&&!collides(nx,player.y+1,player.z)&&!collides(player.x,player.y+1,player.z))
+    if(canStep&&!collides(nx,player.y+1,player.z)&&!collides(player.x,player.y+1,player.z))
       { player.y+=1; player.x=nx; }
     else nx=player.x;
   }
   if(nx!==player.x) player.x=nx;
   let nz=clamp(player.z+dz,BOUND.z0-.4,BOUND.z1+.4);
   if(collides(player.x,player.y,nz)){
-    if(player.onGround&&!collides(player.x,player.y+1,nz)&&!collides(player.x,player.y+1,player.z))
+    if(canStep&&!collides(player.x,player.y+1,nz)&&!collides(player.x,player.y+1,player.z))
       { player.y+=1; player.z=nz; }
     else nz=player.z;
   }
@@ -2157,8 +2300,24 @@ function updatePlayer(dt){
 
   // Senkrecht
   if(!state.paused){
-    if(player.onGround&&keys.Space){ player.vy=JUMP; player.onGround=false; }
-    player.vy-=GRAV*dt;
+    if(wet){
+      // Schwimmen: ␣ zieht nach oben, ⇧ taucht ab, sonst trägt der Auftrieb
+      // einen zur Wasserlinie zurück — mit dem Kopf gerade heraus. Das Wasser
+      // dämpft alles, deshalb pendelt es sich ein statt zu springen.
+      if(keys.Space) player.vy=Math.min(player.vy+SWIM_ACC*dt,SWIM_UP);
+      else if(keys.ShiftLeft||keys.ShiftRight)
+        player.vy=Math.max(player.vy-SWIM_ACC*dt,-SWIM_UP);
+      else{
+        player.vy+=clamp((FLOAT_Y-player.y)*6,-GRAV*.25,4.5)*dt;
+        player.vy*=Math.max(0,1-dt*2.4);
+      }
+      player.vy=clamp(player.vy,-SWIM_UP,SWIM_UP);
+      // onGround bleibt der Kollision überlassen: wer auf dem Grund steht,
+      // steht auch unter Wasser auf dem Grund.
+    } else {
+      if(player.onGround&&keys.Space){ player.vy=JUMP; player.onGround=false; }
+      player.vy-=GRAV*dt;
+    }
     let ny=player.y+player.vy*dt;
     let fall=0;
     if(player.vy<=0){
@@ -2175,16 +2334,19 @@ function updatePlayer(dt){
       player.onGround=false;
     }
     if(player.onGround||ny>player.fallFrom) player.fallFrom=ny;
+    // Wasser fängt den Sturz: wer hineinspringt, kommt heil unten an.
+    if(wet){ player.fallFrom=ny; fall=0; }
     if(ny<BEDROCK-6){ respawn(); ny=player.y; fall=0; }  // normal unerreichbar
     player.y=ny;
     // Erst jetzt Schaden, sonst überschreibt die Höhe von oben einen Respawn.
-    if(fall>3) hurtPlayer(Math.max(1,Math.round(fall-3)));
+    // Vier Blöcke sind frei, darüber kostet jeder weitere gut drei Viertel.
+    if(fall>FALL_FREE) hurtPlayer(Math.max(1,Math.round((fall-FALL_FREE)*.8)));
   }
 
   // Kamera: Höhe weich nachziehen, sonst ruckelt jede Stufe
   player.viewY=Math.abs(player.y-player.viewY)<.02?player.y:lerp(player.viewY,player.y,Math.min(1,dt*16));
   const speed=Math.hypot(dx,dz)/Math.max(dt,1e-4);
-  if(speed>.4&&player.onGround&&!state.paused){
+  if(speed>.4&&player.onGround&&!wet&&!state.paused){
     player.bob+=dt*speed*1.5;
     player.stepT+=dt*speed;
     if(player.stepT>3.1){ player.stepT=0; SND.step(); }
@@ -2238,7 +2400,9 @@ function updateNight(dt){
 const C={dayTop:new THREE.Color(0x3f86c8),evTop:new THREE.Color(0xd97b3a),nTop:new THREE.Color(0x0b1030),
   dayBot:new THREE.Color(0xbfe0ef),evBot:new THREE.Color(0xf0b070),nBot:new THREE.Color(0x141c38),
   sunDay:new THREE.Color(0xfff3d6),sunEv:new THREE.Color(0xffb070),moon:new THREE.Color(0x9fb4ff),
+  water:new THREE.Color(0x1d5c8f),
   top:new THREE.Color(),bot:new THREE.Color()};
+let _wasSub=false;
 function updateSky(){
   const d=state.dayT;
   const dawn=clamp((NIGHT_END+.04-d)*7,0,1)*(d>NIGHT_END-.01?1:0)+clamp((.14-d)*6,0,1);
@@ -2249,8 +2413,14 @@ function updateSky(){
   const bot=C.bot.copy(C.dayBot).lerp(C.evBot,warm*.55).lerp(C.nBot,night);
   skyMat.uniforms.top.value.copy(top);
   skyMat.uniforms.bot.value.copy(bot);
-  scene.fog.color.copy(bot);
-  renderer.setClearColor(bot);
+  // Unter Wasser wird die Sicht kurz und blau, und ein Schleier liegt vor dem
+  // Bild — sonst merkt man beim Schwimmen kaum, dass man untergetaucht ist.
+  const sub=state.underwater;
+  scene.fog.color.copy(sub?C.water:bot);
+  scene.fog.near=sub?.4:46;
+  scene.fog.far=sub?lerp(26,9,night):140;
+  renderer.setClearColor(sub?C.water:bot);
+  if(sub!==_wasSub){ _wasSub=sub; el('water').style.opacity=sub?1:0; }
   sun.intensity=lerp(2.0,.35,night);
   sun.color.copy(C.sunDay).lerp(C.sunEv,warm*.8).lerp(C.moon,night);
   hemi.intensity=lerp(1.25,.42,night);
@@ -2484,7 +2654,8 @@ Promise.all([
 window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid,chests,torches,mobs,
   CHARS,TRADES,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
-  POT_CAP,COOK_TIME,fills,fillsAt,
+  POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,WARES,marketTake,
+  openMarket,pickWare,get marketChar(){return marketChar;},
   get aimed(){return aimed;},
   blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
   give:(id,n)=>give(id,n), take,countOf,

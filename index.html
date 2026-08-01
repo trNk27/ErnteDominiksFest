@@ -82,6 +82,15 @@
     box-shadow:inset 0 0 90px 20px rgba(190,20,20,.85);transition:opacity .12s
   }
 
+  /* ---------- Unter Wasser ---------- */
+  /* Blauer Schleier mit dunklen Rändern — dazu wird im Spiel der Nebel kurz
+     und blau gestellt, damit man das Untertauchen sofort sieht. */
+  #water{
+    position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .2s;
+    background:rgba(29,92,143,.36);
+    box-shadow:inset 0 0 120px 30px rgba(10,40,70,.55)
+  }
+
   /* ---------- Herzen & Hunger ---------- */
   #vitals{
     position:absolute;left:50%;bottom:62px;transform:translateX(-50%);
@@ -294,6 +303,7 @@
   <div id="mine"><i></i></div>
   <div id="tip"></div>
   <div id="hurt"></div>
+  <div id="water"></div>
   <div id="vitals"><div id="hearts"></div><div id="food"></div></div>
   <div id="toasts"></div>
 

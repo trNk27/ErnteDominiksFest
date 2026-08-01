@@ -26,7 +26,8 @@ Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wi
 | Taste | Wirkung |
 |---|---|
 | `W` `A` `S` `D` | laufen · `⇧ Shift` rennen |
-| `␣ Leertaste` | springen |
+| `␣ Leertaste` | springen · im Wasser **aufwärts schwimmen** |
+| `⇧ Shift` | im Wasser **abtauchen** |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
 | **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · 📖 Notiz lesen · Essen |
@@ -40,8 +41,9 @@ wie für die Bennis.
 
 ## Überleben
 
-- **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bis drei Blöcke
-  Fallhöhe passiert nichts, darüber kostet jeder weitere Block. Nach einem Treffer bist
+- **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bis **vier Blöcke**
+  Fallhöhe passiert nichts, darüber kostet jeder weitere gut drei Viertel — und wer im
+  **Wasser** landet, kommt ganz ohne Schaden davon. Nach einem Treffer bist
   du kurz unverwundbar. Bei 0 wachst du am Startpunkt wieder auf, behältst dein Zeug und
   hast ein paar Sekunden Ruhe, bis es weitergeht.
 - **🍗 Hunger** — läuft langsam leer. Iss 🍑 Dominiks, 🍄 Pilze oder etwas Gekochtes
@@ -68,6 +70,10 @@ es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
 | 🍑 Dominik | Dominik (Essen + Zutat) | — · hängt hoch, bau dir was drunter |
 | 🍄 Pilz | Pilz (Essen + Zutat) | — |
 | 🌶️ Pfefferstrauch | Pfeffer | — · nur hinter dem Fluss |
+
+**🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** sind keine Klötze, sondern **zwei gekreuzte
+Flächen** — man geht mitten durch sie hindurch, und sie verdecken nichts: unter der
+Frucht bleibt das Laub geschlossen, unter Pilz und Strauch die Grasnarbe.
 
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
@@ -145,6 +151,28 @@ dann weiß dein Koch schlicht nicht, was daraus werden soll. Frag einen Jannes.
 
 Ein Topf, den du wieder abbaust, gibt seinen Inhalt zurück.
 
+## Im Wasser
+
+Die Flüsse haben eine **tiefe Rinne** und **flache Furten**. Durch eine Furt watet man
+hindurch, in der Rinne **schwimmt** man: **`␣`** zieht nach oben, **`⇧`** taucht ab, und
+lässt du beide los, trägt dich der Auftrieb von selbst zurück an die Oberfläche — mit dem
+Kopf gerade heraus. Unter Wasser wird die Sicht kurz und blau.
+
+Wasser fängt jeden Sturz, egal aus welcher Höhe. Vorwärts kommt man langsamer, und an
+die Böschung schiebt man sich mit gedrückter `␣` wieder hinauf. Was dir dabei aus der
+Hand fällt, **treibt an der Oberfläche** statt auf dem Grund zu verschwinden.
+
+## 🛒 Manni-Markt
+
+Gleich neben dem Startpunkt steht **Manni** in seinem Stand — vier Pfosten, ein Dach,
+ein Tresen. Er handelt nicht mit Knöpfen: **wirf ihm drei 🍑 Dominiks über die Theke**
+(`Q`), und er wirft dir irgendetwas zurück. Bretter, Stöcke, Stein, Ziegel, Fackeln,
+eine Schale, mit etwas Glück eine Zutat oder gar ein ⚔️ Schwert — und manchmal eben
+🤢 Pampe. Was es wird, weiß er vorher selbst nicht.
+
+Er nimmt **nur Dominiks** an; alles andere lässt er liegen. Ein Rechtsklick zeigt, wie
+viele schon auf dem Tresen liegen.
+
 ## Die Jannessen
 
 Überall in der Welt steht ein **Jannes** herum — im Starttal, in den Dorfhäusern, an
@@ -199,7 +227,8 @@ Aus einer festen Zufallsformel entsteht eine Landschaft von **145 × 145 Blöcke
 jedem Start dieselbe, kein Speicherstand nötig.
 
 - **Berge** bis 25 Blöcke hoch, ab 9 Fels, ab 18 Schnee.
-- **Zwei Flüsse** durch Westen und Norden, mit Sandufern und Furten.
+- **Zwei Flüsse** durch Westen und Norden, mit Sandufern. Die Rinne ist vier Blöcke
+  tief — da wird geschwommen —, die **Furten** dazwischen nur einen.
 - **Wälder** in zusammenhängenden Gebieten aus **hohen Bäumen** — zehn bis zwölf Blöcke
   Stamm, darüber die Krone. An jedem fünften hängen unter dem Laub **🍑 Dominiks**:
   zwei gekreuzte Flächen statt eines Klotzes, mit Dominiks Gesicht darauf. Man geht
@@ -212,7 +241,8 @@ jedem Start dieselbe, kein Speicherstand nötig.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
   steht eine Truhe, im zweiten wohnt ein **Jannes**.
 - **8 Truhen**, drei davon in Dörfern; **8 Jannessen**; **13 Notizen** zum Lesen.
-- Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
+- Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen, und
+  darin der **🛒 Manni-Markt**.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
   tiefer gräbst du dich nicht.
 
