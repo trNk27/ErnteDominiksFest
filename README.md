@@ -29,7 +29,8 @@ Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wi
 | `␣ Leertaste` | springen |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · Truhe/Werkbank/Kochtopf benutzen · 📖 Notiz lesen · Essen |
+| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · 📖 Notiz lesen · Essen |
+| `Q` | Gegenstand einen Block weit vor sich werfen · `⇧Q` den ganzen Stapel |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
 | `P` | Pause |
@@ -53,8 +54,9 @@ wie für die Bennis.
 ## Abbauen und Bauen
 
 Linke Maustaste **halten**: im Block bilden sich **Risse**, die von der Mitte nach außen
-wachsen. Sind sie über die ganze Fläche gelaufen, fällt der Block ins Inventar. Mit dem
-passenden Werkzeug geht es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
+wachsen. Sind sie über die ganze Fläche gelaufen, **fällt er heraus** — als kleiner
+drehender Würfel, den du aufsammelst, indem du hingehst. Mit dem passenden Werkzeug geht
+es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
 
 | Block | Ergibt | Womit schneller |
 |---|---|---|
@@ -70,6 +72,21 @@ passenden Werkzeug geht es rund dreimal so schnell, Stein ohne 🪓/⛏️ dageg
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
 In dich selbst oder in einen Benni hinein baust du nicht.
+
+## Was herumliegt
+
+Nichts springt dir direkt in den Rucksack. Alles, was aus einem Block fällt, liegt als
+**kleiner drehender Würfel** auf dem Boden und will abgeholt werden — komm auf gut einen
+Schritt heran, dann hüpft es hinein. Gleiches, das nebeneinander landet, **fasst sich
+zusammen**, damit ein abgeräumter Baum nicht die halbe Wiese pflastert.
+
+Umgekehrt geht es auch: **`Q`** wirft, was du in der Hand hältst, **einen Block weit vor
+dich**, **`⇧Q`** gleich den ganzen Stapel. Weit genug, dass du es nicht sofort wieder
+aufhebst. Passt beim Aufräumen etwas nicht mehr in den Rucksack, fällt es ebenfalls vor
+deine Füße statt verlorenzugehen.
+
+Ein Dominik hängt hoch im Baum — schlägst du ihn ab, fällt er von selbst herunter.
+Du musst ihn also nicht mehr oben in Empfang nehmen, nur unten aufheben.
 
 ## Bauen im Raster
 
@@ -90,8 +107,8 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 - Im Rucksack ist das Raster **2×2**.
 - Eine gesetzte **🛠️ Werkbank** (Rechtsklick darauf) macht daraus **3×3**. Alles, was
   breiter oder höher als zwei ist, geht nur dort.
-- Die Suppe geht nur an einem aufgestellten **🍲 Kochtopf**.
 - Muster sind **verschiebbar** und dürfen **gespiegelt** liegen — genau wie im Vorbild.
+- **Gerichte gehören nicht ins Raster.** Die werden gekocht, siehe unten.
 
 | Ergebnis | Muster | |
 |---|---|---|
@@ -105,9 +122,28 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | ⛏️ Spitzhacke | 🪨🪨🪨 / ·🥢· / ·🥢· | Werkbank |
 | 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
 | 🍲 Kochtopf | 🪨·🪨 / 🪨·🪨 / 🪨🟧🪨 | Werkbank |
-| 🍯 Dominik-Kompott | 🍑🧂🍑 / ·🥣· | Kochtopf, **Rezept nötig** |
-| 🍳 Pilzpfanne | 🍄🌶️🍄 / ·🥣· | Kochtopf, **Rezept nötig** |
-| **🍲 Dominik-Suppe** | 🍑🍑🍑 / 🍄🧂🍄 / 🌶️🥣🌶️ | Kochtopf, **Rezept nötig** |
+
+## Kochen
+
+Der **🍲 Kochtopf** ist kein Raster, sondern ein Topf. Stell ihn hin und **wirf die
+Zutaten hinein** — `Q`, während du davorstehst. Am Fadenkreuz steht, wie voll er ist;
+zwölf Sachen passen hinein. Ein **Rechtsklick** setzt ihn auf; nach ein paar Sekunden
+springt oben heraus, was daraus geworden ist.
+
+Im Topf liegt alles durcheinander, es zählt also nur **was** hineinkommt und **wieviel** —
+keine Reihenfolge, kein Muster.
+
+| Gericht | Zutaten | sättigt |
+|---|---|---|
+| 🍯 Dominik-Kompott | 2× 🍑 · 1× 🧂 · 1× 🥣 | 8 |
+| 🍳 Pilzpfanne | 2× 🍄 · 1× 🌶️ · 1× 🥣 | 10 |
+| **🍲 Dominik-Suppe** | 3× 🍑 · 2× 🍄 · 1× 🧂 · 2× 🌶️ · 1× 🥣 | alles |
+
+Passt es **nicht** zusammen, kommt **🤢 angebrannte Pampe** heraus, und die Zutaten sind
+weg. Dasselbe passiert, wenn die Zutaten zwar stimmen, du das **Rezept aber nicht kennst** —
+dann weiß dein Koch schlicht nicht, was daraus werden soll. Frag einen Jannes.
+
+Ein Topf, den du wieder abbaust, gibt seinen Inhalt zurück.
 
 ## Die Jannessen
 
@@ -143,7 +179,7 @@ Unter dem Raster steht, was du kennst. Ein Rezept landet auf zwei Wegen darin:
    Muster errät, hat es gebaut und kennt es ab dann.
 
 Die **drei Gerichte** sind davon ausgenommen: Kompott, Pfanne und Suppe entstehen **nur
-mit Rezept**. Ohne bleibt der Kochtopf leer, egal wie richtig alles im Raster liegt.
+mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekommt Pampe.
 
 **🧰 Truhen** sind selten geworden — acht in der ganzen Welt — und halten nur noch
 Vorräte bereit: Bretter, Stöcke, Fackeln, Schalen, Stein, Ziegel, gelegentlich ein
@@ -189,7 +225,8 @@ die ganze Welt.
 - `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
 - `vendor/font/` — Pixelify Sans als Schrift (SIL Open Font License 1.1, `OFL.txt` liegt dabei)
 - `*.png` — die Charaktere und Dominik als Frucht
-- `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch
+- `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch; dieselben
+  Bilder tragen auch die Würfel, die herumliegen
 - `sprites/ui/` — Herzen, Essensbalken und die Knöpfe oben rechts
 
 Die Sprites sind Gegenstände auf durchsichtigem Grund, keine Kachelmuster —

@@ -394,6 +394,9 @@ const ITEMS={
   compote :{ic:'🍯',nm:'Dominik-Kompott',food:8},
   panfry  :{ic:'🍳',nm:'Pilzpfanne',  food:10},
   soup    :{ic:'🍲',nm:'Dominik-Suppe',food:20},
+  // Was aus dem Topf kommt, wenn die Zutaten nicht zusammenpassen. Essbar
+  // ist es gerade noch.
+  junk    :{ic:'🤢',nm:'Angebrannte Pampe',food:1},
 };
 
 // ------------------------------------------------------------------ Inventar
@@ -442,14 +445,16 @@ const RECIPES=[
   {id:'pick',  rank:7, out:['pick',1],  pat:['SSS',' K ',' K '], key:{S:'stone',K:'stick'}},
   {id:'axe',   rank:8, out:['axe',1],   pat:['SS ','SK ',' K '], key:{S:'stone',K:'stick'}},
   {id:'pot',   rank:9, out:['pot',1],   pat:['S S','S S','SPS'], key:{S:'stone',P:'plank'}},
-  // Gerichte. Sie entstehen nur am Kochtopf und nur mit Rezept — das gibt es
-  // bei den Jannessen, nicht durch Herumprobieren.
-  {id:'compote',rank:10,out:['compote',1], pat:['DAD',' B '],
-   key:{D:'dominik',A:'salt',B:'bowl'}, station:'pot', secret:true},
-  {id:'panfry', rank:11,out:['panfry',1],  pat:['MFM',' B '],
-   key:{M:'mushroom',F:'pepper',B:'bowl'}, station:'pot', secret:true},
-  {id:'soup',  rank:99,out:['soup',1],  pat:['DDD','MAM','FBF'],
-   key:{D:'dominik',M:'mushroom',A:'salt',F:'pepper',B:'bowl'}, station:'pot', secret:true},
+  // Gerichte. Sie entstehen nur im Kochtopf und nur mit Rezept — das gibt es
+  // bei den Jannessen, nicht durch Herumprobieren. Im Topf liegt alles
+  // durcheinander, darum zählt hier die Zutatenliste und kein Muster.
+  {id:'compote',rank:10,out:['compote',1], station:'pot', secret:true,
+   shapeless:['dominik','dominik','salt','bowl']},
+  {id:'panfry', rank:11,out:['panfry',1],  station:'pot', secret:true,
+   shapeless:['mushroom','mushroom','pepper','bowl']},
+  {id:'soup',  rank:99,out:['soup',1],     station:'pot', secret:true,
+   shapeless:['dominik','dominik','dominik','mushroom','mushroom',
+              'salt','pepper','pepper','bowl']},
 ];
 
 // ------------------------------------------------------------------ Bildchen
@@ -458,7 +463,7 @@ const RECIPES=[
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
                      'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
-                     'compote','panfry','soup']);
+                     'compote','panfry','soup','junk']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
 const ICON_ALT={dominik:'dominik_face'};
 const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':null;
@@ -594,6 +599,13 @@ function blockAt(x,y,z){
   return terrainType(x,z,y);
 }
 const solidAt=(x,y,z)=>!!blockAt(Math.round(x),Math.floor(y),Math.round(z));
+// Füllt der Block seine Zelle wirklich aus? Gekreuzte Flächen — Frucht,
+// Pilzstrauch — tun das nicht: sie sind zwei dünne Blätter mitten in der
+// Zelle. Wer sie als Wand behandelt, schneidet die Fläche dahinter weg, und
+// dann fehlt unter einem Dominik die Unterseite des Laubs und unter einem
+// Pfefferstrauch die Grasnarbe. Zum Verdecken zählt also nur, was voll ist.
+const fills=t=>!!t&&!BLOCKS[t]?.cross;
+const fillsAt=(x,y,z)=>fills(blockAt(x,y,z));
 
 // Oberkante der Säule: erste freie Höhe über festem Grund.
 function surfaceAt(x,z){
@@ -883,14 +895,14 @@ function buildChunk(ci,cj){
         addQuad(t,crossVerts(1,x,y,z,s),UPN);
         continue;
       }
-      if(!blockAt(x,y+1,z)) add(t,'py',x,y,z);
-      if(!blockAt(x,y-1,z)) add(t,'ny',x,y,z);
-      if(!blockAt(x+1,y,z)) add(t,'px',x,y,z);
-      if(!blockAt(x-1,y,z)) add(t,'nx',x,y,z);
-      if(!blockAt(x,y,z+1)) add(t,'pz',x,y,z);
-      if(!blockAt(x,y,z-1)) add(t,'nz',x,y,z);
+      if(!fillsAt(x,y+1,z)) add(t,'py',x,y,z);
+      if(!fillsAt(x,y-1,z)) add(t,'ny',x,y,z);
+      if(!fillsAt(x+1,y,z)) add(t,'px',x,y,z);
+      if(!fillsAt(x-1,y,z)) add(t,'nx',x,y,z);
+      if(!fillsAt(x,y,z+1)) add(t,'pz',x,y,z);
+      if(!fillsAt(x,y,z-1)) add(t,'nz',x,y,z);
     }
-    if(H<=SEA-1&&!blockAt(x,SEA-1,z)) add('water','py',x,SEA-1,z);
+    if(H<=SEA-1&&!fillsAt(x,SEA-1,z)) add('water','py',x,SEA-1,z);
   }
   for(const mat in buf){
     const b=buf[mat];
@@ -986,6 +998,214 @@ function emitTorches(){
   torchFlame.instanceMatrix.needsUpdate=true;
 }
 const litAt=(x,z,r=14)=>torches.some(t=>Math.hypot(t.x-x,t.z-z)<r);
+
+// ------------------------------------------------------------------ Fallende Sachen
+// Abgebautes fällt nicht mehr geradewegs in den Rucksack. Es liegt als
+// kleiner drehender Würfel herum, bis jemand hingeht. Mit Q wirft man selbst
+// etwas heraus, und genau so füttert man auch den Kochtopf.
+const ITEM_TEX={};                    // Gegenstandsbildchen als Textur
+const drops=[];
+const DROP_S=.32, DROP_CAP=200, DROP_GRAV=22, DROP_DRAG=4;
+const PICK_R=1.2;                     // so nah muss man ran
+// Ein Würfel je Gegenstand, das Material geteilt: bei fünfzig herumliegenden
+// Steinen wären fünfzig gleiche Materialien reine Verschwendung.
+const dropMats=new Map();
+function dropMat(id){
+  let m=dropMats.get(id);
+  if(m) return m;
+  const it=ITEMS[id], b=it?.block?BLOCKS[it.block]:null;
+  // Ein Block trägt seine Weltoberfläche, alles andere sein Bildchen — und
+  // das hat durchsichtige Ränder, die weggeschnitten werden müssen.
+  m=new THREE.MeshLambertMaterial(b
+    ?{map:TEX[b.tex]||TEX.stone}
+    :{map:ITEM_TEX[id]||TEX.dirt,transparent:true,alphaTest:.5,side:THREE.DoubleSide});
+  dropMats.set(id,m);
+  return m;
+}
+function removeDrop(d){
+  const i=drops.indexOf(d);
+  if(i<0) return;
+  scene.remove(d.mesh);               // Würfel und Material sind geteilt, nichts wegwerfen
+  drops.splice(i,1);
+}
+// pickT  Schonfrist, bis es aufgehoben werden darf
+// potT   Schonfrist, bis ein Kochtopf es schlucken darf — sonst fiele das
+//        fertige Gericht sofort wieder in den Topf, aus dem es kam
+function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35,potT=0){
+  if(!ITEMS[id]||n<=0) return null;
+  while(drops.length>=DROP_CAP) removeDrop(drops[0]);   // Notbremse gegen Halden
+  const mesh=new THREE.Mesh(BLOCKGEO,dropMat(id));
+  mesh.scale.setScalar(DROP_S);
+  mesh.castShadow=true;
+  mesh.position.set(x,y,z);
+  scene.add(mesh);
+  // age zählt die Lebenszeit, t nur die Phase des Wippens — die startet
+  // zufällig, damit nicht alle Würfel im Gleichschritt auf und ab gehen.
+  const d={id,n,x,y,z,vx,vy,vz,mesh,spin:rnd(0,6.28),rest:false,
+           pickT,potT,age:0,t:rnd(0,6.28)};
+  drops.push(d);
+  return d;
+}
+// Passt es nicht mehr in den Rucksack, liegt es eben vor den Füßen —
+// besser als die alte Meldung, dass etwas verlorengegangen sei.
+function giveOrDrop(id,n){
+  const rest=give(id,n);
+  if(rest) spawnDrop(id,rest,player.x,player.y+1,player.z,rnd(-.8,.8),1.6,rnd(-.8,.8),.8);
+  return rest;
+}
+function dropHeld(all){
+  const s=held();
+  if(!s) return;
+  const id=s.id, n=all?s.n:1;
+  s.n-=n;
+  if(s.n<=0) slots[player.sel]=null;
+  camera.getWorldDirection(_rd);
+  const l=Math.hypot(_rd.x,_rd.z)||1, fx=_rd.x/l, fz=_rd.z/l;
+  // Gut einen Block weit: etwas Schwung nach vorn, den die Reibung in
+  // dreiviertel Blöcken aufzehrt. Und eine Schonfrist, sonst hebt man es
+  // sofort wieder auf.
+  spawnDrop(id,n,player.x+fx*.55,player.y+1.15,player.z+fz*.55,fx*3,1.1,fz*3,1.6);
+  SND.place();
+  updateHUD();
+}
+function updateDrops(dt){
+  for(let i=drops.length-1;i>=0;i--){
+    const d=drops[i];
+    d.t+=dt; d.age+=dt; d.spin+=dt*1.7;
+    if(d.pickT>0) d.pickT-=dt;
+    if(d.potT>0) d.potT-=dt;
+
+    if(d.vx||d.vz){                      // waagerecht, mit Reibung
+      const nx=d.x+d.vx*dt, nz=d.z+d.vz*dt;
+      if(!fillsAt(Math.round(nx),Math.floor(d.y+.1),Math.round(nz))){ d.x=nx; d.z=nz; }
+      else { d.vx=0; d.vz=0; }
+      const f=Math.max(0,1-dt*DROP_DRAG);
+      d.vx*=f; d.vz*=f;
+      if(Math.abs(d.vx)<.06&&Math.abs(d.vz)<.06){ d.vx=0; d.vz=0; }
+    }
+
+    d.vy-=DROP_GRAV*dt;                  // senkrecht
+    let ny=d.y+d.vy*dt;
+    const bx=Math.round(d.x), bz=Math.round(d.z);
+    if(d.vy<=0){
+      const by=Math.floor(ny);
+      if(fillsAt(bx,by,bz)){
+        ny=by+1; d.vy=0;
+        // Landet es auf einem Kochtopf, wandert es hinein statt obendrauf.
+        if(!d.rest&&d.potT<=0&&blockAt(bx,by,bz)==='pot'){
+          const took=potAdd(bx,by,bz,d.id,d.n);
+          if(took>=d.n){ removeDrop(d); continue; }
+          if(took>0) d.n-=took;
+        }
+        d.rest=true;
+      } else d.rest=false;
+    }
+    d.y=ny;
+    if(d.y<BEDROCK-4){ removeDrop(d); continue; }   // normal unerreichbar
+
+    if(d.pickT<=0&&Math.hypot(d.x-player.x,d.z-player.z)<PICK_R&&
+       Math.abs(d.y-player.y)<2.2&&!state.paused){
+      const rest=give(d.id,d.n);
+      if(rest<d.n){
+        SND.pop(); updateHUD();
+        if(rest<=0){ removeDrop(d); continue; }
+        d.n=rest;                        // nur ein Teil passte hinein
+      }
+    }
+    // Gleiches, das nebeneinander liegt, fasst sich zusammen — sonst pflastert
+    // ein abgeräumter Baum die Wiese mit hundert Einzelwürfeln. Nur frisch
+    // Gefallenes sucht sich einen Partner: sonst vergliche jeder Würfel in
+    // jedem Bild jeden anderen.
+    if(d.rest&&d.age<3){
+      let merged=false;
+      for(const o of drops){
+        if(o===d||o.id!==d.id||!o.rest||o.n+d.n>STACK) continue;
+        if(Math.abs(o.x-d.x)>.8||Math.abs(o.z-d.z)>.8||Math.abs(o.y-d.y)>.7) continue;
+        o.n+=d.n; removeDrop(d); merged=true; break;
+      }
+      if(merged) continue;
+    }
+    d.mesh.position.set(d.x,d.y+DROP_S*.5+(d.rest?Math.sin(d.t*2.4)*.05:0),d.z);
+    d.mesh.rotation.y=d.spin;
+  }
+}
+
+// ------------------------------------------------------------------ Kochtopf
+// Der Topf ist kein Raster mehr, sondern ein Topf: Zutaten hineinwerfen,
+// Rechtsklick, und was dabei herauskommt, fällt oben wieder heraus.
+const POT_CAP=12, COOK_TIME=4.5;
+const pots=new Map();                    // "x,y,z" → {items:[{id,n}],cook:0}
+const potCount=p=>p.items.reduce((a,b)=>a+b.n,0);
+function potAdd(x,y,z,id,n){             // gibt zurück, wieviel hineinging
+  const k=K(x,y,z);
+  let p=pots.get(k);
+  if(!p){ p={items:[],cook:0}; pots.set(k,p); }
+  if(p.cook>0) return 0;                 // während des Kochens bleibt der Deckel zu
+  const t=Math.min(POT_CAP-potCount(p),n);
+  if(t<=0) return 0;
+  const e=p.items.find(i=>i.id===id);
+  if(e) e.n+=t; else p.items.push({id,n:t});
+  SND.tap();
+  return t;
+}
+// Im Topf liegt alles durcheinander — es zählt nur, was drin ist und wieviel.
+function potRecipe(p){
+  const ids=[];
+  for(const it of p.items) for(let i=0;i<it.n;i++) ids.push(it.id);
+  ids.sort();
+  return RECIPES.find(r=>r.station==='pot'&&r.shapeless&&
+    r.shapeless.length===ids.length&&
+    r.shapeless.slice().sort().every((v,i)=>v===ids[i]))||null;
+}
+// Am Fadenkreuz steht, wie voll der Topf ist — sonst müsste man raten.
+function potTip(cell){
+  const p=pots.get(K(cell.x,cell.y,cell.z));
+  const n=p?potCount(p):0;
+  return p&&p.cook>0 ? '🍲 Kochtopf — kocht …'
+       : n ? `🍲 Kochtopf ${n}/${POT_CAP} — Rechtsklick zum Kochen`
+           : '🍲 Kochtopf — wirf Zutaten hinein (Q)';
+}
+function usePot(cell){
+  const p=pots.get(K(cell.x,cell.y,cell.z));
+  if(!p||!p.items.length){ toast('🍲 Der Topf ist leer — wirf Zutaten hinein (Q).','warn',2600); return; }
+  if(p.cook>0){ toast('🍲 Es kocht schon.','',1400); return; }
+  p.cook=COOK_TIME;
+  SND.craft();
+  toast('🍲 Der Topf kocht …','good',2000);
+}
+function finishCook(k,p){
+  const [x,y,z]=k.split(',').map(Number);
+  const r=potRecipe(p);
+  p.items.length=0;
+  // Springt oben heraus und bleibt eine Weile taub für Töpfe, sonst plumpst
+  // das fertige Gericht geradewegs in den zurück, aus dem es kam.
+  const out=(id,n)=>spawnDrop(id,n,x,y+1.25,z,rnd(-.3,.3),2.4,rnd(-.3,.3),.5,1.8);
+  if(r&&known.has(r.id)){
+    out(r.out[0],r.out[1]);
+    state.crafted++;
+    SND.craft();
+    toast(ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' ist fertig.','good',2800);
+    if(r.id==='soup'&&!state.won) winGame();
+    return;
+  }
+  out('junk',1);
+  SND.fail();
+  // Der Unterschied ist wichtig: das eine ist ein Fehlversuch, das andere
+  // fehlendes Wissen — und dagegen hilft ein Jannes.
+  toast(r?'🤢 Du weißt nicht, was daraus werden soll. Frag einen Jannes.'
+         :'🤢 Angebrannt. Daraus wird kein Gericht.','bad',3200);
+}
+function updatePots(dt){
+  for(const [k,p] of pots){
+    if(p.cook<=0) continue;
+    p.cook-=dt;
+    if(p.cook>0) continue;
+    p.cook=0;
+    const [x,y,z]=k.split(',').map(Number);
+    if(blockAt(x,y,z)!=='pot'){ pots.delete(k); continue; }  // abgebaut, während es kochte
+    finishCook(k,p);
+  }
+}
 
 // ------------------------------------------------------------------ Bewohner
 // Die Handelskette. want ist, was ein Jannes sehen will, give das Rezept, das
@@ -1270,6 +1490,7 @@ function updateTarget(){
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
   const txt=aimed?aimed.name+(aimed.trade&&!aimed.trade.done?' — Rechtsklick zum Tauschen':' — Rechtsklick')
+           :b&&b.use==='pot'?potTip(target.cell)
            :b&&b.use?b.nm+' — Rechtsklick':'';
   if(tip.textContent!==txt) tip.textContent=txt;
   el('cross').classList.toggle('hot',!!aimed||(!!target&&!!BLOCKS[target.type].use));
@@ -1330,6 +1551,14 @@ function updateMining(dt){
 }
 function breakBlock(x,y,z,t){
   const b=BLOCKS[t];
+  // Ein Topf voller Zutaten gibt sie beim Abbauen wieder her.
+  if(t==='pot'){
+    const p=pots.get(K(x,y,z));
+    if(p){
+      for(const it of p.items) spawnDrop(it.id,it.n,x,y+.4,z,rnd(-1,1),1.8,rnd(-1,1));
+      pots.delete(K(x,y,z));
+    }
+  }
   setBlock(x,y,z,null);
   state.mined++;
   SND.pop();
@@ -1337,7 +1566,8 @@ function breakBlock(x,y,z,t){
   if(t==='leaf'){                            // Laub gibt manchmal einen Stock
     if(Math.random()<.22) drop='stick';
   }
-  if(drop){ if(give(drop,1)) toast('🎒 Inventar voll.','warn',1400); }
+  // Nichts springt mehr direkt in den Rucksack: es fällt heraus und liegt da.
+  if(drop) spawnDrop(drop,1,x,y+.3,z,rnd(-.7,.7),1.6,rnd(-.7,.7),.25);
   // Baumkronen ohne Stamm fallen nicht — Laub bleibt hängen, wie im Vorbild.
   updateHUD();
 }
@@ -1367,7 +1597,7 @@ function useRight(){
     const u=BLOCKS[target.type].use;
     if(u==='chest') return openChest(target.cell);
     if(u==='bench') return openCraft('bench');
-    if(u==='pot')   return openCraft('pot');
+    if(u==='pot')   return usePot(target.cell);
     if(u==='lore')  return readLore(target.cell);
   }
   // 3. Essen
@@ -1466,19 +1696,34 @@ function learnRecipe(id,from){
   updateHUD();
   recipeCard(r,from);
 }
-// Ein Muster als kleines Raster, so wie es ins Handwerksfeld gehört.
+// Gleiche Zutaten zusammenfassen: neun Kästchen in einer Reihe liest niemand,
+// „3× 🍑 · 2× 🍄 · …“ dagegen auf einen Blick.
+const groupCells=list=>{
+  const n={};
+  for(const id of list) n[id]=(n[id]||0)+1;
+  return Object.entries(n);
+};
+// Ein Rezept als Bild: links, was hineinkommt, rechts, was herauskommt.
+// Bei einem Muster steht es im Raster, bei einer Zutatenliste nebeneinander.
 function patHTML(r){
-  const rows=patRows(r);
-  const w=Math.max(...rows.map(x=>x.length));
+  const cells=r.shapeless
+    ? groupCells(r.shapeless).map(([id,n])=>
+        `<div class="pc" data-want="${id}">${icon(id)}${n>1?`<span class="n">${n}</span>`:''}</div>`)
+    : null;
+  const rows=cells?null:patRows(r);
+  const w=cells?cells.length:Math.max(...rows.map(x=>x.length));
   let g='';
-  for(const row of rows) for(let x=0;x<w;x++)
+  if(cells) g=cells.join('');
+  else for(const row of rows) for(let x=0;x<w;x++)
     g+=`<div class="pc">${row[x]?icon(row[x]):''}</div>`;
+  const note=r.station==='pot'?'In den 🍲 Kochtopf werfen — Reihenfolge egal.'
+            :r.shapeless?'Anordnung egal.':'';
   return `<div class="patwrap">
     <div class="pat" style="grid-template-columns:repeat(${w},30px)">${g}</div>
     <div class="arrow">➜</div>
     <div class="pc res">${icon(r.out[0])}${r.out[1]>1?`<span class="n">${r.out[1]}</span>`:''}</div>
     </div>`+
-    (r.shapeless?'<p style="font-size:11.5px;opacity:.7;text-align:center">Anordnung egal.</p>':'');
+    (note?`<p style="font-size:11.5px;opacity:.7;text-align:center">${note}</p>`:'');
 }
 function recipeCard(r,from){
   const rows=patRows(r);
@@ -1579,8 +1824,7 @@ function clearGrid(){
   for(let i=0;i<9;i++){
     const s=grid[i]; if(!s) continue;
     grid[i]=null;
-    const rest=give(s.id,s.n);
-    if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+    giveOrDrop(s.id,s.n);              // was nicht mehr passt, liegt vor den Füßen
   }
 }
 // Belegte Zellen auf den kleinsten Ausschnitt zuschneiden, damit dasselbe
@@ -1624,8 +1868,7 @@ function craftFromGrid(){
   const r=matchRecipe();
   if(!r){ SND.fail(); return false; }
   for(let i=0;i<9;i++){ const s=grid[i]; if(s&&--s.n<=0) grid[i]=null; }
-  const rest=give(r.out[0],r.out[1]);
-  if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+  giveOrDrop(r.out[0],r.out[1]);
   state.crafted++;
   SND.craft();
   const fresh=!known.has(r.id);
@@ -1641,8 +1884,10 @@ function craftFromGrid(){
 function fillFromBook(r){
   const rows=patRows(r);
   const w=Math.max(...rows.map(x=>x.length));
+  if(r.station==='pot'){
+    toast('🍲 Das wird gekocht: Zutaten in den Topf werfen (Q).','warn',2600); return false;
+  }
   if(rows.length>gridN||w>gridN){ toast('🛠️ Dafür brauchst du eine Werkbank.','warn',1800); return false; }
-  if(r.station&&r.station!==craftStation){ toast('🍲 Dafür brauchst du einen Kochtopf.','warn',1800); return false; }
   clearGrid();
   const need=needList(rows);
   for(const id in need)
@@ -1680,8 +1925,7 @@ function clickCell(ref,one){
 }
 function dropCarry(){                    // beim Schließen zurück in den Rucksack
   if(!carry) return;
-  const rest=give(carry.id,carry.n);
-  if(rest) toast('🎒 Inventar voll — '+rest+'× ging verloren.','warn');
+  giveOrDrop(carry.id,carry.n);
   carry=null;
   drawCarry();
 }
@@ -1738,7 +1982,6 @@ function craftHTML(){
   h+=`<div class="cell res${r?'':' empty'}" data-act="craft">`+
      (r?icon(r.out[0])+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
   if(gridN===2) h+='<p class="hint">2×2 — Größeres geht nur an der 🛠️ Werkbank.</p>';
-  else if(craftStation==='pot') h+='<p class="hint">Am Kochtopf. Hier entsteht die Suppe.</p>';
   return h;
 }
 function invGrid(){
@@ -1751,21 +1994,25 @@ function invGrid(){
   h+='</div>';
   return h;
 }
-const patLine=rows=>rows.map(r=>r.map(id=>id?icon(id,'mini'):'<i class="dot"></i>').join(''))
-                        .join('<b class="sep">/</b>');
+// Die Kurzfassung fürs Rezeptbuch: Muster als Zeilen mit Schrägstrich,
+// Zutatenliste als Anzahl mal Bildchen.
+const patLine=r=>r.shapeless
+  ? groupCells(r.shapeless).map(([id,n])=>(n>1?n+'×':'')+icon(id,'mini')).join('<b class="sep">·</b>')
+  : patRows(r).map(row=>row.map(id=>id?icon(id,'mini'):'<i class="dot"></i>').join(''))
+              .join('<b class="sep">/</b>');
 function bookHTML(){
   let h='', unknown=0;
   for(const r of RECIPES.slice().sort((a,b)=>a.rank-b.rank)){
     if(!known.has(r.id)){ unknown++; continue; }
     const rows=patRows(r);
     const w=Math.max(...rows.map(x=>x.length));
-    const st=(r.station==='pot'&&craftStation!=='pot')?'🍲 Kochtopf nötig'
+    const st=r.station==='pot'?'🍲 in den Kochtopf werfen'
             :(rows.length>gridN||w>gridN)?'🛠️ Werkbank nötig'
             :!haveAll(rows)?'Material fehlt':'';
     const out=ITEMS[r.out[0]];
     h+=`<div class="recipe${st?' off':''}"><div class="ico">${icon(r.out[0])}</div>
       <div class="txt"><div class="nm">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
-      <div class="ds">${patLine(rows)}${st?' · '+st:''}</div></div>
+      <div class="ds">${patLine(r)}${st?' · '+st:''}</div></div>
       <button data-craft="${r.id}"${st?' disabled':''}>Bauen</button></div>`;
   }
   if(unknown) h+=`<div class="recipe off"><div class="ico">❓</div><div class="txt">
@@ -1780,7 +2027,7 @@ function openCraft(station){
   renderCraft(false);
 }
 function renderCraft(keep=true){
-  const title=craftStation==='pot'?'🍲 Kochtopf':craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
+  const title=craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
   showModal('<h2>'+title+'</h2>'+craftHTML()+'<h3>Rucksack</h3>'+invGrid()+
     '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
     '<h3>📜 Rezeptbuch</h3>'+bookHTML()+
@@ -1793,6 +2040,9 @@ function openIntro(){
   <p>Überlebe. Bau ab, bau auf, halte die Bennis aus der Nacht heraus.</p>
   <p>Gebaut wird im <b>Raster</b>: Zutaten hineinlegen wie beim Vorbild, 2×2 im Rucksack,
   3×3 an der <b>🛠️ Werkbank</b>. Wer ein Muster richtig legt, hat das Rezept entdeckt.</p>
+  <p>Abgebautes fällt als <b>Würfel</b> zu Boden — hingehen, aufheben. Mit <b>Q</b> wirfst du
+  selbst etwas heraus. So wird auch gekocht: Zutaten in den <b>🍲 Kochtopf</b> werfen,
+  Rechtsklick, warten. Passt es zusammen, kommt ein Gericht heraus; sonst Pampe.</p>
   <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der Welt.
   Sie wollen <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> oder ein fertiges Gericht und zeigen dir dafür,
   wie das nächste geht. Zutaten baust du selbst ab: 🧂 Salz sitzt tief im Fels,
@@ -1801,7 +2051,8 @@ function openIntro(){
   <div class="kbd">
     <b>WASD</b> laufen &nbsp; <b>⇧</b> rennen &nbsp; <b>␣</b> springen<br>
     <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / lesen / essen<br>
-    <b>E</b> Inventar &nbsp; <b>1-9</b> Leiste &nbsp; <b>Rad</b> wechseln &nbsp; <b>P</b> Pause
+    <b>Q</b> wegwerfen &nbsp; <b>⇧Q</b> ganzen Stapel &nbsp; <b>E</b> Inventar<br>
+    <b>1-9</b> Leiste &nbsp; <b>Rad</b> wechseln &nbsp; <b>P</b> Pause
   </div>
   <div class="btnrow"><button class="primary" data-act="start">Los geht's</button></div>`);
 }
@@ -2122,6 +2373,12 @@ addEventListener('keydown',e=>{
     return;
   }
   if(e.code==='KeyP'){ e.preventDefault(); ac(); togglePause(); return; }
+  // Q wirft weg: einzeln, mit Shift den ganzen Stapel.
+  if(e.code==='KeyQ'){
+    e.preventDefault(); ac();
+    if(!modalOpen()&&!state.paused) dropHeld(e.shiftKey);
+    return;
+  }
   if(e.code.startsWith('Digit')){
     const i=+e.code.slice(5)-1;
     if(i>=0&&i<NBAR){ e.preventDefault(); player.sel=i; SND.tap(); updateHUD(); }
@@ -2142,6 +2399,8 @@ function update(dt){
     updateNight(dt);
     updateVitals(dt);
     updateMobs(dt);
+    updateDrops(dt);
+    updatePots(dt);
   }
   updatePlayer(dt);
   updateTarget();
@@ -2181,10 +2440,18 @@ addEventListener('resize',resize);
 const preload=src=>new Promise(res=>{
   const i=new Image(); i.onload=i.onerror=()=>res(); i.src=src;
 });
+// Die Gegenstandsbildchen braucht es zweimal: als Bild fürs Fenster und als
+// Textur für den Würfel, der herumliegt. Fehlt eines, bleibt ITEM_TEX leer
+// und der Würfel nimmt die Notfalltextur — abgebrochen wird deswegen nicht.
+const loadItemTex=id=>loadTex(iconSrc(id)).then(t=>{
+  t.magFilter=THREE.NearestFilter;
+  t.minFilter=THREE.NearestMipmapLinearFilter;
+  ITEM_TEX[id]=t;
+}).catch(()=>{});
 const UISPRITES=['heart_full','heart_half','heart_empty','food_full','food_half','food_empty',
                  'icon_bag','icon_book','icon_pause'];
 Promise.all([
-  ...[...ICONS].map(id=>preload(iconSrc(id))),
+  ...[...ICONS].map(id=>loadItemTex(id)),
   preload('./sprites/items/page1.png'),
   ...UISPRITES.map(n=>preload('./sprites/ui/'+n+'.png')),
   ...[...new Set(CHARS.map(c=>c.key))].map(k=>loadTex(k+'.png').then(t=>{CHAR_TEX[k]=t;})),
@@ -2216,12 +2483,14 @@ Promise.all([
 // ------------------------------------------------------------------ Debug-API
 window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid,chests,torches,mobs,
   CHARS,TRADES,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
+  drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
+  POT_CAP,COOK_TIME,fills,fillsAt,
   get aimed(){return aimed;},
   blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
   give:(id,n)=>give(id,n), take,countOf,
   get target(){return target;},
   get sel(){return heldId();},
-  openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,
+  openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,breakBlock,updatePots,
   learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
   clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
