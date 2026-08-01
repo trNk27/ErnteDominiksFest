@@ -5,9 +5,10 @@ Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt si
 (rechte Maustaste), legst dir im **Raster** Werkzeug zurecht und hältst nachts die
 **Bennis** aus. Kein Punktestand, keine Aufgabenliste — nur überleben.
 
-**Ziel:** Das Rezept der **🍲 Dominik-Suppe** kennt nur noch ein **Jannes**, und der
-sitzt hinter dem Fluss. Er rückt es erst heraus, wenn du ihm zwei fertige Gerichte
-vorkochst. Wer die Suppe danach zusammenbekommt, hat gewonnen.
+**Ziel: 10 000 €.** Ernte **🍑 Dominiks** und wirf sie **Manni** über den Tresen — einen
+Euro das Stück. Gekocht bringen sie ein Vielfaches: die **🍲 Dominik-Suppe** zahlt **100 €**.
+Ihr Rezept kennt nur noch ein **Jannes** hinter dem Fluss, und der rückt es erst heraus,
+wenn du ihm zwei fertige Gerichte vorkochst. Wer zehntausend zusammenhat, hat gewonnen.
 
 ## Spielen
 
@@ -58,7 +59,8 @@ wie für die Bennis.
 Linke Maustaste **halten**: im Block bilden sich **Risse**, die von der Mitte nach außen
 wachsen. Sind sie über die ganze Fläche gelaufen, **fällt er heraus** — als kleiner
 drehender Würfel, den du aufsammelst, indem du hingehst. Mit dem passenden Werkzeug geht
-es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
+es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh. Gewächse machen das nicht mit:
+die **fallen beim ersten Klick** (siehe unten).
 
 | Block | Ergibt | Womit schneller |
 |---|---|---|
@@ -74,6 +76,14 @@ es rund dreimal so schnell, Stein ohne 🪓/⛏️ dagegen zäh.
 **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** sind keine Klötze, sondern **zwei gekreuzte
 Flächen** — man geht mitten durch sie hindurch, und sie verdecken nichts: unter der
 Frucht bleibt das Laub geschlossen, unter Pilz und Strauch die Grasnarbe.
+
+Sie werden auch nicht *abgebaut*, sondern **gepflückt**: ein Klick, und sie fallen —
+kein Halten, kein Fortschrittsbalken, keine Risse. Mit gedrückter Maustaste über ein
+Pilzfeld gestrichen, nimmst du eines nach dem anderen mit.
+
+**Und sie wachsen nach.** Wo du geerntet hast, hängt oder steht nach etwa einer
+Dreiviertelminute wieder etwas. Das Feld geht nicht aus — sonst wären zehntausend Euro
+auch nicht zu holen. Selbst gesetzte Blöcke wachsen natürlich nicht nach.
 
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
@@ -149,6 +159,9 @@ Passt es **nicht** zusammen, kommt **🤢 angebrannte Pampe** heraus, und die Zu
 weg. Dasselbe passiert, wenn die Zutaten zwar stimmen, du das **Rezept aber nicht kennst** —
 dann weiß dein Koch schlicht nicht, was daraus werden soll. Frag einen Jannes.
 
+Gekocht wird nicht nur zum Sattwerden: die Gerichte sind das, womit man bei Manni Geld
+verdient. Aus drei Dominiks (3 €) wird mit Pilzen, Salz und Pfeffer eine Suppe (100 €).
+
 Ein Topf, den du wieder abbaust, gibt seinen Inhalt zurück.
 
 ## Im Wasser
@@ -162,16 +175,37 @@ Wasser fängt jeden Sturz, egal aus welcher Höhe. Vorwärts kommt man langsamer
 die Böschung schiebt man sich mit gedrückter `␣` wieder hinauf. Was dir dabei aus der
 Hand fällt, **treibt an der Oberfläche** statt auf dem Grund zu verschwinden.
 
-## 🛒 Manni-Markt
+## 🛒 Manni-Markt — Geld verdienen und ausgeben
 
 Gleich neben dem Startpunkt steht **Manni** in seinem Stand — vier Pfosten, ein Dach,
-ein Tresen. Er handelt nicht mit Knöpfen: **wirf ihm drei 🍑 Dominiks über die Theke**
-(`Q`), und er wirft dir irgendetwas zurück. Bretter, Stöcke, Stein, Ziegel, Fackeln,
-eine Schale, mit etwas Glück eine Zutat oder gar ein ⚔️ Schwert — und manchmal eben
-🤢 Pampe. Was es wird, weiß er vorher selbst nicht.
+ein Tresen. Er handelt nicht mit Knöpfen: **wirf ihm hin, was du verkaufen willst** (`Q`,
+`⇧Q` für den ganzen Stapel), und er zahlt bar. Ein ganzer Stapel wird auf einmal bezahlt.
 
-Er nimmt **nur Dominiks** an; alles andere lässt er liegen. Ein Rechtsklick zeigt, wie
-viele schon auf dem Tresen liegen.
+| Er kauft | Preis |
+|---|---|
+| 🍑 Dominik | **1 €** |
+| 🍯 Dominik-Kompott | 12 € |
+| 🍳 Pilzpfanne | 15 € |
+| **🍲 Dominik-Suppe** | **100 €** |
+
+Alles andere lässt er liegen. Ein Dominik zu einer Suppe verkocht ist das Dreiunddreißig-
+fache wert — **kochen lohnt sich**, und deshalb lohnen sich die Rezepte der Jannessen.
+
+Verkaufen tut er nur, was sich **nicht bauen lässt**. Rechtsklick öffnet den Laden:
+
+| Ware | Preis | Wirkung (in der Hand gehalten) |
+|---|---|---|
+| 🛹 Skateboard | 250 € | An Land fast doppelt so flott unterwegs |
+| 🛶 Boot | 750 € | Setzt dich **oben aufs** Wasser statt hinein, und schnell |
+| 🪂 Gleitschirm | 1500 € | Im Fallen segelst du sanft hinab statt zu stürzen |
+
+Die drei wirken, solange du sie in der Hand hältst — sie kosten also den Platz für Hacke
+oder Schwert. Alle drei bringen dich schneller zur nächsten Ernte und zahlen sich damit
+selbst zurück.
+
+Oben links steht, wieviel in der Kasse liegt (💶) und wieviel du **insgesamt verdient**
+hast (🎯). Einkaufen mindert das Verdiente nicht — das Ziel ist der Umsatz, nicht der
+Kontostand.
 
 ## Die Jannessen
 
@@ -215,7 +249,7 @@ Schwert. **Zutaten liegen nicht mehr darin**, die holst du dir draußen selbst.
 
 ## Notizen
 
-Überall in der Welt stehen **📖 dreizehn Notizen** herum (Rechtsklick zum Lesen). Sie
+Überall in der Welt stehen **📖 fünfzehn Notizen** herum (Rechtsklick zum Lesen). Sie
 erzählen, wie das mit Dominik, den Bennis und dem Fest angefangen hat, und ein paar von
 ihnen helfen konkret weiter. Sie liegen dort, wo man ohnehin vorbeikommt: eine gleich am
 Startpunkt, je eine neben den drei Dorfplätzen, zwei auf den höchsten Gipfeln, zwei an
@@ -240,7 +274,7 @@ jedem Start dieselbe, kein Speicherstand nötig.
   der Oberfläche, gut zwei Prozent des Gesteins. Ohne ⛏️ Spitzhacke wird das nichts.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
   steht eine Truhe, im zweiten wohnt ein **Jannes**.
-- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**; **13 Notizen** zum Lesen.
+- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**; **15 Notizen** zum Lesen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen, und
   darin der **🛒 Manni-Markt**.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,

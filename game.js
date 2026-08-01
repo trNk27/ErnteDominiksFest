@@ -147,7 +147,7 @@ function surfaceTex(x,z,h){
 // ------------------------------------------------------------------ Zustand
 const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
   mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,trades:0,won:false,checkT:0,
-  underwater:false,
+  underwater:false,money:0,earned:0,sold:0,bought:0,
   spikes:0};                            // verworfene Maus-Ausreisser, siehe unten
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
@@ -374,13 +374,14 @@ const BLOCKS={
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
   pot    :{tex:'pot',   hard:2.2, drop:'pot',    nm:'Kochtopf',pick:true, use:'pot'},
   chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
-  dominik:{tex:'dominik',hard:.5, drop:'dominik',nm:'Dominik',
-           cross:true, size:.85, alpha:true, pass:true},
   // Alles, was wächst, steht als gekreuzte Fläche im Gelände: man geht
-  // hindurch, und es verdeckt nichts (siehe fills()).
-  shroom :{tex:'shroom',hard:.25, drop:'mushroom',nm:'Pilz',
+  // hindurch, es verdeckt nichts (siehe fills()), und es ist mit einem
+  // Klick gepflückt statt abgebaut — hard bleibt darum ungenutzt bei 0.
+  dominik:{tex:'dominik',hard:0, drop:'dominik',nm:'Dominik',
+           cross:true, size:.85, alpha:true, pass:true},
+  shroom :{tex:'shroom',hard:0,  drop:'mushroom',nm:'Pilz',
            cross:true, size:.8, sit:true, alpha:true, pass:true},
-  pepper :{tex:'pepper',hard:.25, drop:'pepper', nm:'Pfefferstrauch',
+  pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
            cross:true, size:.95,sit:true, alpha:true, pass:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
@@ -414,10 +415,26 @@ const ITEMS={
   compote :{ic:'🍯',nm:'Dominik-Kompott',food:8},
   panfry  :{ic:'🍳',nm:'Pilzpfanne',  food:10},
   soup    :{ic:'🍲',nm:'Dominik-Suppe',food:20},
+  // Vom Markt, nicht aus dem Raster. Sie wirken, solange man sie in der
+  // Hand hält — deshalb steht ihre Wirkung an einem Merkmal und nicht in
+  // einem eigenen Ausrüstungsfach.
+  boat    :{ic:'🛶',nm:'Boot',        boat:true},
+  board   :{ic:'🛹',nm:'Skateboard',  board:true},
+  glider  :{ic:'🪂',nm:'Gleitschirm', glide:true},
   // Was aus dem Topf kommt, wenn die Zutaten nicht zusammenpassen. Essbar
   // ist es gerade noch.
   junk    :{ic:'🤢',nm:'Angebrannte Pampe',food:1},
 };
+
+// ------------------------------------------------------------------ Geld
+// Das Ziel des Spiels: zehntausend Euro umgesetzt. Gezählt wird, was man
+// insgesamt verdient hat, nicht was in der Kasse liegt — Einkaufen bringt
+// einen also nicht zurück.
+const GOAL=10000;
+// Was Manni annimmt und was er dafür zahlt. Die Frucht ist der Cent, die
+// Suppe der große Schein; die beiden Gerichte liegen dazwischen, damit sich
+// der Kochtopf auch lohnt, bevor man das Suppenrezept hat.
+const PRICES={dominik:1,compote:12,panfry:15,soup:100};
 
 // ------------------------------------------------------------------ Inventar
 const STACK=64, NSLOT=36, NBAR=9;
@@ -483,7 +500,7 @@ const RECIPES=[
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
                      'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
-                     'compote','panfry','soup','junk']);
+                     'compote','panfry','soup','junk','boat','board','glider']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
 const ICON_ALT={dominik:'dominik_face'};
 const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':null;
@@ -496,6 +513,10 @@ function itemNote(id){
   if(it.axe) p.push('🪓 schnell bei Holz');
   if(it.pick) p.push('⛏️ schnell bei Stein');
   if(it.torch) p.push('🔥 hält Bennis fern');
+  if(it.boat) p.push('🛶 trägt dich übers Wasser');
+  if(it.board) p.push('🛹 doppelt so flott an Land');
+  if(it.glide) p.push('🪂 lässt dich sanft herabsegeln');
+  if(PRICES[id]) p.push('💶 '+PRICES[id]+' € bei Manni');
   if(it.block) p.push('setzbar');
   const used=RECIPES.filter(r=>patRows(r).some(row=>row.includes(id)))
     .filter(r=>known.has(r.id)).map(r=>ITEMS[r.out[0]].nm);
@@ -543,17 +564,22 @@ const haveAll=rows=>{ const n=needList(rows); for(const id in n) if(countOf(id)<
 // Liegen als Zettel draußen in der Welt: auf den Dorfplätzen, an den Furten,
 // oben auf den Bergen. Die Reihenfolge ist die Fundreihenfolge: [0] liegt am
 // Startpunkt, [1..3] in den Dörfern, [4,5] auf den Bergen, [6,7] an den
-// Furten, der Rest verstreut. Was weiterhilft, liegt also dort, wo man
-// ohnehin vorbeikommt.
+// Furten, der Rest verstreut. Was weiterhilft, steht darum vorn — Rechnung,
+// Rezepte und Nachwachsen liegen dort, wo man ohnehin vorbeikommt.
 const LORE=[
   {t:'Wie es anfing',    s:'Das Tal war leer, bis <b>Dominik</b> kam und einen Kern in die Erde drückte. '+
                            'Am nächsten Morgen stand da ein Baum, und an dem Baum hing er selbst — in klein und rund.'},
-  {t:'Das Fest',         s:'Einmal im Jahr wurde geerntet und gekocht, und das hieß <b>ErnteDominiksFest</b>. '+
-                           'Es gab genau einen Topf Suppe, und jeder bekam einen Schluck. Mehr brauchte es nicht.'},
+  {t:'Die Rechnung',     s:'Manni sagt, das Fest müsse sich <b>rechnen</b>: <b>10 000 €</b>, dann sei genug. '+
+                           'Ein 🍑 Dominik bringt einen Euro, ein Topf <b>🍲 Suppe</b> hundert. '+
+                           'Rechne selbst, wieviel das Kochen wert ist.'},
   {t:'Von den Jannessen',s:'Sie schreiben nichts auf, sie zeigen es. Bring einem <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> '+
                            'oder etwas Gekochtes, und er hält dir das <b>📜 Rezept</b> hin, bis du es dir gemerkt hast.'},
+  {t:'Vom Nachwachsen',  s:'Nimm ruhig, was hängt. Es dauert ein Weilchen, dann trägt derselbe Zweig wieder, '+
+                           'und der Pilz steht auch wieder da. <b>Das Feld geht nicht aus</b> — nur die Geduld.'},
   {t:'Der lange Weg',    s:'Das Suppenrezept kennt nur noch einer, und der wollte seine Ruhe. '+
                            'Er sitzt <b>hinter dem Fluss</b>, wo der Pfeffer wächst. Und er will erst zwei Gerichte sehen.'},
+  {t:'Das Fest',         s:'Einmal im Jahr wurde geerntet und gekocht, und das hieß <b>ErnteDominiksFest</b>. '+
+                           'Es gab genau einen Topf Suppe, und jeder bekam einen Schluck. Mehr brauchte es nicht.'},
   {t:'Über die Bennis',  s:'Sie kommen mit der Dunkelheit und gehen mit dem Licht, und niemand weiß, wo sie tagsüber stecken. '+
                            'Eine <b>🔥 Fackel</b> hält sie weit weg. Eine zwei Blöcke hohe Mauer auch.'},
   {t:'Der letzte Eintrag',s:'Ich hatte den <b>🍲 Kochtopf</b> schon aufgestellt: oben drei <b>🍑 Dominiks</b>, '+
@@ -988,6 +1014,29 @@ function flushChunks(){
   _dirtyChunks.clear();
   for(const k of todo){ const [i,j]=k.split(',').map(Number); buildChunk(i,j); }
 }
+// ------------------------------------------------------------------ Nachwachsen
+// Ohne Nachschub wäre das Ziel nicht zu schaffen: in der ganzen Welt hängen
+// nur ein paar hundert Früchte, und zehntausend Euro sind viele Ernten.
+// Geerntetes kommt darum nach einer Weile an derselben Stelle wieder — die
+// Welt ist ein Feld, kein Vorrat. Gesetzte Blöcke wachsen natürlich nicht
+// nach, nur was von Anfang an dort stand.
+const REGROW=42;                         // Sekunden, plus etwas Streuung
+const regrowing=[];                      // {k,at}
+function scheduleRegrow(x,y,z,t){
+  if(scenery.get(K(x,y,z))!==t) return;
+  regrowing.push({k:K(x,y,z),at:state.t+REGROW*rnd(.75,1.35)});
+}
+function updateRegrow(){
+  for(let i=regrowing.length-1;i>=0;i--){
+    const r=regrowing[i];
+    if(state.t<r.at) continue;
+    regrowing.splice(i,1);
+    if(edits.get(r.k)!==null) continue;  // dort steht inzwischen etwas anderes
+    edits.delete(r.k);                   // die Kulisse scheint wieder durch
+    const [x,,z]=r.k.split(',').map(Number);
+    markDirty(x,z);
+  }
+}
 function setBlock(x,y,z,type){
   edits.set(K(x,y,z),type||null);
   noteRange(x,z,y-1); noteRange(x,z,y+1);
@@ -1155,14 +1204,14 @@ function updateDrops(dt){
     d.y=ny;
     if(d.y<BEDROCK-4){ removeDrop(d); continue; }   // normal unerreichbar
 
-    // Was vor Mannis Tresen liegen bleibt, nimmt er an — aber nur Dominiks,
-    // alles andere lässt er liegen.
-    if(d.rest&&d.id==='dominik'&&marketChar&&
+    // Was vor Mannis Tresen liegen bleibt und auf seiner Preisliste steht,
+    // kauft er auf der Stelle. Alles andere lässt er liegen.
+    if(d.rest&&PRICES[d.id]&&marketChar&&
        Math.hypot(d.x-marketChar.x,d.z-marketChar.z)<MARKET_R&&
        Math.abs(d.y-marketChar.y)<2.5){
-      const n=d.n;
+      const id=d.id, n=d.n;
       removeDrop(d);
-      marketTake(n);
+      sellTo(id,n);
       continue;
     }
     if(d.pickT<=0&&Math.hypot(d.x-player.x,d.z-player.z)<PICK_R&&
@@ -1246,8 +1295,9 @@ function finishCook(k,p){
     out(r.out[0],r.out[1]);
     state.crafted++;
     SND.craft();
-    toast(ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' ist fertig.','good',2800);
-    if(r.id==='soup'&&!state.won) winGame();
+    const pr=PRICES[r.out[0]];
+    toast(ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' ist fertig.'+
+      (pr?' — '+pr+' € bei Manni.':''),'good',2800);
     return;
   }
   out('junk',1);
@@ -1297,11 +1347,11 @@ const TRADES=[
 ];
 const CHARS=[
   {key:'manni',name:'Manni-Markt',h:1.9,x:MARKET.x,z:MARKET.z,color:'#ff6b4a',
-   market:{pending:0,sold:0},
-   lines:['Drei Dominiks über den Tresen — und du kriegst was.',
-          'Was du kriegst? Weiß ich vorher auch nicht.',
-          'Rezepte gibt es nebenan bei den Jannessen.',
-          'Wirf ruhig, ich fang das schon.']},
+   market:true,
+   lines:['Dominiks? Einen Euro das Stück, wirf sie mir hin.',
+          'Die Suppe zahlt hundert. Hundert!',
+          'Boot, Brett und Schirm — bauen kannst du die nicht.',
+          'Rezepte gibt es nebenan bei den Jannessen.']},
 ];
 // Alle heißen Jannes, alle sehen gleich aus, alle wollen etwas anderes.
 TRADES.forEach((t,i)=>{
@@ -1373,56 +1423,64 @@ function say(c,txt,ms=4200){
   c.bubble.visible=true; c.bubbleT=ms/1000;
 }
 // ------------------------------------------------------------------ Manni-Markt
-// Manni verkauft nicht gegen Knöpfe, sondern gegen Geworfenes: drei 🍑 über
-// den Tresen, und irgendetwas kommt zurück. Was, entscheidet der Zufall —
-// deshalb steht auf dem Preisschild auch nur ein Fragezeichen.
-const MARKET_PRICE=3, MARKET_R=2.6;
-// id, Menge, Gewicht. Baustoff ist häufig, Werkzeug selten, Pampe der Witz.
-const WARES=[['plank',4,5],['stick',4,4],['stone',5,5],['brick',4,3],['sand',4,3],
-             ['dirt',5,3],['torch',3,4],['snow',3,2],['log',2,3],['bowl',1,2],
-             ['mushroom',1,2],['salt',1,2],['pepper',1,2],['sword',1,1],['junk',1,1]];
+// Manni kauft, was man ihm über den Tresen wirft, und zahlt bar. Verkauft
+// wird nur, was sich nicht bauen lässt: Boot, Brett und Schirm.
+const MARKET_R=2.6;
+// Die Preise sind Stationen auf dem Weg zum Ziel: das Brett ist früh drin,
+// der Schirm bleibt eine Weile ein Wunsch. Alle drei bringen dich schneller
+// zur nächsten Ernte — sie zahlen sich also selbst zurück.
+const SHOP=[
+  {id:'board', price:250,  txt:'Auf festem Boden fast doppelt so flott.'},
+  {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
+  {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
+];
 let marketChar=null;
-function pickWare(){
-  let t=0;
-  for(const w of WARES) t+=w[2];
-  let r=Math.random()*t;
-  for(const [id,n,w] of WARES){ r-=w; if(r<=0) return [id,n]; }
-  return ['plank',4];
+function earn(n){
+  state.money+=n; state.earned+=n;
+  updateHUD();
+  if(state.earned>=GOAL) winGame();
 }
-function giveWare(){
-  const [id,n]=pickWare();
-  // Er wirft es zurück, in die Richtung, aus der geworfen wurde.
-  const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
-  spawnDrop(id,n,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.6,2.4,dz/l*2.6,.5);
+function sellTo(id,n){
+  const sum=PRICES[id]*n;
+  state.sold+=n;
   SND.chest();
-  say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
-  toast('🛒 '+ITEMS[id].ic+' '+n+'× '+ITEMS[id].nm,'good',2600);
+  say(marketChar,n+'× '+ITEMS[id].nm+' — macht '+sum+' Euro.',3200);
+  toast('💶 +'+sum+' € für '+n+'× '+ITEMS[id].ic+' '+ITEMS[id].nm,'good',2600);
+  earn(sum);
 }
-function marketTake(n){
-  const m=marketChar.market;
-  m.pending+=n;
-  let sold=0;
-  while(m.pending>=MARKET_PRICE){ m.pending-=MARKET_PRICE; m.sold++; sold++; giveWare(); }
-  if(!sold){
-    SND.tap();
-    toast('🛒 Manni nimmt an — noch '+(MARKET_PRICE-m.pending)+'× 🍑','',1800);
-  }
+function buyFrom(id){
+  const w=SHOP.find(s=>s.id===id);
+  if(!w||!marketChar) return;
+  if(state.money<w.price){ SND.fail(); toast('💶 Dafür reicht es nicht.','warn',1800); return; }
+  state.money-=w.price; state.bought++;
+  // Er reicht es über den Tresen, in die Richtung, in der man steht.
+  const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
+  spawnDrop(id,1,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.2,2.4,dz/l*2.2,.4);
+  SND.craft();
+  say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
+  toast('🛒 '+ITEMS[id].ic+' '+ITEMS[id].nm+' gekauft.','good',2600);
+  updateHUD();
+  openMarket(marketChar);
 }
 function openMarket(c){
-  const m=c.market;
+  const buys=Object.entries(PRICES).map(([id,p])=>
+    `<div class="pc" data-want="${id}">${icon(id)}<span class="n">${p}</span></div>`).join('');
+  const sells=SHOP.map(w=>{
+    const can=state.money>=w.price;
+    return `<div class="recipe${can?'':' off'}"><div class="ico">${icon(w.id)}</div>
+      <div class="txt"><div class="nm">${ITEMS[w.id].nm} — ${w.price} €</div>
+      <div class="ds">${w.txt}</div></div>
+      <button data-buy="${w.id}"${can?'':' disabled'}>Kaufen</button></div>`;
+  }).join('');
   showModal(`<h2>🛒 Manni-Markt</h2>
-    <p style="text-align:center;font-size:13px">Wirf mir <b>drei 🍑 Dominiks</b> über den
-    Tresen — mit <b>Q</b>, ich fang das schon. Dafür kriegst du irgendetwas aus der Kiste.
-    Was, das weiß ich vorher selbst nicht.</p>
-    <div class="patwrap">
-      <div class="pat" style="grid-template-columns:repeat(1,30px)">
-        <div class="pc" data-want="dominik">${icon('dominik')}<span class="n">${MARKET_PRICE}</span></div>
-      </div>
-      <div class="arrow">➜</div>
-      <div class="pc res">❓</div>
-    </div>
-    <p style="font-size:12px;opacity:.8;text-align:center">
-      Auf dem Tresen liegen ${m.pending}/${MARKET_PRICE} · ${m.sold}× gehandelt</p>
+    <p style="text-align:center;font-size:13px">Kasse <b>${state.money} €</b> ·
+    insgesamt verdient <b>${state.earned} €</b> von ${GOAL} €</p>
+    <h3>Manni kauft — wirf es ihm hin (Q)</h3>
+    <div class="patwrap"><div class="pat"
+      style="grid-template-columns:repeat(${Object.keys(PRICES).length},30px)">${buys}</div>
+      <div class="arrow">➜</div><div class="pc res">💶</div></div>
+    <h3>Manni verkauft — nichts davon lässt sich bauen</h3>
+    ${sells}
     <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
 }
 
@@ -1660,6 +1718,14 @@ function updateMining(dt){
   }
   const t=target.type, b=BLOCKS[t];
   if(b.noBreak){ bar.style.display='none'; showCrack(null,0); return; }
+  // Was als Billboard im Gelände steht — Frucht, Pilz, Pfeffer —, ist mit
+  // einem Griff gepflückt: kein Halten, kein Balken, keine Risse. Beim
+  // Drüberstreichen fällt eines nach dem anderen.
+  if(b.cross){
+    bar.style.display='none'; mineT=0; mineKey=''; showCrack(null,0);
+    breakBlock(target.cell.x,target.cell.y,target.cell.z,t);
+    return;
+  }
   const k=K(target.cell.x,target.cell.y,target.cell.z);
   if(k!==mineKey){ mineKey=k; mineT=0; }
   mineT+=dt*breakSpeed(t);
@@ -1683,6 +1749,7 @@ function breakBlock(x,y,z,t){
       pots.delete(K(x,y,z));
     }
   }
+  if(b.cross) scheduleRegrow(x,y,z,t);        // Geerntetes kommt wieder
   setBlock(x,y,z,null);
   state.mined++;
   SND.pop();
@@ -1912,9 +1979,11 @@ function winGame(){
   if(state.won) return;
   state.won=true;
   SND.win();
-  showModal(`<h2>🍲 Dominik-Suppe!</h2>
-    <p>Sie ist fertig. Ein Rezept von hinter dem Fluss, ein Kochtopf, eine Suppe — Ziel erreicht.</p>
-    <p style="font-size:12px;opacity:.8">⛏️ ${state.mined} Blöcke abgebaut · 🧱 ${state.placed} gesetzt ·
+  showModal(`<h2>💶 ${GOAL.toLocaleString('de-DE')} €!</h2>
+    <p>Die Kasse stimmt. Vom ersten Dominik für einen Euro bis zum letzten Topf Suppe —
+    das Fest hat sich gerechnet.</p>
+    <p style="font-size:12px;opacity:.8">💶 ${state.earned} € verdient · 🛒 ${state.sold} Stück verkauft ·
+    ${state.bought}× eingekauft · ⛏️ ${state.mined} Blöcke abgebaut · 🧱 ${state.placed} gesetzt ·
     🤝 ${state.trades}/${TRADES.length} Handel · 🧰 ${state.chests} Truhen ·
     📜 ${known.size}/${RECIPES.length} Rezepte · 📖 ${lore.size}/${LORE.length} Notizen ·
     🌙 Tag ${state.day} · 💀 ${state.deaths}× gestorben</p>
@@ -2162,15 +2231,18 @@ function renderCraft(keep=true){
 }
 function openIntro(){
   showModal(`<h2>⛏️ ErnteDominiksFest</h2>
-  <p>Überlebe. Bau ab, bau auf, halte die Bennis aus der Nacht heraus.</p>
+  <p><b>Ziel: ${GOAL} €.</b> Ernte 🍑 Dominiks und wirf sie Manni über den Tresen — einen Euro
+  das Stück. Gekocht bringen sie ein Vielfaches: die 🍲 Dominik-Suppe zahlt <b>100 €</b>.</p>
+  <p>Nebenbei überleben: bau ab, bau auf, halte die Bennis aus der Nacht heraus.</p>
   <p>Gebaut wird im <b>Raster</b>: Zutaten hineinlegen wie beim Vorbild, 2×2 im Rucksack,
   3×3 an der <b>🛠️ Werkbank</b>. Wer ein Muster richtig legt, hat das Rezept entdeckt.</p>
   <p>Abgebautes fällt als <b>Würfel</b> zu Boden — hingehen, aufheben. Mit <b>Q</b> wirfst du
   selbst etwas heraus. So wird auch gekocht: Zutaten in den <b>🍲 Kochtopf</b> werfen,
   Rechtsklick, warten. Passt es zusammen, kommt ein Gericht heraus; sonst Pampe.</p>
-  <p>Gleich neben dem Startpunkt steht der <b>🛒 Manni-Markt</b>: wirf <b>drei 🍑</b> über den
-  Tresen, und du bekommst irgendetwas dafür zurück. Im <b>Wasser</b> schwimmst du —
-  <b>␣</b> hoch, <b>⇧</b> runter; hineinspringen tut nicht weh.</p>
+  <p>Am <b>🛒 Manni-Markt</b> gibt es auch, was sich nicht bauen lässt: <b>🛹 Skateboard</b>,
+  <b>🛶 Boot</b>, <b>🪂 Gleitschirm</b> — in der Hand gehalten, bringen sie dich schneller
+  ans Ziel. Im <b>Wasser</b> schwimmst du — <b>␣</b> hoch, <b>⇧</b> runter;
+  hineinspringen tut nicht weh.</p>
   <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der Welt.
   Sie wollen <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> oder ein fertiges Gericht und zeigen dir dafür,
   wie das nächste geht. Zutaten baust du selbst ab: 🧂 Salz sitzt tief im Fels,
@@ -2187,6 +2259,8 @@ function openIntro(){
 function togglePause(){
   if(modalOpen()){ hideModal(); return; }
   showModal(`<h2>⏸️ Pause</h2>
+    <p style="font-size:13px">💶 <b>${state.money} €</b> in der Kasse ·
+    🎯 <b>${state.earned}</b> von ${GOAL} € verdient</p>
     <p style="font-size:12.5px;opacity:.85">📜 ${known.size}/${RECIPES.length} Rezepte ·
     🤝 ${state.trades}/${TRADES.length} Handel · 📖 ${lore.size}/${LORE.length} Notizen ·
     🧰 ${state.chests} Truhen · ⛏️ ${state.mined} abgebaut · 🧱 ${state.placed} gesetzt ·
@@ -2212,6 +2286,7 @@ mbox.addEventListener('click',e=>{
   if(!b) return;
   e.stopPropagation();
   ac();
+  if(b.dataset.buy){ buyFrom(b.dataset.buy); return; }
   if(b.dataset.craft){
     const r=RECIPES.find(x=>x.id===b.dataset.craft);
     if(r&&fillFromBook(r)) craftFromGrid();
@@ -2236,6 +2311,7 @@ const FALL_FREE=4;                      // so tief geht es ohne Schaden
 // Schwimmen: SWIM_UP ist das Tempo hoch wie runter, FLOAT_Y die Höhe, auf der
 // man von selbst treibt — gerade so, dass die Augen über dem Spiegel liegen.
 const SWIM_UP=3.4, SWIM_ACC=15, FLOAT_Y=WATER_Y-1.42;
+const GLIDE_V=1.7;                      // Sinkgeschwindigkeit am Gleitschirm
 // Der Spieler füllt [py, py+PH), ein Block y deckt [y, y+1) ab. Berührung ist
 // noch keine Überschneidung — sonst zieht die Schwerkraft ihn jedes Bild ein
 // Stück in den Boden, der Aufsetzer schiebt ihn zurück, und das Bild zittert.
@@ -2274,8 +2350,19 @@ function updatePlayer(dt){
             waterAt(player.x,player.y-.1,player.z);
   player.wet=wet;
   state.underwater=waterAt(player.x,player.viewY+EYE,player.z);
+  // Was vom Markt kommt, wirkt in der Hand: Brett an Land, Boot im Wasser,
+  // Schirm in der Luft. Alles drei kostet den Platz in der Hand — wer segelt,
+  // haut in dem Moment nichts ab.
+  const hit=heldId(), hi=hit?ITEMS[hit]:null;
+  const onBoat=!!hi?.boat&&wet;
+  const onBoard=!!hi?.board&&!wet&&player.onGround;
+  const gliding=!!hi?.glide&&!wet&&!player.onGround;
+  player.gliding=gliding;
   const sprint=(keys.ShiftLeft||keys.ShiftRight)?1.42:1;
-  const sp=wet?3.0:4.8*sprint;           // Wasser bremst, Rennen hilft dort nicht
+  const sp=wet?(onBoat?7.2:3.0)              // Wasser bremst, das Boot nicht
+          :onBoard?8.4                       // das Brett rollt
+          :gliding?6.2                       // im Gleitflug trägt der Fahrtwind
+          :4.8*sprint;
   const sin=Math.sin(player.yaw), cos=Math.cos(player.yaw);
   const dx=(mx*cos+mz*sin)*sp*dt;
   const dz=(-mx*sin+mz*cos)*sp*dt;
@@ -2308,7 +2395,9 @@ function updatePlayer(dt){
       else if(keys.ShiftLeft||keys.ShiftRight)
         player.vy=Math.max(player.vy-SWIM_ACC*dt,-SWIM_UP);
       else{
-        player.vy+=clamp((FLOAT_Y-player.y)*6,-GRAV*.25,4.5)*dt;
+        // Im Boot sitzt man obenauf, sonst treibt man mit dem Kopf heraus.
+        const line=onBoat?WATER_Y:FLOAT_Y;
+        player.vy+=clamp((line-player.y)*6,-GRAV*.25,4.5)*dt;
         player.vy*=Math.max(0,1-dt*2.4);
       }
       player.vy=clamp(player.vy,-SWIM_UP,SWIM_UP);
@@ -2317,6 +2406,9 @@ function updatePlayer(dt){
     } else {
       if(player.onGround&&keys.Space){ player.vy=JUMP; player.onGround=false; }
       player.vy-=GRAV*dt;
+      // Der Schirm bremst den Fall auf Schrittgeschwindigkeit — steigen kann
+      // man damit nicht, nur weit kommen.
+      if(gliding&&player.vy<-GLIDE_V) player.vy=-GLIDE_V;
     }
     let ny=player.y+player.vy*dt;
     let fall=0;
@@ -2334,8 +2426,8 @@ function updatePlayer(dt){
       player.onGround=false;
     }
     if(player.onGround||ny>player.fallFrom) player.fallFrom=ny;
-    // Wasser fängt den Sturz: wer hineinspringt, kommt heil unten an.
-    if(wet){ player.fallFrom=ny; fall=0; }
+    // Wasser fängt den Sturz, und wer am Schirm hängt, fällt gar nicht.
+    if(wet||gliding){ player.fallFrom=ny; fall=0; }
     if(ny<BEDROCK-6){ respawn(); ny=player.y; fall=0; }  // normal unerreichbar
     player.y=ny;
     // Erst jetzt Schaden, sonst überschreibt die Höhe von oben einen Respawn.
@@ -2471,7 +2563,10 @@ function updateHUD(){
   if(fs!==foodCache){ foodCache=fs; el('food').innerHTML=fs; }
   el('hRec').textContent=known.size;
   el('hLore').textContent=lore.size;
+  el('hCash').textContent=state.money;
+  el('hEarn').textContent=state.earned;
   el('book').classList.toggle('full',knowsSoup());
+  el('book').classList.toggle('rich',state.earned>=GOAL);
   const sig=slots.map(s=>s?s.id+s.n:'-').join(',')+'|'+player.sel;
   if(sig!==hudCache&&hotEls){
     hudCache=sig;
@@ -2571,6 +2666,7 @@ function update(dt){
     updateMobs(dt);
     updateDrops(dt);
     updatePots(dt);
+    updateRegrow();
   }
   updatePlayer(dt);
   updateTarget();
@@ -2640,6 +2736,7 @@ Promise.all([
   player.y=player.viewY=surfaceAt(player.x,player.z);
   el('hRecMax').textContent=RECIPES.length;
   el('hLoreMax').textContent=LORE.length;
+  el('hGoal').textContent=GOAL;
   resize(); updateHUD();
   el('boot').remove();
   if(localStorage.getItem('edf_seen')){ state.paused=false; state.started=true; }
@@ -2654,8 +2751,9 @@ Promise.all([
 window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid,chests,torches,mobs,
   CHARS,TRADES,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
-  POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,WARES,marketTake,
-  openMarket,pickWare,get marketChar(){return marketChar;},
+  POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,SHOP,PRICES,GOAL,
+  openMarket,sellTo,buyFrom,earn,regrowing,updateRegrow,REGROW,
+  get marketChar(){return marketChar;},
   get aimed(){return aimed;},
   blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
   give:(id,n)=>give(id,n), take,countOf,

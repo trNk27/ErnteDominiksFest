@@ -35,11 +35,15 @@
   #book{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.14);border-radius:11px;
     padding:5px 10px;font-size:13px;font-weight:800;backdrop-filter:blur(6px);
-    display:flex;align-items:center;gap:3px
+    display:flex;align-items:center;gap:3px;flex-wrap:wrap
   }
   #book img{width:16px;height:16px;object-fit:contain}
   #book img:nth-of-type(2){margin-left:9px}
+  /* Die Kasse ist das Ziel, also darf sie auffallen. */
+  #book .cash{margin-left:11px;color:#ffd76a}
+  #book .goal{margin-left:8px;opacity:.8}
   #book.full{border-color:#ffd76a;color:#ffd76a}
+  #book.rich .goal{color:#7dff8a;opacity:1}
   #topbtns{margin-left:auto;display:flex;gap:6px;pointer-events:auto}
   #topbtns button{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.16);border-radius:11px;
@@ -292,6 +296,8 @@
     <div id="book">
       <img src="./sprites/items/page1.png" alt="📜"><b id="hRec">0</b>/<span id="hRecMax">0</span>
       <img src="./sprites/ui/icon_book.png" alt="📖"><b id="hLore">0</b>/<span id="hLoreMax">0</span>
+      <span class="cash">💶<b id="hCash">0</b> €</span>
+      <span class="goal">🎯<b id="hEarn">0</b>/<span id="hGoal">0</span></span>
     </div>
     <div id="topbtns">
       <button id="btnBag" title="Inventar (E)"><img src="./sprites/ui/icon_bag.png" alt="🎒"></button>
