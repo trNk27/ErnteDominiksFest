@@ -147,7 +147,7 @@ function surfaceTex(x,z,h){
 // ------------------------------------------------------------------ Zustand
 const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
   mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,trades:0,won:false,checkT:0,
-  underwater:false,money:0,earned:0,sold:0,bought:0,
+  underwater:false,money:0,earned:0,sold:0,bought:0,planted:0,
   spikes:0};                            // verworfene Maus-Ausreisser, siehe unten
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
@@ -219,6 +219,17 @@ const noiseTex=(cols,seed,extra)=>pixTex((g,s)=>{
   }
   if(extra) extra(g,s,r);
 });
+// Ein junger Trieb: Stängel, zwei Blätter, oben eine Knospe in der Farbe
+// dessen, was daraus wird. Steht unten in seiner Zelle, darum wächst er von
+// der Unterkante des Bildes nach oben.
+const sproutTex=(leaf,bud)=>pixTex(g=>{
+  g.fillStyle='#4a7a2c'; g.fillRect(7,8,2,8);
+  g.fillStyle=leaf;
+  g.fillRect(4,10,3,2); g.fillRect(9,12,3,2);
+  g.fillRect(3,9,2,1);  g.fillRect(11,11,2,1);
+  g.fillStyle=bud; g.fillRect(6,6,4,3);
+  g.fillStyle='#2e6b2b'; g.fillRect(7,15,2,1);
+});
 const TEX={
   dirt   :noiseTex(['#8a6440','#7d5937','#946d48','#6f4e30'],22),
   stone  :noiseTex(['#8e8e8e','#828282','#9a9a9a','#787878'],24),
@@ -256,6 +267,11 @@ const TEX={
     g.fillStyle='#6b7279'; g.fillRect(2,5,12,1);
   }),
   bedrock:noiseTex(['#3a3a3e','#2c2c30','#4a4a4f','#232326'],44),
+  // Ackerboden: dunkle, umgegrabene Erde mit Furchen quer darüber.
+  till   :noiseTex(['#5c3f26','#523821','#67472c','#48311d'],46,(g,s)=>{
+    g.fillStyle='#3d2917'; for(let y=2;y<s;y+=4) g.fillRect(0,y,s,1);
+    g.fillStyle='#74522f'; for(let y=3;y<s;y+=4) g.fillRect(0,y,s,1);
+  }),
   // Salzader: Fels mit hellen Kristallnestern — im Dunkeln gut zu erkennen.
   saltore:noiseTex(['#8e8e8e','#828282','#9a9a9a','#787878'],24,g=>{
     for(const [x,y] of [[2,3],[9,2],[11,7],[4,9],[6,12],[13,11]]){
@@ -263,6 +279,11 @@ const TEX={
       g.fillStyle='#c9d2ea'; g.fillRect(x,y+1,1,1); g.fillRect(x+1,y,1,1);
     }
   }),
+  // Setzlinge: ein Halm mit zwei Blättchen, freigestellt. Die Tönung sagt,
+  // was daraus wird — sonst weiß man im Beet nicht mehr, was wo steckt.
+  sprout_d:sproutTex('#7fbf4a','#e2a24c'),
+  sprout_m:sproutTex('#9fae86','#c3352e'),
+  sprout_p:sproutTex('#5fa83c','#c9302a'),
   // Pfefferstrauch: gezeichnet auf durchsichtigem Grund, weil er als
   // gekreuzte Fläche steht und nicht als Klotz.
   pepper :pixTex((g,s)=>{
@@ -294,13 +315,6 @@ const TEX={
     g.fillStyle='#f2ece0';                                  // Tupfen
     g.fillRect(4,5,2,2); g.fillRect(10,4,2,2); g.fillRect(7,3,2,2); g.fillRect(12,7,2,1);
     g.fillStyle='#8e2620'; g.fillRect(1,8,14,1);            // Hutrand als Schatten
-  }),
-  note   :noiseTex(['#e6d9b4','#ddcea3','#efe4c6'],45,(g,s)=>{
-    g.fillStyle='#8a7245'; g.fillRect(0,0,s,1); g.fillRect(0,s-1,s,1);
-    g.fillRect(0,0,1,s); g.fillRect(s-1,0,1,s);
-    g.fillStyle='#6b5a3a';
-    for(let y=4;y<12;y+=3) g.fillRect(3,y,9-(y&2),1);
-    g.fillStyle='#b03a2e'; g.fillRect(10,12,3,3);      // Wachssiegel
   }),
 };
 
@@ -384,8 +398,18 @@ const BLOCKS={
   pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
            cross:true, size:.95,sit:true, alpha:true, pass:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
+  // --- Acker und was darauf wächst
+  till   :{tex:'till',  hard:.6,  drop:'dirt',   nm:'Ackerboden'},
+  // Der gezogene Dominik hängt an keinem Baum, er sitzt im Beet.
+  bush   :{tex:'dominik',hard:0,  drop:'dominik',nm:'Dominikstrauch',
+           cross:true, size:.9, sit:true, alpha:true, pass:true},
+  sprout_d:{tex:'sprout_d',hard:0,drop:'kern',   nm:'Dominik-Setzling',
+            cross:true, size:.7, sit:true, alpha:true, pass:true},
+  sprout_m:{tex:'sprout_m',hard:0,drop:'mycel',  nm:'Pilzbrut',
+            cross:true, size:.7, sit:true, alpha:true, pass:true},
+  sprout_p:{tex:'sprout_p',hard:0,drop:'korn',   nm:'Pfeffer-Setzling',
+            cross:true, size:.7, sit:true, alpha:true, pass:true},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
-  lore   :{tex:'note',  hard:0,   drop:null,     nm:'Alte Notiz', use:'lore', noBreak:true},
 };
 // Fällt auf einen unbekannten Typ zurück, statt die Vernetzung zu sprengen:
 // eine kaputte Textur ist ein Schönheitsfehler, eine Ausnahme killt die Schleife.
@@ -409,6 +433,11 @@ const ITEMS={
   mushroom:{ic:'🍄',nm:'Pilz',        food:2},
   salt    :{ic:'🧂',nm:'Salz'},
   pepper  :{ic:'🌶️',nm:'Pfeffer'},
+  // Saatgut. seed sagt, was daraus wird: erst der Setzling, dann die Ernte.
+  kern    :{ic:'🌰',nm:'Dominikkern', seed:{sprout:'sprout_d',ripe:'bush'}},
+  mycel   :{ic:'🧫',nm:'Myzel',       seed:{sprout:'sprout_m',ripe:'shroom'}},
+  korn    :{ic:'🌾',nm:'Pfefferkorn', seed:{sprout:'sprout_p',ripe:'pepper'}},
+  hoe     :{ic:'🧑‍🌾',nm:'Hacke',       hoe:true},
   sword   :{ic:'⚔️',nm:'Steinschwert',dmg:6},
   axe     :{ic:'🪓',nm:'Steinaxt',    dmg:4, axe:true},
   pick    :{ic:'⛏️',nm:'Spitzhacke',  dmg:3, pick:true},
@@ -431,6 +460,8 @@ const ITEMS={
 // insgesamt verdient hat, nicht was in der Kasse liegt — Einkaufen bringt
 // einen also nicht zurück.
 const GOAL=10000;
+// Was beim Pflücken an Saatgut abfällt — der Anfang jedes Beetes.
+const SEED_OF={dominik:'kern',bush:'kern',shroom:'mycel',pepper:'korn'};
 // Was Manni annimmt und was er dafür zahlt. Die Frucht ist der Cent, die
 // Suppe der große Schein; die beiden Gerichte liegen dazwischen, damit sich
 // der Kochtopf auch lohnt, bevor man das Suppenrezept hat.
@@ -482,6 +513,7 @@ const RECIPES=[
   {id:'pick',  rank:7, out:['pick',1],  pat:['SSS',' K ',' K '], key:{S:'stone',K:'stick'}},
   {id:'axe',   rank:8, out:['axe',1],   pat:['SS ','SK ',' K '], key:{S:'stone',K:'stick'}},
   {id:'pot',   rank:9, out:['pot',1],   pat:['S S','S S','SPS'], key:{S:'stone',P:'plank'}},
+  {id:'hoe',   rank:3, out:['hoe',1],   pat:['SS ',' K ',' K '], key:{S:'stone',K:'stick'}},
   // Gerichte. Sie entstehen nur im Kochtopf und nur mit Rezept — das gibt es
   // bei den Jannessen, nicht durch Herumprobieren. Im Topf liegt alles
   // durcheinander, darum zählt hier die Zutatenliste und kein Muster.
@@ -500,7 +532,8 @@ const RECIPES=[
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
                      'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
-                     'compote','panfry','soup','junk','boat','board','glider']);
+                     'compote','panfry','soup','junk','boat','board','glider',
+                     'hoe','kern','mycel','korn']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
 const ICON_ALT={dominik:'dominik_face'};
 const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':null;
@@ -513,6 +546,8 @@ function itemNote(id){
   if(it.axe) p.push('🪓 schnell bei Holz');
   if(it.pick) p.push('⛏️ schnell bei Stein');
   if(it.torch) p.push('🔥 hält Bennis fern');
+  if(it.hoe) p.push('🧑‍🌾 macht Gras und Erde zu Acker');
+  if(it.seed) p.push('🌱 auf Acker säen — wird zu '+ITEMS[BLOCKS[it.seed.ripe].drop].nm);
   if(it.boat) p.push('🛶 trägt dich übers Wasser');
   if(it.board) p.push('🛹 doppelt so flott an Land');
   if(it.glide) p.push('🪂 lässt dich sanft herabsegeln');
@@ -559,49 +594,6 @@ function needList(rows){
   return n;
 }
 const haveAll=rows=>{ const n=needList(rows); for(const id in n) if(countOf(id)<n[id]) return false; return true; };
-
-// ------------------------------------------------------------------ Notizen
-// Liegen als Zettel draußen in der Welt: auf den Dorfplätzen, an den Furten,
-// oben auf den Bergen. Die Reihenfolge ist die Fundreihenfolge: [0] liegt am
-// Startpunkt, [1..3] in den Dörfern, [4,5] auf den Bergen, [6,7] an den
-// Furten, der Rest verstreut. Was weiterhilft, steht darum vorn — Rechnung,
-// Rezepte und Nachwachsen liegen dort, wo man ohnehin vorbeikommt.
-const LORE=[
-  {t:'Wie es anfing',    s:'Das Tal war leer, bis <b>Dominik</b> kam und einen Kern in die Erde drückte. '+
-                           'Am nächsten Morgen stand da ein Baum, und an dem Baum hing er selbst — in klein und rund.'},
-  {t:'Die Rechnung',     s:'Manni sagt, das Fest müsse sich <b>rechnen</b>: <b>10 000 €</b>, dann sei genug. '+
-                           'Ein 🍑 Dominik bringt einen Euro, ein Topf <b>🍲 Suppe</b> hundert. '+
-                           'Rechne selbst, wieviel das Kochen wert ist.'},
-  {t:'Von den Jannessen',s:'Sie schreiben nichts auf, sie zeigen es. Bring einem <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> '+
-                           'oder etwas Gekochtes, und er hält dir das <b>📜 Rezept</b> hin, bis du es dir gemerkt hast.'},
-  {t:'Vom Nachwachsen',  s:'Nimm ruhig, was hängt. Es dauert ein Weilchen, dann trägt derselbe Zweig wieder, '+
-                           'und der Pilz steht auch wieder da. <b>Das Feld geht nicht aus</b> — nur die Geduld.'},
-  {t:'Der lange Weg',    s:'Das Suppenrezept kennt nur noch einer, und der wollte seine Ruhe. '+
-                           'Er sitzt <b>hinter dem Fluss</b>, wo der Pfeffer wächst. Und er will erst zwei Gerichte sehen.'},
-  {t:'Das Fest',         s:'Einmal im Jahr wurde geerntet und gekocht, und das hieß <b>ErnteDominiksFest</b>. '+
-                           'Es gab genau einen Topf Suppe, und jeder bekam einen Schluck. Mehr brauchte es nicht.'},
-  {t:'Über die Bennis',  s:'Sie kommen mit der Dunkelheit und gehen mit dem Licht, und niemand weiß, wo sie tagsüber stecken. '+
-                           'Eine <b>🔥 Fackel</b> hält sie weit weg. Eine zwei Blöcke hohe Mauer auch.'},
-  {t:'Der letzte Eintrag',s:'Ich hatte den <b>🍲 Kochtopf</b> schon aufgestellt: oben drei <b>🍑 Dominiks</b>, '+
-                           'in der Mitte zwei <b>🍄 Pilze</b> mit dem <b>🧂 Salz</b> dazwischen, unten die <b>🥣 Schale</b> '+
-                           'zwischen zwei <b>🌶️ Pfeffern</b>. Dann kam die Nacht. Wenn du das liest: koch sie fertig.'},
-  {t:'Vom Salz',         s:'Im Sand ist keines mehr. Es sitzt <b>tief im Fels</b>, in hellen Nestern, die im Dunkeln blitzen. '+
-                           'Nimm die <b>⛏️ Spitzhacke</b> und grab dich hinunter.'},
-  {t:'Vom Pfeffer',      s:'Diesseits wächst er nicht, das haben wir oft genug versucht. '+
-                           'Nur <b>hinter dem Fluss</b> steht er, kniehoch und rot. Such dir eine Furt.'},
-  {t:'Die Dörfer',       s:'Drei sind übrig. Sie stehen auf flachem Grund, man sieht sie von weitem. '+
-                           'In jedem wohnt ein Jannes, und der wartet in einem der Häuser.'},
-  {t:'Die Ernte',        s:'Man pflückt nicht von jedem Baum. Nur jeder fünfte trägt, und der trägt reichlich. '+
-                           'Wer alles abräumt, hat im nächsten Jahr nichts — also lass etwas hängen.'},
-  {t:'Von den Pilzen',   s:'Sie stehen im Schatten der Wälder, immer ein paar Schritte neben einem Baum. '+
-                           'Zwei genügen für den Topf. Der Rest ist Abendessen.'},
-  {t:'Die Schale',       s:'Drei Bretter im Bogen: links eins, rechts eins, unten in die Mitte das dritte. '+
-                           'Kein Kunststück — aber ohne sie hast du nichts, wo die Suppe hineinkann.'},
-  {t:'Von der Werkbank', s:'Vier Bretter im Quadrat, und aus zwei mal zwei werden drei mal drei. '+
-                           'Alles Größere geht nur dort. Stell sie hin, wo du sie wiederfindest.'},
-];
-const lore=new Set();                              // gelesene Notizen
-const loreAt=new Map();                            // "x,y,z" → Index in LORE
 
 // ------------------------------------------------------------------ Weltdaten
 const scenery=new Map();                 // "x,y,z" → Blocktyp (Bäume, Häuser, Truhen)
@@ -713,7 +705,7 @@ function treeSpot(x,z){
 }
 const chestSpots=[];
 const houseSpots=[];                     // Stube im zweiten Haus jedes Dorfes
-const traderSpots=[];                    // wo die Jannessen stehen, in TRADES-Reihenfolge
+const traderSpots=[];                    // wo die Jannessen stehen
 (function landscape(){
   // --- Dörfer: je vier Häuschen um einen gepflasterten Platz. Ins erste
   // kommt die Truhe, im zweiten wartet ein Jannes.
@@ -822,7 +814,7 @@ const traderSpots=[];                    // wo die Jannessen stehen, in TRADES-R
   // den Dorfhäusern, der Rest verteilt sich über die Welt: einer weit
   // draußen, einer an einer Furt, einer auf einem Berg und der letzte hinter
   // dem Fluss beim Pfeffer. Reihenfolge und Inhalt hängen zusammen — der
-  // k-te Platz gehört zum k-ten Handel in TRADES.
+  // k-te Platz gehört zum k-ten Jannes.
   const freeSpot=(x,z)=>{
     const h=terrainH(x,z);
     return h>SEA&&!scenery.has(K(x,h,z))&&!scenery.has(K(x,h+1,z));
@@ -842,8 +834,6 @@ const traderSpots=[];                    // wo die Jannessen stehen, in TRADES-R
   // wäre ein verlorenes Rezept, darum hat jede Suche eine Rückfallebene.
   const grass=(x,z)=>treeSpot(x,z)>=0;
   const far  =(x,z)=>Math.hypot(x-SPAWN.x,z-SPAWN.z)>44;
-  // Der erste steht sichtbar im Tal, aber weit genug von der Notiz am
-  // Startpunkt weg: sonst schiebt sein Bannkreis die Notiz woanders hin.
   traderSpots.push({x:SPAWN.x+7,z:SPAWN.z-1}, ...houseSpots);
   for(const q of [
     [(x,z)=>far(x,z)&&grass(x,z), far, ()=>true],
@@ -852,43 +842,6 @@ const traderSpots=[];                    // wo die Jannessen stehen, in TRADES-R
     [(x,z)=>beyondRiver(x,z)&&grass(x,z), beyondRiver, far, ()=>true],
   ]) traderSpots.push(findSpot(...q)||{x:SPAWN.x,z:SPAWN.z-8});
 
-  // --- Notizen in der Welt verteilen. Erst die Orte, an denen man ohnehin
-  // vorbeikommt, dann der Rest — die Reihenfolge entscheidet, welcher Text
-  // wo landet (siehe LORE).
-  const loreSpots=[];
-  const noteHere=(x,z)=>{
-    x=Math.round(x); z=Math.round(z);
-    if(loreSpots.length>=LORE.length) return false;
-    if(x<BOUND.x0+3||x>BOUND.x1-3||z<BOUND.z0+3||z>BOUND.z1-3) return false;
-    const y=terrainH(x,z);
-    if(y<SEA||scenery.has(K(x,y,z))) return false;   // y===SEA ist das flache Starttal
-    if(chestSpots.some(s=>Math.abs(s.x-x)<2&&Math.abs(s.z-z)<2)) return false;
-    if(traderSpots.some(s=>Math.hypot(s.x-x,s.z-z)<3)) return false;
-    if(loreSpots.some(s=>Math.hypot(s.x-x,s.z-z)<10)) return false;
-    loreSpots.push({x,y,z});
-    return true;
-  };
-  noteHere(SPAWN.x+4,SPAWN.z-4);                       // gleich am Startpunkt
-  for(const v of VILLAGES) noteHere(v.x+3,v.z+4);      // neben dem Dorfplatz
-  const peaks=[];                                      // die zwei höchsten Gipfel
-  for(let x=BOUND.x0+4;x<=BOUND.x1-4;x+=3)
-    for(let z=BOUND.z0+4;z<=BOUND.z1-4;z+=3){
-      const h=terrainH(x,z);
-      if(h>=16) peaks.push({x,z,h});
-    }
-  peaks.sort((a,b)=>b.h-a.h);
-  for(let k=0,n=0;k<peaks.length&&n<2;k++) if(noteHere(peaks[k].x,peaks[k].z)) n++;
-  for(let k=0,n=0;k<4000&&n<2;k++){                    // an den Furten
-    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6)), z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
-    if(riverAt(x,z).d>RIVER_W+3||terrainH(x,z)<=SEA) continue;
-    if(noteHere(x,z)) n++;
-  }
-  for(let k=0;k<9000&&loreSpots.length<LORE.length;k++){   // und verstreut
-    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6)), z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
-    if(treeSpot(x,z)<0) continue;
-    noteHere(x,z);
-  }
-  loreSpots.forEach((s,i)=>{ put('lore',s.x,s.y,s.z); loreAt.set(K(s.x,s.y,s.z),i); });
 })();
 
 // ------------------------------------------------------------------ Chunk-Vernetzung
@@ -1014,27 +967,37 @@ function flushChunks(){
   _dirtyChunks.clear();
   for(const k of todo){ const [i,j]=k.split(',').map(Number); buildChunk(i,j); }
 }
-// ------------------------------------------------------------------ Nachwachsen
-// Ohne Nachschub wäre das Ziel nicht zu schaffen: in der ganzen Welt hängen
-// nur ein paar hundert Früchte, und zehntausend Euro sind viele Ernten.
-// Geerntetes kommt darum nach einer Weile an derselben Stelle wieder — die
-// Welt ist ein Feld, kein Vorrat. Gesetzte Blöcke wachsen natürlich nicht
-// nach, nur was von Anfang an dort stand.
-const REGROW=42;                         // Sekunden, plus etwas Streuung
-const regrowing=[];                      // {k,at}
-function scheduleRegrow(x,y,z,t){
-  if(scenery.get(K(x,y,z))!==t) return;
-  regrowing.push({k:K(x,y,z),at:state.t+REGROW*rnd(.75,1.35)});
+// ------------------------------------------------------------------ Ackerbau
+// Gehackt wird Gras oder Erde, gesät auf den Acker. Aus dem Setzling wird
+// nach einer Weile die Ernte — und die gibt Saatgut für das nächste Beet.
+// So ersetzt das Feld, was früher von selbst nachgewachsen ist.
+const GROW=50;                           // Sekunden bis zur Reife, plus Streuung
+const growing=new Map();                 // "x,y,z" → {to,at}
+function till(cell){
+  const t=blockAt(cell.x,cell.y,cell.z);
+  if(t!=='grass'&&t!=='dirt') return false;
+  if(blockAt(cell.x,cell.y+1,cell.z)) return false;
+  setBlock(cell.x,cell.y,cell.z,'till');
+  SND.dig();
+  return true;
 }
-function updateRegrow(){
-  for(let i=regrowing.length-1;i>=0;i--){
-    const r=regrowing[i];
-    if(state.t<r.at) continue;
-    regrowing.splice(i,1);
-    if(edits.get(r.k)!==null) continue;  // dort steht inzwischen etwas anderes
-    edits.delete(r.k);                   // die Kulisse scheint wieder durch
-    const [x,,z]=r.k.split(',').map(Number);
-    markDirty(x,z);
+function plantSeed(cell,it){
+  const {x,y,z}=cell;
+  if(blockAt(x,y,z)!=='till'||blockAt(x,y+1,z)) return false;
+  setBlock(x,y+1,z,it.seed.sprout);
+  growing.set(K(x,y+1,z),{to:it.seed.ripe,at:state.t+GROW*rnd(.8,1.3)});
+  state.planted++;
+  SND.place();
+  return true;
+}
+function updateGrow(){
+  for(const [k,g] of growing){
+    if(state.t<g.at) continue;
+    growing.delete(k);
+    const [x,y,z]=k.split(',').map(Number);
+    // Weggehackt oder überbaut? Dann wächst da auch nichts mehr.
+    if(!String(blockAt(x,y,z)||'').startsWith('sprout')) continue;
+    setBlock(x,y,z,g.to);
   }
 }
 function setBlock(x,y,z,type){
@@ -1320,46 +1283,67 @@ function updatePots(dt){
 }
 
 // ------------------------------------------------------------------ Bewohner
-// Die Handelskette. want ist, was ein Jannes sehen will, give das Rezept, das
-// er dafür zeigt. Die Reihenfolge ist zugleich die Reihenfolge der Plätze
-// (siehe traderSpots) und damit der Weg durchs Spiel: erst Schale und
-// Kochtopf, dann die beiden Gerichte, damit tauscht man den Rest ein.
-// ask steht im Fenster, hint in der Sprechblase — die fasst nur drei kurze
-// Zeilen, ein ganzer Satz wäre dort abgeschnitten.
-const TRADES=[
-  {want:[['dominik',3]],  give:'bowl',  hint:'Drei Dominiks, und ich zeig dir was.',
-   ask:'Drei Dominiks für den Winter — dafür zeig ich dir, woraus man isst.'},
-  {want:[['mushroom',4]], give:'pot',   hint:'Vier Pilze für ein gutes Rezept.',
-   ask:'Vier Pilze, und du weißt, worin man kocht.'},
-  {want:[['dominik',5]],  give:'compote',hint:'Fünf Dominiks — dann wird es süß.',
-   ask:'Fünf Dominiks. Dann verrate ich dir, was Süßes daraus wird.'},
-  {want:[['mushroom',6]], give:'panfry',hint:'Sechs Pilze, und die Pfanne ist dein.',
-   ask:'Sechs Pilze für das beste Pfannengericht diesseits des Flusses.'},
-  {want:[['compote',1]],  give:'pick',  hint:'Bring mir ein Kompott.',
-   ask:'Ein Kompott, und du kriegst das Werkzeug für den Fels.'},
-  {want:[['panfry',1]],   give:'axe',   hint:'Eine Pilzpfanne, bitte.',
-   ask:'Einmal Pilzpfanne. Dafür fällst du Bäume, als wären es Halme.'},
-  {want:[['dominik',2],['mushroom',2]], give:'sword', hint:'Zwei Dominiks, zwei Pilze.',
-   ask:'Hier oben wird es nachts ungemütlich. Bring mir was zu essen, '+
-       'ich zeig dir was zum Wehren.'},
-  {want:[['compote',1],['panfry',1]],   give:'soup',  hint:'Kompott und Pfanne. Dann reden wir.',
-   ask:'Du willst das Suppenrezept? Dann koch mir erst beides vor: Kompott und Pfanne.'},
-];
 const CHARS=[
   {key:'manni',name:'Manni-Markt',h:1.9,x:MARKET.x,z:MARKET.z,color:'#ff6b4a',
-   market:true,
+   market:true, tag:true, roam:1,
    lines:['Dominiks? Einen Euro das Stück, wirf sie mir hin.',
           'Die Suppe zahlt hundert. Hundert!',
           'Boot, Brett und Schirm — bauen kannst du die nicht.',
-          'Rezepte gibt es nebenan bei den Jannessen.']},
+          'Rezepte gibt es draußen bei den Jannessen.']},
 ];
-// Alle heißen Jannes, alle sehen gleich aus, alle wollen etwas anderes.
-TRADES.forEach((t,i)=>{
-  const s=traderSpots[i];
-  if(!s) return;
-  CHARS.push({key:'jannes',name:'Jannes',h:1.88,x:s.x,z:s.z,color:'#4ab0ff',
-    trade:{...t,done:false}, lines:[t.hint]});
+
+// ------------------------------------------------------------------ Angebote
+// Jedes Rezept ist bei irgendeinem Jannes zu haben, und keines zweimal: was
+// einer aushängen hat, bietet der nächste nicht an. Nach einem Handel
+// überlegt er sich eine Weile etwas Neues — und wird dabei jedes Mal ein
+// bisschen gieriger.
+const REFRESH=40;                        // Sekunden bis zum nächsten Angebot
+const OFFER_RND=mulberry(20260101);      // eigene Formel: Angebote bleiben reproduzierbar
+const RAW=['dominik','mushroom','pepper'];
+function offerWant(r,round){
+  if(r.id==='soup') return [['compote',1+round],['panfry',1+round]];
+  const grow=1+round*.7;
+  const base=r.rank>=10?7:r.rank>=6?5:3;
+  // Pfeffer verlangt nur, wer schon Werkzeug hergibt — vorher war man kaum
+  // hinter dem Fluss.
+  const pool=r.rank>=6?RAW:RAW.slice(0,2);
+  const id=pool[Math.floor(OFFER_RND()*pool.length)];
+  return [[id,Math.max(1,Math.round(base*grow))]];
+}
+function setOffer(c,r,round){
+  c.trade=r?{give:r.id,want:offerWant(r,round),done:false,round,readyAt:0}
+           :{give:null,want:[],done:false,round,readyAt:0};
+}
+function makeOffer(c,round){
+  const taken=new Set(CHARS.filter(o=>o!==c&&o.trade&&o.trade.give&&!o.trade.done)
+                           .map(o=>o.trade.give));
+  const pool=RECIPES.filter(r=>!known.has(r.id)&&!taken.has(r.id));
+  setOffer(c,pool.length?pool[Math.floor(OFFER_RND()*pool.length)]:null,round);
+}
+const offerAsk=c=>{
+  const t=c.trade;
+  if(!t.give) return 'Mehr hab ich dir nicht zu zeigen. Frag einen anderen von uns.';
+  const w=t.want.map(([id,n])=>n+'× '+ITEMS[id].nm).join(' und ');
+  return 'Bring mir '+w+', dann zeig ich dir, wie das nächste geht.';
+};
+const offerHint=c=>{
+  const t=c.trade;
+  if(t.done) return 'Lass mir einen Moment, mir fällt schon was ein.';
+  if(!t.give) return 'Ich hab dir alles gezeigt.';
+  return t.want.map(([id,n])=>n+'× '+ITEMS[id].nm).join(', ')+'?';
+};
+// Alle heißen Jannes, alle sehen gleich aus. Die in den Dorfhäusern haben
+// wenig Platz, die draußen dürfen weiter umherstreifen.
+const traders=traderSpots.map((s,i)=>{
+  const c={key:'jannes',name:'Jannes',h:1.88,x:s.x,z:s.z,color:'#4ab0ff',
+           tag:false, roam:i>=1&&i<=3?1.1:3.2, home:{x:s.x,z:s.z}, trade:null};
+  CHARS.push(c);
+  return c;
 });
+// Der im Tal fängt mit der Hacke an — ohne sie gibt es kein Feld und damit
+// keinen Nachschub. Der Rest wird ausgelost.
+setOffer(traders[0],RECIPES.find(r=>r.id==='hoe'),0);
+for(let i=1;i<traders.length;i++) makeOffer(traders[i],0);
 const texLoader=new THREE.TextureLoader();
 const loadTex=url=>new Promise((res,rej)=>texLoader.load(url,t=>{
   t.colorSpace=THREE.SRGBColorSpace;
@@ -1403,11 +1387,15 @@ function setupChars(){
     const bb=new THREE.Mesh(new THREE.PlaneGeometry(c.h*asp,c.h),
       new THREE.MeshLambertMaterial({map:c.tex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
     bb.position.y=c.h/2; bb.castShadow=true; g.add(bb); billboards.push(bb);
-    const tag=makeLabel(c.name,c.color,.3); tag.position.y=c.h+.28; g.add(tag);
+    // Nur wer einen Laden hat, trägt ein Schild. Die Jannessen erkennt man
+    // am Fadenkreuz, wenn man vor ihnen steht.
+    let tag=null;
+    if(c.tag){ tag=makeLabel(c.name,c.color,.3); tag.position.y=c.h+.28; g.add(tag); }
     const bubble=makeLabel('','#fff',.5);
     bubble.position.y=c.h+1; bubble.visible=false; g.add(bubble);
     scene.add(g);
-    Object.assign(c,{group:g,bb,tag,bubble,bubbleT:0,sayT:rnd(8,20)});
+    Object.assign(c,{group:g,bb,tag,bubble,bubbleT:0,sayT:rnd(8,20),
+                     home:c.home||{x:c.x,z:c.z},tx:null,waitT:rnd(1,5)});
   }
 }
 function say(c,txt,ms=4200){
@@ -1484,20 +1472,51 @@ function openMarket(c){
     <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
 }
 
-const DONE_LINES=['Gut gehandelt. Das Rezept hast du ja jetzt.',
-                  'Frag ruhig nochmal nach, ich zeig es dir wieder.',
-                  'Mehr hab ich nicht — geh weiter, es gibt noch andere von uns.'];
 const _wp=new THREE.Vector3();
+// Ein bisschen Umhergehen: ein Ziel in der Nähe des Standplatzes, gemächlich
+// hin, kurz stehen bleiben. Nur auf gleicher Höhe und nur auf freien Grund,
+// sonst liefe der Jannes durch die Hauswand oder den Hang hinauf.
+function wander(c,dt){
+  if(!c.roam) return;
+  if(c.tx==null){
+    c.waitT-=dt;
+    if(c.waitT>0) return;
+    for(let k=0;k<8;k++){
+      const a=rnd(0,6.28), d=rnd(.6,c.roam);
+      const tx=c.home.x+Math.cos(a)*d, tz=c.home.z+Math.sin(a)*d;
+      const y=surfaceAt(tx,tz);
+      if(Math.abs(y-c.y)>1) continue;
+      if(fillsAt(Math.round(tx),y,Math.round(tz))) continue;
+      c.tx=tx; c.tz=tz; break;
+    }
+    return;
+  }
+  const dx=c.tx-c.x, dz=c.tz-c.z, d=Math.hypot(dx,dz);
+  if(d<.12){ c.tx=null; c.waitT=rnd(2.5,7); return; }
+  const st=Math.min(d,.85*dt);
+  c.x+=dx/d*st; c.z+=dz/d*st;
+  const y=surfaceAt(c.x,c.z);
+  c.y=Math.abs(y-c.y)>2?y:lerp(c.y,y,Math.min(1,dt*9));
+  c.group.position.set(c.x,c.y,c.z);
+}
 function updateChars(dt){
   for(const c of CHARS){
     if(!c.group) continue;
-    // Namensschilder hängen vor der Landschaft. Bei einem Bewohner ist das
-    // hilfreich, bei neun quer über die Welt wäre es ein Schilderwald.
-    c.tag.visible=Math.hypot(player.x-c.x,player.z-c.z)<26;
+    wander(c,dt);
+    // Das Ladenschild hängt vor der Landschaft — quer über die Welt sichtbar
+    // wäre es zu viel, in Rufweite ist es die Wegmarke zum Markt.
+    if(c.tag) c.tag.visible=Math.hypot(player.x-c.x,player.z-c.z)<26;
+    // Nach einem Handel überlegt er eine Weile und hat dann etwas Neues.
+    const t=c.trade;
+    if(t&&t.done&&state.t>=t.readyAt){
+      makeOffer(c,t.round+1);
+      if(c.trade.give&&Math.hypot(player.x-c.x,player.z-c.z)<20)
+        say(c,'Mir ist was Neues eingefallen!',3600);
+    }
     c.sayT-=dt;
     if(c.sayT<=0){ c.sayT=rnd(22,45);
       if(Math.hypot(player.x-c.x,player.z-c.z)<14)
-        say(c,pick(c.trade?.done?DONE_LINES:c.lines),4200);
+        say(c,c.trade?offerHint(c):pick(c.lines),4200);
     }
     if(c.bubbleT>0){ c.bubbleT-=dt; if(c.bubbleT<=0) c.bubble.visible=false; }
   }
@@ -1749,7 +1768,6 @@ function breakBlock(x,y,z,t){
       pots.delete(K(x,y,z));
     }
   }
-  if(b.cross) scheduleRegrow(x,y,z,t);        // Geerntetes kommt wieder
   setBlock(x,y,z,null);
   state.mined++;
   SND.pop();
@@ -1759,6 +1777,16 @@ function breakBlock(x,y,z,t){
   }
   // Nichts springt mehr direkt in den Rucksack: es fällt heraus und liegt da.
   if(drop) spawnDrop(drop,1,x,y+.3,z,rnd(-.7,.7),1.6,rnd(-.7,.7),.25);
+  // Ernte gibt Saatgut. Auf dem Acker gezogen fällt mehr ab als in der
+  // Wildnis — sonst käme man vom Sammeln nie zum Anbauen.
+  const sd=SEED_OF[t];
+  if(sd){
+    const farmed=blockAt(x,y-1,z)==='till';
+    let n=farmed?1:0;
+    if(Math.random()<(farmed?.7:.45)) n++;
+    if(n) spawnDrop(sd,n,x,y+.3,z,rnd(-.7,.7),1.4,rnd(-.7,.7),.25);
+  }
+  growing.delete(K(x,y,z));
   // Baumkronen ohne Stamm fallen nicht — Laub bleibt hängen, wie im Vorbild.
   updateHUD();
 }
@@ -1790,9 +1818,15 @@ function useRight(){
     if(u==='chest') return openChest(target.cell);
     if(u==='bench') return openCraft('bench');
     if(u==='pot')   return usePot(target.cell);
-    if(u==='lore')  return readLore(target.cell);
   }
-  // 3. Essen
+  // 3. Hacken und säen — vor dem Essen, sonst isst man die Saat auf
+  if(it&&it.hoe&&target){ till(target.cell); return; }
+  if(it&&it.seed&&target){
+    if(plantSeed(target.cell,it)) consumeHeld(); else SND.fail();
+    updateHUD();
+    return;
+  }
+  // 4. Essen
   if(it&&it.food){
     if(player.food>=player.maxfood&&player.hp>=player.maxhp){ toast('😋 Du bist satt.','',1200); return; }
     player.food=clamp(player.food+it.food,0,player.maxfood);
@@ -1800,7 +1834,7 @@ function useRight(){
     consumeHeld(); SND.eat(); updateHUD();
     return;
   }
-  // 4. Fackel setzen
+  // 5. Fackel setzen
   if(it&&it.torch&&target){
     const p=target.place;
     if(!canPlaceAt(p.x,p.y,p.z)||!blockAt(p.x,p.y-1,p.z)) return;
@@ -1808,7 +1842,7 @@ function useRight(){
     emitTorches(); consumeHeld(); SND.place(); updateHUD();
     return;
   }
-  // 5. Block setzen
+  // 6. Block setzen
   if(it&&it.block&&target){
     const p=target.place;
     if(!canPlaceAt(p.x,p.y,p.z)) return;
@@ -1935,10 +1969,14 @@ function tradeOK(t){ return t.want.every(([id,n])=>countOf(id)>=n); }
 function openTrade(c){
   const t=c.trade;
   if(t.done) return recipeCard(RECIPES.find(x=>x.id===t.give),c.name);
+  // Nichts mehr anzubieten: das kommt vor, wenn man schon alles kennt.
+  if(!t.give) return showModal(`<h2>${c.name}</h2>
+    <p style="text-align:center;font-size:13px">${offerAsk(c)}</p>
+    <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
   tradePartner=c;
   const ok=tradeOK(t);
   showModal(`<h2>${c.name}</h2>
-    <p style="text-align:center;font-size:13px">${t.ask}</p>
+    <p style="text-align:center;font-size:13px">${offerAsk(c)}</p>
     <div class="patwrap">
       <div class="pat" style="grid-template-columns:repeat(${t.want.length},30px)">`+
       t.want.map(([id,n])=>`<div class="pc" data-want="${id}">${icon(id)}<span class="n">${n}</span></div>`).join('')+
@@ -1953,25 +1991,15 @@ function openTrade(c){
 }
 function doTrade(){
   const c=tradePartner;
-  if(!c||c.trade.done) return;
+  if(!c||c.trade.done||!c.trade.give) return;
   const t=c.trade;
   if(!tradeOK(t)){ SND.fail(); return; }
   for(const [id,n] of t.want) take(id,n);
-  t.done=true; state.trades++;
+  // Er braucht danach eine Weile, bis ihm das nächste Rezept einfällt.
+  t.done=true; t.readyAt=state.t+REFRESH; state.trades++;
   SND.chest();
   say(c,'Danke. Schau her — so geht das.',5000);
   learnRecipe(t.give,c.name);
-}
-
-// ------------------------------------------------------------------ Notizen lesen
-function readLore(cell){
-  const i=loreAt.get(K(cell.x,cell.y,cell.z));
-  if(i==null) return;
-  const l=LORE[i];
-  if(!lore.has(i)){ lore.add(i); SND.book(); updateHUD(); }
-  showModal(`<h2>📖 ${l.t}</h2><div class="page">${l.s}</div>
-    <p style="font-size:12px;opacity:.8;text-align:center">${lore.size}/${LORE.length} Notizen gelesen.</p>
-    <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
 }
 
 // ------------------------------------------------------------------ Sieg
@@ -1984,8 +2012,8 @@ function winGame(){
     das Fest hat sich gerechnet.</p>
     <p style="font-size:12px;opacity:.8">💶 ${state.earned} € verdient · 🛒 ${state.sold} Stück verkauft ·
     ${state.bought}× eingekauft · ⛏️ ${state.mined} Blöcke abgebaut · 🧱 ${state.placed} gesetzt ·
-    🤝 ${state.trades}/${TRADES.length} Handel · 🧰 ${state.chests} Truhen ·
-    📜 ${known.size}/${RECIPES.length} Rezepte · 📖 ${lore.size}/${LORE.length} Notizen ·
+    🤝 ${state.trades} Handel · 🧰 ${state.chests} Truhen · 🌱 ${state.planted} gepflanzt ·
+    📜 ${known.size}/${RECIPES.length} Rezepte ·
     🌙 Tag ${state.day} · 💀 ${state.deaths}× gestorben</p>
     <div class="btnrow"><button class="primary" data-act="close">Weiterspielen</button></div>`);
 }
@@ -2243,11 +2271,12 @@ function openIntro(){
   <b>🛶 Boot</b>, <b>🪂 Gleitschirm</b> — in der Hand gehalten, bringen sie dich schneller
   ans Ziel. Im <b>Wasser</b> schwimmst du — <b>␣</b> hoch, <b>⇧</b> runter;
   hineinspringen tut nicht weh.</p>
-  <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der Welt.
-  Sie wollen <b>🍑 Dominiks</b>, <b>🍄 Pilze</b> oder ein fertiges Gericht und zeigen dir dafür,
-  wie das nächste geht. Zutaten baust du selbst ab: 🧂 Salz sitzt tief im Fels,
-  🌶️ Pfeffer wächst hinter dem Fluss.
-  <b>📖 Notizen</b> stehen überall herum und erzählen, wie das alles zusammenhängt.</p>
+  <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der
+  Welt. Sie wollen Essen und zeigen dir dafür, wie das nächste geht; nach einer Weile fällt
+  ihnen etwas Neues ein. Der erste im Tal zeigt dir die <b>🧑‍🌾 Hacke</b>.</p>
+  <p>Damit legst du ein <b>Feld</b> an: Boden hacken, <b>Saatgut</b> säen (das fällt beim
+  Pflücken ab), warten, ernten. Was du nicht anbaust, findest du draußen —
+  🧂 Salz tief im Fels, 🌶️ Pfeffer hinter dem Fluss.</p>
   <div class="kbd">
     <b>WASD</b> laufen &nbsp; <b>⇧</b> rennen &nbsp; <b>␣</b> springen<br>
     <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / lesen / essen<br>
@@ -2262,7 +2291,7 @@ function togglePause(){
     <p style="font-size:13px">💶 <b>${state.money} €</b> in der Kasse ·
     🎯 <b>${state.earned}</b> von ${GOAL} € verdient</p>
     <p style="font-size:12.5px;opacity:.85">📜 ${known.size}/${RECIPES.length} Rezepte ·
-    🤝 ${state.trades}/${TRADES.length} Handel · 📖 ${lore.size}/${LORE.length} Notizen ·
+    🤝 ${state.trades} Handel · 🌱 ${state.planted} gepflanzt ·
     🧰 ${state.chests} Truhen · ⛏️ ${state.mined} abgebaut · 🧱 ${state.placed} gesetzt ·
     🌙 Tag ${state.day}</p>
     <div class="btnrow">
@@ -2562,7 +2591,6 @@ function updateHUD(){
   const fs=vitalBar(player.food,player.maxfood,'food','🍗','▪️');
   if(fs!==foodCache){ foodCache=fs; el('food').innerHTML=fs; }
   el('hRec').textContent=known.size;
-  el('hLore').textContent=lore.size;
   el('hCash').textContent=state.money;
   el('hEarn').textContent=state.earned;
   el('book').classList.toggle('full',knowsSoup());
@@ -2666,7 +2694,7 @@ function update(dt){
     updateMobs(dt);
     updateDrops(dt);
     updatePots(dt);
-    updateRegrow();
+    updateGrow();
   }
   updatePlayer(dt);
   updateTarget();
@@ -2735,7 +2763,6 @@ Promise.all([
   emitTorches();
   player.y=player.viewY=surfaceAt(player.x,player.z);
   el('hRecMax').textContent=RECIPES.length;
-  el('hLoreMax').textContent=LORE.length;
   el('hGoal').textContent=GOAL;
   resize(); updateHUD();
   el('boot').remove();
@@ -2748,11 +2775,12 @@ Promise.all([
 });
 
 // ------------------------------------------------------------------ Debug-API
-window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid,chests,torches,mobs,
-  CHARS,TRADES,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
+window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,mobs,
+  CHARS,traders,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
   POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,SHOP,PRICES,GOAL,
-  openMarket,sellTo,buyFrom,earn,regrowing,updateRegrow,REGROW,
+  openMarket,sellTo,buyFrom,earn,growing,updateGrow,GROW,SEED_OF,till,plantSeed,
+  makeOffer,offerAsk,offerHint,updateChars,wander,REFRESH,
   get marketChar(){return marketChar;},
   get aimed(){return aimed;},
   blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
@@ -2760,7 +2788,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,lore,LORE,loreAt,grid
   get target(){return target;},
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,breakBlock,updatePots,
-  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,readLore,icon,iconSrc,
+  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,icon,iconSrc,
   clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
   carried(){return carry;},

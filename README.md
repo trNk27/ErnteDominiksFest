@@ -7,8 +7,9 @@ Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt si
 
 **Ziel: 10 000 €.** Ernte **🍑 Dominiks** und wirf sie **Manni** über den Tresen — einen
 Euro das Stück. Gekocht bringen sie ein Vielfaches: die **🍲 Dominik-Suppe** zahlt **100 €**.
-Ihr Rezept kennt nur noch ein **Jannes** hinter dem Fluss, und der rückt es erst heraus,
-wenn du ihm zwei fertige Gerichte vorkochst. Wer zehntausend zusammenhat, hat gewonnen.
+Das Rezept dafür hat einer der **Jannessen**, und die rücken nichts umsonst heraus. Weil
+wild nichts nachwächst, legst du dir irgendwann ein **Feld** an. Wer zehntausend
+zusammenhat, hat gewonnen.
 
 ## Spielen
 
@@ -31,7 +32,7 @@ Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wi
 | `⇧ Shift` | im Wasser **abtauchen** |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · 📖 Notiz lesen · Essen |
+| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · **hacken / säen** · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · Essen |
 | `Q` | Gegenstand einen Block weit vor sich werfen · `⇧Q` den ganzen Stapel |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
@@ -81,9 +82,8 @@ Sie werden auch nicht *abgebaut*, sondern **gepflückt**: ein Klick, und sie fal
 kein Halten, kein Fortschrittsbalken, keine Risse. Mit gedrückter Maustaste über ein
 Pilzfeld gestrichen, nimmst du eines nach dem anderen mit.
 
-**Und sie wachsen nach.** Wo du geerntet hast, hängt oder steht nach etwa einer
-Dreiviertelminute wieder etwas. Das Feld geht nicht aus — sonst wären zehntausend Euro
-auch nicht zu holen. Selbst gesetzte Blöcke wachsen natürlich nicht nach.
+**Was wild wächst, wächst nicht nach.** Beim Pflücken fällt aber **Saatgut** ab — und
+damit legst du dir dein eigenes Feld an, siehe unten.
 
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
@@ -138,6 +138,29 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | ⛏️ Spitzhacke | 🪨🪨🪨 / ·🥢· / ·🥢· | Werkbank |
 | 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
 | 🍲 Kochtopf | 🪨·🪨 / 🪨·🪨 / 🪨🟧🪨 | Werkbank |
+| 🧑‍🌾 Hacke | 🪨🪨· / ·🥢· / ·🥢· | Werkbank |
+
+## 🧑‍🌾 Das Feld
+
+Wild wächst nichts nach. Damit die Ernte nicht ausgeht, legst du dir ein **Feld** an:
+
+1. **Hacken.** Mit der 🧑‍🌾 **Hacke** in der Hand auf **Gras oder Erde** rechtsklicken —
+   daraus wird **Ackerboden**. Das Rezept zeigt dir der Jannes gleich neben dem Startpunkt.
+2. **Säen.** Mit **Saatgut** in der Hand auf den Acker rechtsklicken. Es steht ein
+   **Setzling** da, farblich passend zu dem, was daraus wird.
+3. **Warten.** Nach etwa einer Minute ist er reif.
+4. **Ernten.** Ein Klick, und Frucht *und* Saatgut fallen heraus — vom Acker mehr als
+   aus der Wildnis. Ein Feld trägt sich also selbst und wird von allein größer.
+
+| Saatgut | fällt ab beim Pflücken von | wird zu |
+|---|---|---|
+| 🌰 Dominikkern | 🍑 Dominik | **🍑 Dominikstrauch** — am Boden, nicht am Baum |
+| 🧫 Myzel | 🍄 Pilz | 🍄 Pilz |
+| 🌾 Pfefferkorn | 🌶️ Pfefferstrauch | 🌶️ Pfefferstrauch |
+
+Der gezogene Dominik hängt an keinem Stamm mehr: er sitzt als Strauch im Beet, in
+Griffhöhe. Ein Feld voll davon neben dem Kochtopf und dem Markt ist die kürzeste
+Strecke zwischen Ernte und Kasse.
 
 ## Kochen
 
@@ -209,36 +232,30 @@ Kontostand.
 
 ## Die Jannessen
 
-Überall in der Welt steht ein **Jannes** herum — im Starttal, in den Dorfhäusern, an
-einer Furt, oben auf einem Berg, hinter dem Fluss. Sie sehen alle gleich aus und heißen
-alle gleich, aber jeder will etwas anderes: **🍑 Dominiks**, **🍄 Pilze** oder ein
-fertiges **Gericht**. Rechtsklick, und er zeigt, was er haben möchte.
+Acht **Jannessen** streifen durch die Welt — einer im Starttal, drei in den Dorfhäusern,
+der Rest draußen an Furt, Berg und hinter dem Fluss. Sie sehen alle gleich aus, heißen
+alle gleich und tragen **kein Namensschild**; wer vor einem steht, sieht es am
+Fadenkreuz. Sie bleiben nicht stehen, sondern gehen ein paar Schritte umher.
 
-Was er dafür hergibt, ist ein **📜 Rezept** — und er sagt es nicht, er **zeigt** es:
-das Muster, wie es ins Raster gehört, und daneben, was dabei herauskommt. Genau dieselbe
-Karte kannst du jederzeit noch einmal sehen, wenn du ihn wieder ansprichst.
+**Jedes Rezept im Spiel gibt es bei einem von ihnen** — und keines zweimal: was der eine
+aushängen hat, bietet der andere nicht an. Rechtsklick, und er zeigt, was er dafür haben
+will: Essen, mal roh, mal gekocht. Was er hergibt, **sagt** er nicht, er **zeigt** es —
+das Muster, wie es ins Raster gehört, und daneben, was dabei herauskommt. Dieselbe Karte
+kannst du jederzeit wieder ansehen, wenn du ihn erneut ansprichst.
 
-| Er will | Er zeigt |
-|---|---|
-| 3× 🍑 | 🥣 Schale |
-| 4× 🍄 | 🍲 Kochtopf |
-| 5× 🍑 | 🍯 Dominik-Kompott |
-| 6× 🍄 | 🍳 Pilzpfanne |
-| 1× 🍯 | ⛏️ Spitzhacke |
-| 1× 🍳 | 🪓 Axt |
-| 2× 🍑 + 2× 🍄 | ⚔️ Steinschwert |
-| 1× 🍯 + 1× 🍳 | **🍲 Dominik-Suppe** |
+Nach einem Handel muss er **überlegen**: knapp eine Minute später hat er ein **neues
+Rezept** im Angebot — und will dafür mehr als beim letzten Mal. So kommst du nach und
+nach an alles heran, ohne dass ein einzelner alles auf einmal hergibt.
 
-Der Weg ist also eine Kette: erst Schale und Topf, damit die beiden Gerichte, und mit
-denen alles Weitere bis zur Suppe.
+Der **erste im Tal** zeigt immer zuerst die 🧑‍🌾 **Hacke** — ohne sie gäbe es kein Feld
+und damit keinen Nachschub. Wer irgendwann alles kennt, bekommt zu hören, dass da nichts
+mehr ist.
 
 ## Das Rezeptbuch
 
-Unter dem Raster steht, was du kennst. Ein Rezept landet auf zwei Wegen darin:
-
-1. **Eingetauscht.** Bei einem Jannes, siehe oben.
-2. **Selbst herausgefunden.** Das Raster fragt nicht, ob du das Rezept kennst — wer das
-   Muster errät, hat es gebaut und kennt es ab dann.
+Unter dem Raster steht, was du kennst. **Alle Rezepte gibt es bei den Jannessen** — sie
+sind die einzige Quelle. Wer will, kann sie auch selbst erraten: das Raster fragt nicht,
+ob du ein Rezept kennst; wer das Muster richtig legt, hat es gebaut und kennt es ab dann.
 
 Die **drei Gerichte** sind davon ausgenommen: Kompott, Pfanne und Suppe entstehen **nur
 mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekommt Pampe.
@@ -246,14 +263,6 @@ mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekom
 **🧰 Truhen** sind selten geworden — acht in der ganzen Welt — und halten nur noch
 Vorräte bereit: Bretter, Stöcke, Fackeln, Schalen, Stein, Ziegel, gelegentlich ein
 Schwert. **Zutaten liegen nicht mehr darin**, die holst du dir draußen selbst.
-
-## Notizen
-
-Überall in der Welt stehen **📖 fünfzehn Notizen** herum (Rechtsklick zum Lesen). Sie
-erzählen, wie das mit Dominik, den Bennis und dem Fest angefangen hat, und ein paar von
-ihnen helfen konkret weiter. Sie liegen dort, wo man ohnehin vorbeikommt: eine gleich am
-Startpunkt, je eine neben den drei Dorfplätzen, zwei auf den höchsten Gipfeln, zwei an
-den Furten, der Rest verstreut im Grasland. Oben links steht, wie viele du gelesen hast.
 
 ## Die Welt
 
@@ -274,7 +283,9 @@ jedem Start dieselbe, kein Speicherstand nötig.
   der Oberfläche, gut zwei Prozent des Gesteins. Ohne ⛏️ Spitzhacke wird das nichts.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
   steht eine Truhe, im zweiten wohnt ein **Jannes**.
-- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**; **15 Notizen** zum Lesen.
+- Wild wachsende **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** kommen **nicht wieder** —
+  wer dauerhaft ernten will, legt sich ein 🧑‍🌾 **Feld** an.
+- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**, die umherstreifen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen, und
   darin der **🛒 Manni-Markt**.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
