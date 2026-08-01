@@ -1231,6 +1231,34 @@ function potRecipe(p){
     r.shapeless.length===ids.length&&
     r.shapeless.slice().sort().every((v,i)=>v===ids[i]))||null;
 }
+// Steht man vor einem Topf, hängt rechts, was sich darin kochen lässt — und
+// was gerade drinliegt. Neu gebaut wird die Leiste nur, wenn sich etwas
+// geändert hat; sonst schriebe sie sich sechzigmal je Sekunde selbst neu.
+let potPanelSig='', potPanelOn=false;
+function updatePotPanel(cell){
+  const box=el('potrec');
+  if(!cell||state.paused){
+    if(potPanelOn){ potPanelOn=false; potPanelSig=''; box.classList.add('hidden'); }
+    return;
+  }
+  const p=pots.get(K(cell.x,cell.y,cell.z));
+  const dishes=RECIPES.filter(r=>r.station==='pot'&&known.has(r.id));
+  const sig=[cell.x,cell.y,cell.z,p?p.items.map(i=>i.id+'×'+i.n).join(','):'',
+             p?p.cook>0:'' ,dishes.map(r=>r.id).join(',')].join('|');
+  if(sig===potPanelSig) return;
+  potPanelSig=sig;
+  const n=p?potCount(p):0;
+  const inside=p&&p.items.length
+    ? p.items.map(i=>icon(i.id,'mini')+(i.n>1?'<b>'+i.n+'</b>':'')).join(' ')
+    : '<i style="opacity:.6">leer</i>';
+  box.innerHTML=`<h3>🍲 Kochtopf ${n}/${POT_CAP}</h3>
+    <div class="inpot">${p&&p.cook>0?'kocht gerade …':inside}</div>`+
+    (dishes.length?dishes.map(recCard).join('')
+      :'<p class="sidenote">Du kennst noch kein Gericht. Die Rezepte dafür haben die Jannessen.</p>')+
+    '<p class="sidenote">Zutaten hineinwerfen (Q), dann Rechtsklick.</p>';
+  box.classList.remove('hidden');
+  potPanelOn=true;
+}
 // Am Fadenkreuz steht, wie voll der Topf ist — sonst müsste man raten.
 function potTip(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
@@ -1686,8 +1714,10 @@ function updateTarget(){
   // Nur Bedienbares bekommt eine Beschriftung — der Rest spricht für sich.
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
+  const atPot=!aimed&&b&&b.use==='pot'?target.cell:null;
+  updatePotPanel(atPot);
   const txt=aimed?aimed.name+(aimed.trade&&!aimed.trade.done?' — Rechtsklick zum Tauschen':' — Rechtsklick')
-           :b&&b.use==='pot'?potTip(target.cell)
+           :atPot?potTip(atPot)
            :b&&b.use?b.nm+' — Rechtsklick':'';
   if(tip.textContent!==txt) tip.textContent=txt;
   el('cross').classList.toggle('hot',!!aimed||(!!target&&!!BLOCKS[target.type].use));
@@ -2019,12 +2049,16 @@ function winGame(){
 }
 
 // ------------------------------------------------------------------ Fenster
-const modal=el('modal'), mbox=el('mbox');
+const modal=el('modal'), mbox=el('mbox'), mside=el('mside');
 let craftStation=null;
-function showModal(html,keep){
-  const sc=mbox.scrollTop;
+// side ist die Rezeptleiste neben dem Fenster; ohne sie bleibt sie weg.
+function showModal(html,keep,side){
+  const sc=mbox.scrollTop, ss=mside.scrollTop;
   mbox.innerHTML=html; modal.classList.remove('hidden'); state.paused=true;
+  mside.innerHTML=side||'';
+  mside.classList.toggle('hidden',!side);
   mbox.scrollTop=keep?sc:0;              // beim Umsortieren nicht nach oben springen
+  if(keep) mside.scrollTop=ss;
   if(document.pointerLockElement) document.exitPointerLock();
 }
 function hideModal(){
@@ -2103,22 +2137,49 @@ function craftFromGrid(){
   return true;
 }
 // Aus dem Rezeptbuch: Zutaten aus dem Inventar ins Raster legen.
-function fillFromBook(r){
+// ------------------------------------------------------------------ Rezeptleiste
+// Ein Rezept als Bild: das Muster, wie es ins Raster gehört, und daneben, was
+// dabei herauskommt. Absichtlich ohne Knopf — das Hinlegen ist das Spiel.
+// Fehlt Material, steht es blass da.
+function recCard(r){
   const rows=patRows(r);
   const w=Math.max(...rows.map(x=>x.length));
-  if(r.station==='pot'){
-    toast('🍲 Das wird gekocht: Zutaten in den Topf werfen (Q).','warn',2600); return false;
-  }
-  if(rows.length>gridN||w>gridN){ toast('🛠️ Dafür brauchst du eine Werkbank.','warn',1800); return false; }
-  clearGrid();
-  const need=needList(rows);
-  for(const id in need)
-    if(countOf(id)<need[id]){ toast('Es fehlt: '+ITEMS[id].ic+' '+ITEMS[id].nm,'warn',1800); return false; }
-  rows.forEach((row,y)=>row.forEach((id,x)=>{
-    if(!id) return;
-    take(id,1); grid[y*3+x]={id,n:1};
-  }));
-  return true;
+  const cells=r.shapeless
+    ? groupCells(r.shapeless).map(([id,n])=>
+        `<div class="pc" data-want="${id}">${icon(id)}${n>1?`<span class="n">${n}</span>`:''}</div>`)
+    : null;
+  let g='';
+  if(cells) g=cells.join('');
+  else for(const row of rows) for(let x=0;x<w;x++)
+    g+=`<div class="pc">${row[x]?icon(row[x]):''}</div>`;
+  const out=ITEMS[r.out[0]];
+  return `<div class="rec${haveAll(rows)?'':' off'}">
+    <div class="rt">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
+    <div class="patwrap">
+      <div class="pat" style="grid-template-columns:repeat(${cells?cells.length:w},22px)">${g}</div>
+      <div class="arrow">➜</div>
+      <div class="pc res" data-want="${r.out[0]}">${icon(r.out[0])}</div>
+    </div></div>`;
+}
+// Neben dem Fenster steht, was sich hier bauen lässt: im Rucksack nur, was
+// ins Zweierraster passt, an der Werkbank auch alles Größere. Das Sperrige
+// zuerst — deswegen steht man ja an der Bank.
+function sideHTML(){
+  const fits=r=>{
+    if(r.station||!known.has(r.id)) return false;
+    const rows=patRows(r);
+    return rows.length<=gridN&&Math.max(...rows.map(x=>x.length))<=gridN;
+  };
+  const size=r=>{ const rows=patRows(r); return Math.max(rows.length,...rows.map(x=>x.length)); };
+  const list=RECIPES.filter(fits).sort((a,b)=>size(b)-size(a)||a.rank-b.rank);
+  const unknown=RECIPES.filter(r=>!known.has(r.id)).length;
+  return `<h3>📜 ${gridN===3?'An der Werkbank':'Im Rucksack'}</h3>`+
+    (list.length?list.map(recCard).join('')
+      :'<p class="sidenote">Hier lässt sich noch nichts bauen.</p>')+
+    (gridN===2?'<p class="sidenote">Alles, was breiter oder höher als zwei ist, '+
+      'geht nur an der 🛠️ Werkbank.</p>':'')+
+    (unknown?'<p class="sidenote">'+unknown+' Rezept'+(unknown===1?'':'e')+
+      ' kennst du noch nicht — die zeigen dir die Jannessen.</p>':'');
 }
 
 // ------------------------------------------------------------------ Fensterinhalt
@@ -2216,32 +2277,6 @@ function invGrid(){
   h+='</div>';
   return h;
 }
-// Die Kurzfassung fürs Rezeptbuch: Muster als Zeilen mit Schrägstrich,
-// Zutatenliste als Anzahl mal Bildchen.
-const patLine=r=>r.shapeless
-  ? groupCells(r.shapeless).map(([id,n])=>(n>1?n+'×':'')+icon(id,'mini')).join('<b class="sep">·</b>')
-  : patRows(r).map(row=>row.map(id=>id?icon(id,'mini'):'<i class="dot"></i>').join(''))
-              .join('<b class="sep">/</b>');
-function bookHTML(){
-  let h='', unknown=0;
-  for(const r of RECIPES.slice().sort((a,b)=>a.rank-b.rank)){
-    if(!known.has(r.id)){ unknown++; continue; }
-    const rows=patRows(r);
-    const w=Math.max(...rows.map(x=>x.length));
-    const st=r.station==='pot'?'🍲 in den Kochtopf werfen'
-            :(rows.length>gridN||w>gridN)?'🛠️ Werkbank nötig'
-            :!haveAll(rows)?'Material fehlt':'';
-    const out=ITEMS[r.out[0]];
-    h+=`<div class="recipe${st?' off':''}"><div class="ico">${icon(r.out[0])}</div>
-      <div class="txt"><div class="nm">${out.nm}${r.out[1]>1?' ×'+r.out[1]:''}</div>
-      <div class="ds">${patLine(r)}${st?' · '+st:''}</div></div>
-      <button data-craft="${r.id}"${st?' disabled':''}>Bauen</button></div>`;
-  }
-  if(unknown) h+=`<div class="recipe off"><div class="ico">❓</div><div class="txt">
-    <div class="nm">${unknown} unbekannt${unknown===1?'es Rezept':'e Rezepte'}</div>
-    <div class="ds">Jannes zeigt sie dir gegen Essen — oder leg es selbst richtig ins Raster</div></div></div>`;
-  return h;
-}
 function openCraft(station){
   clearGrid();                           // sonst stranden Zutaten in Zellen,
   craftStation=station||null;            // die das kleinere Raster nicht zeigt
@@ -2252,8 +2287,8 @@ function renderCraft(keep=true){
   const title=craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
   showModal('<h2>'+title+'</h2>'+craftHTML()+'<h3>Rucksack</h3>'+invGrid()+
     '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
-    '<h3>📜 Rezeptbuch</h3>'+bookHTML()+
-    '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',keep);
+    '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',
+    keep,sideHTML());
   drawCarry();
   updateItemTip();          // der Zeiger steht still, aber die Zelle ist neu
 }
@@ -2316,12 +2351,6 @@ mbox.addEventListener('click',e=>{
   e.stopPropagation();
   ac();
   if(b.dataset.buy){ buyFrom(b.dataset.buy); return; }
-  if(b.dataset.craft){
-    const r=RECIPES.find(x=>x.id===b.dataset.craft);
-    if(r&&fillFromBook(r)) craftFromGrid();
-    else renderCraft();
-    return;
-  }
   const act=b.dataset.act;
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='trade'){ doTrade(); return; }
@@ -2788,7 +2817,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   get target(){return target;},
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,breakBlock,updatePots,
-  learnRecipe,matchRecipe,craftFromGrid,fillFromBook,patRows,patLine,icon,iconSrc,
+  learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,updatePotPanel,icon,iconSrc,
   clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
   carried(){return carry;},

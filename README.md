@@ -117,6 +117,15 @@ Vorbild: Der angeklickte Stapel hängt am Mauszeiger, bis du ihn wieder irgendwo
 Stimmt das Muster, erscheint rechts das Ergebnis — anklicken, fertig. Was danach noch im
 Raster oder am Zeiger hängt, wandert beim Schließen zurück in den Rucksack.
 
+**Neben dem Fenster hängt die Rezeptleiste**: jedes Rezept, das du kennst, als **Bild** —
+das Muster, wie es ins Raster gehört, und daneben das Ergebnis. Fehlt dir Material, steht
+es blass da. Es gibt **keinen Bauen-Knopf**: die Leiste zeigt nur, *wie* es geht,
+hinlegen musst du es selbst. Genau das ist der Spaß daran.
+
+Sie zeigt, was **hier** möglich ist: im Rucksack nur, was ins Zweierraster passt, an der
+Werkbank auch alles Größere — und das Sperrige steht dann oben, denn deswegen bist du ja
+hingegangen.
+
 Fährst du mit dem Zeiger über einen Gegenstand, steht daneben, was er kann: wie sehr er
 sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 
@@ -168,6 +177,10 @@ Der **🍲 Kochtopf** ist kein Raster, sondern ein Topf. Stell ihn hin und **wir
 Zutaten hinein** — `Q`, während du davorstehst. Am Fadenkreuz steht, wie voll er ist;
 zwölf Sachen passen hinein. Ein **Rechtsklick** setzt ihn auf; nach ein paar Sekunden
 springt oben heraus, was daraus geworden ist.
+
+Stehst du davor und **siehst ihn an**, erscheint **rechts am Bildrand** die Liste der
+Gerichte, die du kochen kannst — mit ihren Zutaten und dem, was gerade im Topf liegt.
+Du musst also nicht ins Menü, um nachzusehen, was noch fehlt.
 
 Im Topf liegt alles durcheinander, es zählt also nur **was** hineinkommt und **wieviel** —
 keine Reihenfolge, kein Muster.
@@ -251,11 +264,15 @@ Der **erste im Tal** zeigt immer zuerst die 🧑‍🌾 **Hacke** — ohne sie g
 und damit keinen Nachschub. Wer irgendwann alles kennt, bekommt zu hören, dass da nichts
 mehr ist.
 
-## Das Rezeptbuch
+## Woher die Rezepte kommen
 
-Unter dem Raster steht, was du kennst. **Alle Rezepte gibt es bei den Jannessen** — sie
-sind die einzige Quelle. Wer will, kann sie auch selbst erraten: das Raster fragt nicht,
-ob du ein Rezept kennst; wer das Muster richtig legt, hat es gebaut und kennt es ab dann.
+**Alle Rezepte gibt es bei den Jannessen** — sie sind die einzige Quelle. Wer will, kann
+sie auch selbst erraten: das Raster fragt nicht, ob du ein Rezept kennst; wer das Muster
+richtig legt, hat es gebaut und kennt es ab dann.
+
+Was du kennst, steht danach in der **Rezeptleiste** neben dem Handwerksfeld (kleine
+Sachen im Rucksack, große an der Werkbank) beziehungsweise **rechts am Bildrand**, wenn
+du vor einem Kochtopf stehst. Oben links zählt 📜 mit, wieviele es schon sind.
 
 Die **drei Gerichte** sind davon ausgenommen: Kompott, Pfanne und Suppe entstehen **nur
 mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekommt Pampe.
