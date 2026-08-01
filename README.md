@@ -5,8 +5,9 @@ Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt si
 (rechte Maustaste), legst dir im **Raster** Werkzeug zurecht und hältst nachts die
 **Bennis** aus. Kein Punktestand, keine Aufgabenliste — nur überleben.
 
-**Ziel:** Das Rezept der **🍲 Dominik-Suppe** liegt als **📜 Zettel** in einer der
-Truhen am äußersten Rand der Welt. Wer es findet und die Suppe kocht, hat gewonnen.
+**Ziel:** Das Rezept der **🍲 Dominik-Suppe** kennt nur noch ein **Jannes**, und der
+sitzt hinter dem Fluss. Er rückt es erst heraus, wenn du ihm zwei fertige Gerichte
+vorkochst. Wer die Suppe danach zusammenbekommt, hat gewonnen.
 
 ## Spielen
 
@@ -28,7 +29,7 @@ Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wi
 | `␣ Leertaste` | springen |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | Block setzen · Truhe/Werkbank/Kochtopf benutzen · 📖 Notiz lesen · Essen |
+| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · Truhe/Werkbank/Kochtopf benutzen · 📖 Notiz lesen · Essen |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
 | `P` | Pause |
@@ -42,9 +43,10 @@ wie für die Bennis.
   Fallhöhe passiert nichts, darüber kostet jeder weitere Block. Nach einem Treffer bist
   du kurz unverwundbar. Bei 0 wachst du am Startpunkt wieder auf, behältst dein Zeug und
   hast ein paar Sekunden Ruhe, bis es weitergeht.
-- **🍗 Hunger** — läuft langsam leer. Iss 🍑 Dominiks, 🍄 Pilze oder die fertige Suppe
-  (rechte Maustaste mit dem Essen in der Hand). Ist der Balken voll, heilst du dich
-  langsam selbst; ist er leer, kostet es Leben.
+- **🍗 Hunger** — läuft langsam leer. Iss 🍑 Dominiks, 🍄 Pilze oder etwas Gekochtes
+  (rechte Maustaste mit dem Essen in der Hand): 🍯 Kompott und 🍳 Pilzpfanne sättigen
+  ordentlich, die 🍲 Suppe füllt alles auf. Ist der Balken voll, heilst du dich langsam
+  selbst; ist er leer, kostet es Leben.
 - **🌙 Nacht** — ab der Dämmerung tauchen Bennis auf. **🔥 Fackeln** halten sie in weitem
   Umkreis fern, ein ⚔️ Steinschwert räumt auf, eine zwei Blöcke hohe Mauer auch.
 
@@ -56,12 +58,14 @@ passenden Werkzeug geht es rund dreimal so schnell, Stein ohne 🪓/⛏️ dageg
 
 | Block | Ergibt | Womit schneller |
 |---|---|---|
-| 🟩 Gras / 🟫 Erde / 🟨 Sand / ❄️ Schnee | Erde, Sand, Schnee (Sand manchmal 🧂 Salz) | — |
+| 🟩 Gras / 🟫 Erde / 🟨 Sand / ❄️ Schnee | Erde, Sand, Schnee | — |
 | 🪵 Holzstamm | Holzstamm | 🪓 Axt |
 | 🍃 Laub | manchmal einen 🥢 Stock | — |
 | 🪨 Stein / 🧱 Ziegel | Stein, Ziegel | ⛏️ Spitzhacke |
+| 🧂 Salzader | Salz | ⛏️ Spitzhacke · nur tief im Fels |
 | 🍑 Dominik | Dominik (Essen + Zutat) | — · hängt hoch, bau dir was drunter |
 | 🍄 Pilz | Pilz (Essen + Zutat) | — |
+| 🌶️ Pfefferstrauch | Pfeffer | — · nur hinter dem Fluss |
 
 Gesetzt wird alles, was ein Block ist: Erde, Stein, Bretter, Ziegel, Werkbank, Kochtopf,
 Fackeln. Blöcke gehen nur an eine Fläche eines vorhandenen Blocks — nichts schwebt.
@@ -101,27 +105,53 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | ⛏️ Spitzhacke | 🪨🪨🪨 / ·🥢· / ·🥢· | Werkbank |
 | 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
 | 🍲 Kochtopf | 🪨·🪨 / 🪨·🪨 / 🪨🟧🪨 | Werkbank |
-| **🍲 Dominik-Suppe** | 🍑🍑🍑 / 🍄🧂🍄 / ·🥣· | Kochtopf, **Rezept nötig** |
+| 🍯 Dominik-Kompott | 🍑🧂🍑 / ·🥣· | Kochtopf, **Rezept nötig** |
+| 🍳 Pilzpfanne | 🍄🌶️🍄 / ·🥣· | Kochtopf, **Rezept nötig** |
+| **🍲 Dominik-Suppe** | 🍑🍑🍑 / 🍄🧂🍄 / 🌶️🥣🌶️ | Kochtopf, **Rezept nötig** |
+
+## Die Jannessen
+
+Überall in der Welt steht ein **Jannes** herum — im Starttal, in den Dorfhäusern, an
+einer Furt, oben auf einem Berg, hinter dem Fluss. Sie sehen alle gleich aus und heißen
+alle gleich, aber jeder will etwas anderes: **🍑 Dominiks**, **🍄 Pilze** oder ein
+fertiges **Gericht**. Rechtsklick, und er zeigt, was er haben möchte.
+
+Was er dafür hergibt, ist ein **📜 Rezept** — und er sagt es nicht, er **zeigt** es:
+das Muster, wie es ins Raster gehört, und daneben, was dabei herauskommt. Genau dieselbe
+Karte kannst du jederzeit noch einmal sehen, wenn du ihn wieder ansprichst.
+
+| Er will | Er zeigt |
+|---|---|
+| 3× 🍑 | 🥣 Schale |
+| 4× 🍄 | 🍲 Kochtopf |
+| 5× 🍑 | 🍯 Dominik-Kompott |
+| 6× 🍄 | 🍳 Pilzpfanne |
+| 1× 🍯 | ⛏️ Spitzhacke |
+| 1× 🍳 | 🪓 Axt |
+| 2× 🍑 + 2× 🍄 | ⚔️ Steinschwert |
+| 1× 🍯 + 1× 🍳 | **🍲 Dominik-Suppe** |
+
+Der Weg ist also eine Kette: erst Schale und Topf, damit die beiden Gerichte, und mit
+denen alles Weitere bis zur Suppe.
 
 ## Das Rezeptbuch
 
 Unter dem Raster steht, was du kennst. Ein Rezept landet auf zwei Wegen darin:
 
-1. **Gefunden.** In **🧰 Truhen** liegen **📜 Rezeptzettel**. Sie sind nach Entfernung
-   sortiert: das Alltägliche (Werkbank, Fackel) liegt in den Truhen nah am Tal, das
-   Seltenere weiter draußen. Ein Zettel geht direkt ins Buch, nicht ins Inventar.
+1. **Eingetauscht.** Bei einem Jannes, siehe oben.
 2. **Selbst herausgefunden.** Das Raster fragt nicht, ob du das Rezept kennst — wer das
-   Muster errät, hat es gebaut und kennt es ab dann. Nur die Suppe nicht.
+   Muster errät, hat es gebaut und kennt es ab dann.
 
-**Das Suppenrezept** liegt in **einer der drei entlegensten Truhen** der Welt. Ohne den
-Zettel bleibt der Kochtopf leer, egal wie richtig alles im Raster liegt.
+Die **drei Gerichte** sind davon ausgenommen: Kompott, Pfanne und Suppe entstehen **nur
+mit Rezept**. Ohne bleibt der Kochtopf leer, egal wie richtig alles im Raster liegt.
 
-Truhen enthalten außerdem Vorräte: Bretter, Stöcke, Fackeln, Salz, Pilze, Dominiks,
-Schalen, Stein — gelegentlich auch ein Schwert.
+**🧰 Truhen** sind selten geworden — acht in der ganzen Welt — und halten nur noch
+Vorräte bereit: Bretter, Stöcke, Fackeln, Schalen, Stein, Ziegel, gelegentlich ein
+Schwert. **Zutaten liegen nicht mehr darin**, die holst du dir draußen selbst.
 
 ## Notizen
 
-Überall in der Welt stehen **📖 zwölf Notizen** herum (Rechtsklick zum Lesen). Sie
+Überall in der Welt stehen **📖 dreizehn Notizen** herum (Rechtsklick zum Lesen). Sie
 erzählen, wie das mit Dominik, den Bennis und dem Fest angefangen hat, und ein paar von
 ihnen helfen konkret weiter. Sie liegen dort, wo man ohnehin vorbeikommt: eine gleich am
 Startpunkt, je eine neben den drei Dorfplätzen, zwei auf den höchsten Gipfeln, zwei an
@@ -129,7 +159,7 @@ den Furten, der Rest verstreut im Grasland. Oben links steht, wie viele du geles
 
 ## Die Welt
 
-Aus einer festen Zufallsformel entsteht eine Landschaft von **121 × 121 Blöcken** — bei
+Aus einer festen Zufallsformel entsteht eine Landschaft von **145 × 145 Blöcken** — bei
 jedem Start dieselbe, kein Speicherstand nötig.
 
 - **Berge** bis 25 Blöcke hoch, ab 9 Fels, ab 18 Schnee.
@@ -139,8 +169,13 @@ jedem Start dieselbe, kein Speicherstand nötig.
   zwei gekreuzte Flächen statt eines Klotzes, mit Dominiks Gesicht darauf. Man geht
   durch sie hindurch, und vom Boden kommt man **nicht** heran — dazu müssen zwei bis
   vier Blöcke untergebaut werden. Im Schatten stehen **🍄 Pilze**.
-- **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz.
-- **16 Truhen**, drei davon in Dörfern; **12 Notizen** zum Lesen.
+- **Hinter den Flüssen** — dem Streifen im Westen und im Norden, den man nur über eine
+  Furt erreicht — wachsen **🌶️ Pfeffersträucher** in lockeren Feldern. Diesseits keiner.
+- **Tief im Fels** sitzen **🧂 Salzadern**: helle Kristallnester, ab fünf Blöcken unter
+  der Oberfläche, gut zwei Prozent des Gesteins. Ohne ⛏️ Spitzhacke wird das nichts.
+- **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
+  steht eine Truhe, im zweiten wohnt ein **Jannes**.
+- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**; **13 Notizen** zum Lesen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
   tiefer gräbst du dich nicht.
