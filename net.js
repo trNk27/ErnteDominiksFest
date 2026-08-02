@@ -9,7 +9,7 @@
 
 // EINZIGE Stelle, die für einen echten Server angepasst werden muss:
 // lokal ein PartyKit-Dev-Server, in Produktion die deployte wss://-Adresse.
-export const PARTY_URL = 'ws://127.0.0.1:1999';
+export const PARTY_URL = 'wss://erntedominik.manigames.xyz';
 
 const CONNECT_TIMEOUT = 5000;           // ms, bis ein Verbindungsversuch als "offline" gilt
 const BACKOFFS = [2000, 5000, 10000];   // ms, Wiederverbindung nach unerwartetem Abbruch

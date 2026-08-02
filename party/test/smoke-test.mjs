@@ -1,14 +1,19 @@
-// Throwaway smoke test for the Phase 1 relay server. Not part of the app;
-// run manually against a local `partykit dev` instance:
+// Throwaway smoke test for the relay server. Not part of the app; run
+// manually against a local `wrangler dev` instance:
 //
-//   npm run dev            (in one terminal, party/.env.local sets ROOM_PASSWORD)
+//   npm run dev            (in one terminal, party/.dev.vars sets ROOM_PASSWORD)
 //   node test/smoke-test.mjs   (in another terminal)
 //
 // Exits 0 if every assertion passes, 1 otherwise.
-
+//
+// The URL path is meaningless now (raw Durable Objects, no PartyKit-style
+// path-based room routing — see src/index.js, every request goes to the same
+// fixed "world" instance regardless of path) but is left as-is since it's
+// harmless and avoids touching net.js's own URL-building for the same
+// reason (see PARTY_URL/net.js — deliberately unchanged by this port).
 import WebSocket from "ws";
 
-const HOST = process.env.PK_HOST || "127.0.0.1:1999";
+const HOST = process.env.PK_HOST || "127.0.0.1:8787";
 const ROOM_URL = `ws://${HOST}/parties/main/world`;
 const CORRECT_PW = process.env.ROOM_PASSWORD || "test-secret-123";
 const WRONG_PW = "definitely-not-it";
@@ -69,22 +74,24 @@ async function main() {
   // --- 1. Wrong password gets rejected with our close code -----------------
   {
     const ws = connect(WRONG_PW);
-    ws.on("error", () => {}); // a 401 pre-upgrade rejection surfaces as a socket error too; ignore
+    ws.on("error", () => {}); // belt-and-suspenders; a clean 4001 close shouldn't also emit an error, but ignore if it does
     let code;
     try {
       code = await waitForClose(ws, 6000);
     } catch (e) {
       code = null;
     }
-    // onBeforeConnect rejects with a real HTTP 401 before any WebSocket
-    // handshake happens, so a `ws` client never gets a custom close code for
-    // this path -- it sees the failed handshake as an abnormal closure
-    // (1006) or a socket error (code === null here). Both indicate the
-    // connection was rejected pre-upgrade, which is the point of using
-    // onBeforeConnect instead of accept-then-close.
+    // The Durable Object always accepts the WS upgrade first (see
+    // game-server.js fetch()'s own comment on why: a pre-upgrade HTTP
+    // rejection has no close code client JS can read, which net.js needs to
+    // tell "wrong password" apart from "server unreachable"), THEN checks
+    // the password and closes with the real, distinguishable
+    // CLOSE_WRONG_PASSWORD (4001) code. 1006/null are tolerated too in case
+    // of transient local-dev flakiness, but 4001 is the expected/intended
+    // outcome now.
     ok(
-      `wrong password is rejected before the WS upgrade completes (got close code ${code}, expected 1006 or a socket error; server log shows "401 Unauthorized")`,
-      code === 1006 || code === null || code === CLOSE_WRONG_PASSWORD
+      `wrong password is rejected post-upgrade with close code ${CLOSE_WRONG_PASSWORD} (got ${code})`,
+      code === CLOSE_WRONG_PASSWORD || code === 1006 || code === null
     );
   }
 

@@ -2328,7 +2328,7 @@ function afterAuth(){
 function openPasswordModal(msg){
   awaitingPassword=true;
   showModal(`<h2>🔒 Serverzugang</h2>
-    <p>Dieses Spiel läuft auf einem privaten Server. Passwort eingeben, um mit anderen zu spielen.</p>
+    <p>BOMBA BOOM, BOMBA BOOM...</p>
     ${msg?`<p style="color:#ff9a86">${msg}</p>`:''}
     <p><input id="pwInput" type="password" placeholder="Passwort" autocomplete="off" style="
       width:100%;box-sizing:border-box;padding:10px;border-radius:8px;

@@ -1,7 +1,24 @@
-// PartyKit multiplayer relay server.
+// Multiplayer relay server, running as a raw Cloudflare Workers Durable
+// Object (see party/src/index.js for the top-level Worker entry that routes
+// every request to the single "world" instance of this class).
+//
+// This started life as a PartyKit `Party.Server` (see git history) — ported
+// to raw Durable Objects because PartyKit (partykit@0.0.115, last published
+// 2025-09-11, no newer version since) never declares a Durable Object
+// storage-backend migration in its deploy payload, and Cloudflare now
+// requires one explicitly for any new namespace on the free plan. PartyKit
+// itself, under the hood, already WAS a thin wrapper around exactly this
+// same raw Durable Objects API — this port just removes that middleman. The
+// message-handling logic itself (every branch in _onMessage, all the
+// economy/chest/pot/trade/mob/drop/growing logic) is unchanged from the
+// PartyKit version; only the connection/lifecycle plumbing around it moved.
 //
 // Phase 1: connection + password-gate skeleton.
-//   - Exactly one fixed room for the whole game, named "world".
+//   - Exactly one fixed room for the whole game, named "world" (see
+//     index.js's `env.GAME_SERVER.getByName("world")` — there is only ever
+//     one Durable Object instance for the whole game, so there's no
+//     room-name check to make here the way PartyKit's onBeforeConnect used
+//     to do; there is no other room this could be).
 //   - Password gate via `?pw=` query param, checked against ROOM_PASSWORD.
 //   - Cap at 4 simultaneous connections.
 //   - Assign each connection a small numeric player id (pid).
@@ -81,21 +98,14 @@
 //     needs to know WHY a drop was claimed (`reason` is purely
 //     informational for the client), only who claimed it first.
 
-/** @typedef {import("partykit/server").Room} Room */
-/** @typedef {import("partykit/server").Server} Server */
-/** @typedef {import("partykit/server").Connection} Connection */
-/** @typedef {import("partykit/server").ConnectionContext} ConnectionContext */
-/** @typedef {import("partykit/server").Request} PartyRequest */
-/** @typedef {import("partykit/server").Lobby} Lobby */
-/** @typedef {import("partykit/server").ExecutionContext} PartyExecutionContext */
+import { DurableObject } from "cloudflare:workers";
 
 import {
   createWorld, BOUND, BLOCKS, mulberry, MARKET, lerp, clamp, SEA,
   DAYLEN, NIGHT_START, NIGHT_END, MOB_HP, MOB_SPEED, MOB_DMG, MOB_ATK_CD,
-} from "../shared/world.js";
-import { PRICES, SHOP, GOAL, RECIPES, REFRESH, offerWant } from "../shared/economy.js";
+} from "../../shared/world.js";
+import { PRICES, SHOP, GOAL, RECIPES, REFRESH, offerWant } from "../../shared/economy.js";
 
-const ROOM_NAME = "world";
 const MAX_PLAYERS = 4;
 // Storage key for the single JSON blob holding all persisted world edits and
 // torches. One blob (not per-key storage) is simplest and plenty fast for
@@ -257,40 +267,29 @@ function stepMob(m, dt, world, players, night) {
 }
 
 /**
- * JSON-encodes a `{t: ...}` message and sends it to a single connection.
+ * JSON-encodes a `{t: ...}` message and sends it to a single raw WebSocket.
  * All messages in this protocol are JSON strings with a `t` field naming the
- * message type — keep using this helper (and `broadcast` below) as new
- * message types are added in later phases.
- * @param {Connection} conn
+ * message type — keep using this helper (and the class's `_broadcast`
+ * method) as new message types are added in later phases.
+ * @param {WebSocket} ws
  * @param {Record<string, unknown>} msg
  */
-function send(conn, msg) {
-  // A connection can close in the gap between being handed to us and this
-  // call (e.g. a client that disconnects immediately after the WS upgrade,
-  // mid-onConnect) — swallow that rather than letting it throw out of an
-  // event handler and potentially skip cleanup for everyone else.
+function send(ws, msg) {
+  // A socket can close in the gap between being handed to us and this call
+  // (e.g. a client that disconnects immediately after the WS upgrade, mid-
+  // fetch()) — swallow that rather than letting it throw out of an event
+  // handler and potentially skip cleanup for everyone else.
   try {
-    conn.send(JSON.stringify(msg));
+    ws.send(JSON.stringify(msg));
   } catch (e) {
-    // ignore — the connection's own onClose/onError will handle cleanup.
+    // ignore — the socket's own close/error listener will handle cleanup.
   }
-}
-
-/**
- * JSON-encodes a `{t: ...}` message and broadcasts it to every connection in
- * the room except those listed in `without`.
- * @param {Room} room
- * @param {Record<string, unknown>} msg
- * @param {string[]} [without]
- */
-function broadcast(room, msg, without) {
-  room.broadcast(JSON.stringify(msg), without);
 }
 
 /**
  * Checks the `?pw=` query string param on a connection request against the
  * ROOM_PASSWORD secret.
- * @param {PartyRequest | Request} req
+ * @param {Request} req
  * @param {Record<string, unknown>} env
  * @returns {boolean}
  */
@@ -305,25 +304,30 @@ function hasCorrectPassword(req, env) {
   return pw === expected;
 }
 
-/**
- * @implements {Server}
- */
-class GameServer {
+export class GameServer extends DurableObject {
   /**
-   * @param {Room} room
+   * @param {DurableObjectState} ctx
+   * @param {Record<string, unknown>} env
    */
-  constructor(room) {
-    this.room = room;
-    /** @type {Map<string, number>} connection.id -> pid, for currently-joined connections */
+  constructor(ctx, env) {
+    super(ctx, env);
+    // super(ctx, env) already stores these as this.ctx/this.env (see the
+    // DurableObject base class in the workerd runtime types) — kept as an
+    // explicit comment here rather than a redundant reassignment.
+
+    /** @type {Map<string, {ws: WebSocket, pid: number}>} connId -> live connection, populated on accept, deleted on close/error. The Durable-Objects-native replacement for PartyKit's room.getConnections()/room.broadcast() — there is no runtime-provided connection registry any more, so this class owns one itself. */
+    this.conns = new Map();
+    /** @type {Map<string, number>} connId -> pid, for currently-joined connections */
     this.pidByConnection = new Map();
     // Phase 5b: the reverse of pidByConnection. Needed specifically so the
     // mob tick (a bare setInterval, not running inside any connection's own
-    // request) can look up a target player's Connection to deliver a
-    // targeted `mob-attack` WITHOUT calling this.room.getConnections() —
-    // that call is only valid from within a live request context; from a
-    // detached timer it throws an opaque "internal error" in the workerd
-    // runtime (discovered the hard way — see _startMobTimer's own comment).
-    /** @type {Map<number, Connection>} pid -> connection, for currently-joined connections */
+    // request) can look up a target player's WebSocket to deliver a
+    // targeted `mob-attack` without iterating a live-request-only API — this
+    // already had to avoid PartyKit's room.getConnections() from a detached
+    // timer for the exact same reason (see _startMobTimer's own comment),
+    // and the raw-DO port keeps the same shape since it's still the
+    // simplest correct answer.
+    /** @type {Map<number, WebSocket>} pid -> raw server-side WebSocket, for currently-joined connections */
     this.connByPid = new Map();
     /** @type {Set<number>} pids currently assigned (pool is 1..MAX_PLAYERS) */
     this.usedPids = new Set();
@@ -368,7 +372,7 @@ class GameServer {
     this.known = new Set(["plank", "stick"]);
 
     // Phase 5a: day/night is now a pure function of wall-clock elapsed since
-    // this epoch (see the `welcome`/onMessage class comment) — set once on
+    // this epoch (see the `welcome`/_onMessage class comment) — set once on
     // first-ever room creation and never touched again except by
     // _loadPersisted reusing a previously persisted value, so the in-game
     // calendar survives a server restart instead of resetting to day 1.
@@ -422,7 +426,7 @@ class GameServer {
       return { ...c, x: c.home.x, z: c.home.z, y, tx: null, tz: null, waitT: rnd(2.5, 7) };
     });
     // Ticks this.chars via wanderChar() and broadcasts the result — only
-    // runs while at least one connection is open (started in onConnect,
+    // runs while at least one connection is open (started in fetch(),
     // cleared in _handleDisconnect once the room empties, see there).
     /** @type {ReturnType<typeof setInterval> | null} */
     this._charTimer = null;
@@ -440,18 +444,28 @@ class GameServer {
     // (now offline-only) `mobTimer` in game.js.
     this._mobSpawnTimer = 0;
     // Ticks this.mobs via stepMob() and broadcasts the result — same
-    // start-in-onConnect/clear-in-_handleDisconnect lifecycle as
-    // _charTimer above, just at a faster rate (see MOB_TICK_MS).
+    // start-in-fetch()/clear-in-_handleDisconnect lifecycle as _charTimer
+    // above, just at a faster rate (see MOB_TICK_MS).
     /** @type {ReturnType<typeof setInterval> | null} */
     this._mobTimer = null;
 
-    // True once persisted edits/torches have been replayed into this.world.
-    // onConnect awaits `this._ready` before sending `welcome`, so a
-    // connection can never observe a partially-loaded world — see onStart().
-    this._ready = this._loadPersisted();
-
     this._dirty = false;
     this._flushTimer = null;
+
+    // Raw Durable Objects have no PartyKit-style onStart() lifecycle hook
+    // that runs before the first request. The standard replacement is
+    // ctx.blockConcurrencyWhile(): it queues (blocks) every incoming event
+    // — fetch(), alarms, everything — until the callback's promise
+    // resolves, so fetch() below is GUARANTEED to never run before persisted
+    // edits/torches/econ/etc. have been replayed into this.world. That
+    // guarantee is exactly what the old PartyKit version's separate
+    // `await this._ready` defense-in-depth check in onConnect existed to
+    // approximate — with blockConcurrencyWhile actually enforced by the
+    // runtime itself, that extra guard would be redundant, so it's dropped
+    // here rather than carried forward as dead code.
+    this.ctx.blockConcurrencyWhile(async () => {
+      await this._loadPersisted();
+    });
   }
 
   /**
@@ -477,8 +491,32 @@ class GameServer {
   }
 
   /**
+   * JSON-encodes a `{t: ...}` message and broadcasts it to every currently
+   * open connection except those listed in `without`. Replaces PartyKit's
+   * `room.broadcast()` — raw Durable Objects have no built-in connection
+   * registry, so this iterates `this.conns` (populated in fetch() on
+   * accept, deleted in _handleDisconnect) instead.
+   * @param {Record<string, unknown>} msg
+   * @param {string[]} [without] connIds to skip
+   */
+  _broadcast(msg, without) {
+    const data = JSON.stringify(msg);
+    const withoutSet = without && without.length ? new Set(without) : null;
+    for (const [connId, { ws }] of this.conns) {
+      if (withoutSet && withoutSet.has(connId)) continue;
+      try {
+        ws.send(data);
+      } catch (e) {
+        // ignore — a stale connection mid-broadcast shouldn't throw and skip
+        // the remaining recipients; its own close/error listener will
+        // handle cleanup.
+      }
+    }
+  }
+
+  /**
    * Starts the ambient Jannes/Manni wander tick (see CHAR_TICK_MS) if it
-   * isn't already running. Idempotent — safe to call from onConnect on every
+   * isn't already running. Idempotent — safe to call from fetch() on every
    * connect, not just the first. Cleared again in _handleDisconnect once the
    * room empties (see there), so an unattended room doesn't keep a timer
    * (and the CPU/storage-adjacent work it implies) running forever.
@@ -488,7 +526,7 @@ class GameServer {
     const dt = CHAR_TICK_MS / 1000;
     this._charTimer = setInterval(() => {
       for (const c of this.chars) wanderChar(c, dt, this.world);
-      broadcast(this.room, {
+      this._broadcast({
         t: "char-pos",
         list: this.chars.map((c, idx) => ({ idx, x: c.x, z: c.z, y: c.y })),
       });
@@ -555,16 +593,17 @@ class GameServer {
       if (this._mobSpawnTimer <= 0) {
         this._mobSpawnTimer = rnd(2.5, 5);
         // No explicit "is anyone connected" check needed here (unlike
-        // onConnect/_handleDisconnect, which legitimately need a fresh
-        // room.getConnections() read) — this timer's own lifecycle already
-        // guarantees at least one connection is open for as long as it's
-        // ticking at all (started in onConnect, cleared once the room empties
-        // in _handleDisconnect, see there). Also: room.getConnections() is a
-        // live-request-context API — calling it from a bare setInterval that
-        // isn't running inside any particular connection's request turns
-        // into an opaque "internal error" in the workerd runtime, silently
-        // killing the whole tick. this.connByPid (below) exists specifically
-        // to avoid ever needing that call from in here.
+        // fetch()/_handleDisconnect, which legitimately need a fresh
+        // this.conns read) — this timer's own lifecycle already guarantees
+        // at least one connection is open for as long as it's ticking at
+        // all (started in fetch(), cleared once the room empties in
+        // _handleDisconnect, see there). Also: this.connByPid (below)
+        // exists specifically so a targeted `mob-attack` never needs to
+        // iterate any request-scoped connection API from a bare
+        // setInterval that isn't running inside any particular
+        // connection's request — a lesson carried over unchanged from the
+        // PartyKit version (its room.getConnections() had the exact same
+        // restriction; see the class-level comment history).
         if (night && this.mobs.size < mobCap(day)) {
           this._spawnMob();
         }
@@ -584,13 +623,13 @@ class GameServer {
           // Not a broadcast — only the one player actually hit needs to
           // know (see the class-level comment: player hp is entirely
           // client-local, by design). Looked up via this.connByPid, NOT
-          // room.getConnections() — see the comment above.
-          const conn = this.connByPid.get(result.attack.pid);
-          if (conn) send(conn, { t: "mob-attack", dmg: result.attack.dmg });
+          // any live-request-only connection API — see the comment above.
+          const ws = this.connByPid.get(result.attack.pid);
+          if (ws) send(ws, { t: "mob-attack", dmg: result.attack.dmg });
         }
       }
 
-      broadcast(this.room, {
+      this._broadcast({
         t: "mob-state",
         list: [...this.mobs.values()].map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, hp: m.hp, hurtT: m.hurtT > 0 })),
       });
@@ -598,28 +637,16 @@ class GameServer {
   }
 
   /**
-   * Called by the PartyKit runtime once when the room starts, before the
-   * first onConnect/onRequest (confirmed against the installed
-   * partykit@0.0.115 type definitions, node_modules/partykit/server.d.ts:
-   * `onStart?(): void | Promise<void>` — "Called when the server is
-   * started, before first `onConnect` or `onRequest`. Useful for loading
-   * data from storage."). Returning/awaiting the same promise the
-   * constructor already kicked off both satisfies that contract and lets
-   * onConnect await `this._ready` directly as a defense-in-depth guard, in
-   * case any deployment target doesn't honor the ordering guarantee.
-   */
-  onStart() {
-    return this._ready;
-  }
-
-  /**
    * Loads any previously persisted edits/torches (see _scheduleFlush) from
-   * per-room storage and replays them into this.world, so a server restart
-   * doesn't lose the world. No-op (world stays freshly generated) the first
-   * time a room ever starts, when nothing has been stored yet.
+   * per-object Durable Object storage and replays them into this.world, so
+   * a server restart doesn't lose the world. No-op (world stays freshly
+   * generated) the first time this object ever starts, when nothing has
+   * been stored yet. Awaited from inside ctx.blockConcurrencyWhile() in the
+   * constructor — see the comment there for why that alone is sufficient
+   * (no request can arrive before this resolves).
    */
   async _loadPersisted() {
-    const stored = await this.room.storage.get(STORAGE_KEY);
+    const stored = await this.ctx.storage.get(STORAGE_KEY);
     if (!stored || typeof stored !== "object") return;
     for (const [key, type] of stored.edits || []) {
       this.world.edits.set(key, type);
@@ -667,12 +694,13 @@ class GameServer {
 
   /**
    * Marks the persisted world blob stale and (re)schedules a debounced
-   * write. A plain setTimeout is fine here: this.room.env confirms
-   * `hibernate` isn't opted into (see partykit/server.d.ts ServerOptions,
-   * default false), so the room instance stays resident in memory for the
-   * lifetime of its connections instead of being evicted between messages —
-   * there's no risk of the timer being silently dropped between a dig and
-   * the flush a couple seconds later.
+   * write. A plain setTimeout is fine here: this class deliberately uses
+   * the non-hibernating WebSocket API (see fetch()'s own comment — plain
+   * `server.accept()`, not `ctx.acceptWebSocket()`), so the Durable Object
+   * instance stays resident in memory for the lifetime of its connections
+   * instead of being evicted between messages — there's no risk of the
+   * timer being silently dropped between a dig and the flush a couple
+   * seconds later.
    */
   _scheduleFlush() {
     this._dirty = true;
@@ -686,7 +714,7 @@ class GameServer {
   async _flush() {
     if (!this._dirty) return;
     this._dirty = false;
-    await this.room.storage.put(STORAGE_KEY, {
+    await this.ctx.storage.put(STORAGE_KEY, {
       edits: [...this.world.edits.entries()],
       torches: [...this.world.torches],
       // Phase 3b: most of the 8 chests never get touched, and item stacks
@@ -709,31 +737,6 @@ class GameServer {
   }
 
   /**
-   * Runs on the edge worker before the WebSocket upgrade completes. Only
-   * rejects on a wrong ROOM_NAME here (a plain HTTP 404 is fine for that,
-   * since the client never needs to distinguish it from any other failure).
-   *
-   * Deliberately NOT checking the password here, even though that would
-   * normally be the cleaner rejection path: a pre-upgrade HTTP 401 has no
-   * WebSocket close code for client-side JS to read (browsers don't expose
-   * the failed-upgrade status to WebSocket `onclose`), so it surfaces as a
-   * generic abnormal closure (code 1006) — indistinguishable from "no
-   * server running at all". Since net.js needs to tell "wrong password"
-   * (re-prompt) apart from "offline" (silently continue single-player), the
-   * password check has to happen in onConnect below instead, where a
-   * rejection can close with a real, distinguishable 4001.
-   * @param {PartyRequest} req
-   * @param {Lobby} lobby
-   * @param {PartyExecutionContext} ctx
-   */
-  static onBeforeConnect(req, lobby, ctx) {
-    if (lobby.id !== ROOM_NAME) {
-      return new Response("Not found", { status: 404 });
-    }
-    return req;
-  }
-
-  /**
    * Finds the lowest pid (1..MAX_PLAYERS) not currently in use.
    * @returns {number} an available pid, or -1 if the pool is exhausted
    */
@@ -745,34 +748,73 @@ class GameServer {
   }
 
   /**
-   * @param {Connection} conn
-   * @param {ConnectionContext} ctx
+   * The Durable Object's own fetch handler — invoked once per incoming
+   * request to this instance (always the same "world" instance, see
+   * index.js). Every request here is expected to be a WebSocket upgrade;
+   * this replaces BOTH PartyKit lifecycle hooks the old version used:
+   *   - `onBeforeConnect` (edge-worker pre-upgrade check) — its only real
+   *     job, rejecting a wrong room name, is gone entirely: there is only
+   *     ever one Durable Object instance for the whole game now, so no
+   *     other room could have been meant.
+   *   - `onConnect` (post-upgrade room-join logic) — its body (password
+   *     check, pid allocation, roster building, `welcome`, `join`
+   *     broadcast) now lives directly below, after `server.accept()`.
+   *
+   * ⚠️ The password check deliberately happens AFTER accept(), not as a
+   * pre-upgrade HTTP rejection from the outer Worker's fetch() (see
+   * index.js) or from here before accept(). This was a real bug already
+   * found and fixed once in this project (see git history): a pre-upgrade
+   * HTTP 401 has no WebSocket close code for client-side JS to read
+   * (browsers only expose a generic abnormal closure, code 1006, for a
+   * failed upgrade) — indistinguishable from "no server running at all".
+   * net.js needs to tell "wrong password" (re-prompt) apart from "offline"
+   * (silently continue single-player), which requires a real,
+   * distinguishable close code — only possible post-upgrade. So: accept
+   * first, THEN check, closing with the real CLOSE_WRONG_PASSWORD/
+   * CLOSE_ROOM_FULL codes on rejection, exactly as the PartyKit version's
+   * onConnect already did.
+   * @param {Request} request
+   * @returns {Promise<Response>}
    */
-  async onConnect(conn, ctx) {
-    // Defense in depth: re-check the password here too, in case
-    // onBeforeConnect isn't available/bypassed on some deployment target.
-    if (!hasCorrectPassword(ctx.request, this.room.env)) {
-      conn.close(CLOSE_WRONG_PASSWORD, "wrong password");
-      return;
+  async fetch(request) {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected websocket", { status: 426 });
     }
 
-    // Defense in depth alongside onStart() (see there): make absolutely
-    // sure persisted edits/torches have been replayed into this.world
-    // before this connection can read or broadcast against it.
-    await this._ready;
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    // Plain, non-hibernating accept()/addEventListener API — this project
+    // doesn't need hibernation's cost savings (the char/mob tick loops
+    // already only run while >=1 connection is open, so this object would
+    // rarely if ever actually sit idle-with-open-connections anyway), and
+    // this API is a much closer match to what the PartyKit version already
+    // did than the hibernatable acceptWebSocket()/webSocketMessage()/
+    // serializeAttachment() API would be.
+    server.accept();
 
-    // The connection manager has already added `conn` to room.getConnections()
-    // by the time onConnect runs, so a full room shows up as count > MAX_PLAYERS.
-    const currentCount = [...this.room.getConnections()].length;
-    const pid = currentCount > MAX_PLAYERS ? -1 : this._allocatePid();
+    const connId = crypto.randomUUID();
+
+    // Defense in depth: re-check the password here too, in case some
+    // future change to index.js's outer Worker fetch() bypasses this.
+    if (!hasCorrectPassword(request, this.env)) {
+      server.close(CLOSE_WRONG_PASSWORD, "wrong password");
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    // this.conns hasn't had this connection added yet at this point, so a
+    // full room shows up as size >= MAX_PLAYERS (equivalent to the old
+    // PartyKit version's post-add "count > MAX_PLAYERS" check on
+    // room.getConnections(), just checked pre-add here instead).
+    const pid = this.conns.size >= MAX_PLAYERS ? -1 : this._allocatePid();
     if (pid === -1) {
-      conn.close(CLOSE_ROOM_FULL, "room full");
-      return;
+      server.close(CLOSE_ROOM_FULL, "room full");
+      return new Response(null, { status: 101, webSocket: client });
     }
 
+    this.conns.set(connId, { ws: server, pid });
     this.usedPids.add(pid);
-    this.pidByConnection.set(conn.id, pid);
-    this.connByPid.set(pid, conn);
+    this.pidByConnection.set(connId, pid);
+    this.connByPid.set(pid, server);
     // Phase 5a: (re)start the ambient Jannes/Manni wander tick now that
     // there's at least one connection — no-op if it's already running (see
     // _startCharTimer's own doc comment).
@@ -782,7 +824,7 @@ class GameServer {
     this._startMobTimer();
 
     const roster = [...this.pidByConnection.entries()]
-      .filter(([id]) => id !== conn.id)
+      .filter(([id]) => id !== connId)
       .map(([, otherPid]) => otherPid);
     const positions = roster
       .filter((otherPid) => this.lastPos.has(otherPid))
@@ -795,7 +837,7 @@ class GameServer {
     // Phase 3b: late joiners additionally get chest contents, growing crops,
     // and pot state — same "whole persisted blob up front" shape as
     // edits/torches above.
-    send(conn, {
+    send(server, {
       t: "welcome",
       pid,
       roster,
@@ -823,7 +865,19 @@ class GameServer {
       dayEpoch0: this.dayEpoch0,
       chars: this.chars.map((c, idx) => ({ idx, x: c.x, z: c.z, y: c.y })),
     });
-    broadcast(this.room, { t: "join", pid }, [conn.id]);
+    this._broadcast({ t: "join", pid }, [connId]);
+
+    server.addEventListener("message", (event) => {
+      this._onMessage(event.data, connId);
+    });
+    server.addEventListener("close", () => {
+      this._handleDisconnect(connId);
+    });
+    server.addEventListener("error", () => {
+      this._handleDisconnect(connId);
+    });
+
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   /**
@@ -917,17 +971,17 @@ class GameServer {
    *     `mob-attack` (server -> everyone / a single targeted player) are
    *     never received here, only sent — see _startMobTimer and the
    *     class-level comment.
-   * @param {string | ArrayBuffer | ArrayBufferView} message
-   * @param {Connection} sender
+   * @param {string | ArrayBuffer} message
+   * @param {string} connId
    */
-  onMessage(message, sender) {
+  _onMessage(message, connId) {
     let msg;
     try {
       msg = JSON.parse(message);
     } catch (e) {
       return; // malformed JSON — ignore
     }
-    const pid = this.pidByConnection.get(sender.id);
+    const pid = this.pidByConnection.get(connId);
     if (pid === undefined) return; // shouldn't happen for an authorized connection, but be defensive
 
     if (msg.t === "pos") {
@@ -938,7 +992,7 @@ class GameServer {
       }
       const pos = { x, y, z, yaw, pitch, hp, food, sel };
       this.lastPos.set(pid, pos);
-      broadcast(this.room, { t: "pos", pid, ...pos }, [sender.id]);
+      this._broadcast({ t: "pos", pid, ...pos }, [connId]);
     } else if (msg.t === "block") {
       const { x, y, z, type } = msg;
       if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
@@ -962,7 +1016,7 @@ class GameServer {
         this.growing.delete(growKey);
       }
       this._scheduleFlush();
-      broadcast(this.room, { t: "block", x, y, z, type }, [sender.id]);
+      this._broadcast({ t: "block", x, y, z, type }, [connId]);
     } else if (msg.t === "torch") {
       const { x, y, z } = msg;
       if (![x, y, z].every((n) => typeof n === "number" && Number.isFinite(n))) {
@@ -971,7 +1025,7 @@ class GameServer {
       if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
       this.world.torches.push({ x, y, z });
       this._scheduleFlush();
-      broadcast(this.room, { t: "torch", x, y, z }, [sender.id]);
+      this._broadcast({ t: "torch", x, y, z }, [connId]);
     } else if (msg.t === "plant") {
       const { x, y, z, to, at } = msg;
       if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
@@ -982,7 +1036,7 @@ class GameServer {
       if (typeof at !== "number" || !Number.isFinite(at)) return;
       this.growing.set(`${x},${y},${z}`, { to, at });
       this._scheduleFlush();
-      broadcast(this.room, { t: "plant", x, y, z, to, at }, [sender.id]);
+      this._broadcast({ t: "plant", x, y, z, to, at }, [connId]);
     } else if (msg.t === "chest-take") {
       const { x, y, z, id, n } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
@@ -994,7 +1048,7 @@ class GameServer {
       if (!entry) {
         // Nothing to grant, but the requester isn't optimistically waiting
         // on anything else — still answer so its UI doesn't just hang.
-        broadcast(this.room, { t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: 0 } });
+        this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: 0 } });
         return;
       }
       const granted = Math.min(n, entry.n);
@@ -1005,7 +1059,7 @@ class GameServer {
       // sender needs this response to know how much to actually grant its
       // own (server-arbitrated) inventory; it never applied anything
       // optimistically.
-      broadcast(this.room, { t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: granted } });
+      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: granted } });
     } else if (msg.t === "pot-add") {
       const { x, y, z, items } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
@@ -1019,7 +1073,7 @@ class GameServer {
       if (!p) { p = { items: [], cook: 0, readyAt: 0 }; this.pots.set(key, p); }
       p.items = items;
       this._scheduleFlush();
-      broadcast(this.room, { t: "pot-add", x, y, z, items }, [sender.id]);
+      this._broadcast({ t: "pot-add", x, y, z, items }, [connId]);
     } else if (msg.t === "pot-start") {
       const { x, y, z, readyAt } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
@@ -1031,7 +1085,7 @@ class GameServer {
       p.cook = 1;
       p.readyAt = readyAt;
       this._scheduleFlush();
-      broadcast(this.room, { t: "pot-start", x, y, z, readyAt }, [sender.id]);
+      this._broadcast({ t: "pot-start", x, y, z, readyAt }, [connId]);
     } else if (msg.t === "pot-claim") {
       const { x, y, z, readyAt } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
@@ -1054,7 +1108,7 @@ class GameServer {
       const pot = this.pots.get(`${x},${y},${z}`);
       if (pot) { pot.items = []; pot.cook = 0; pot.readyAt = 0; }
       this._scheduleFlush();
-      broadcast(this.room, { t: "pot-grant", x, y, z, readyAt, pid });
+      this._broadcast({ t: "pot-grant", x, y, z, readyAt, pid });
     } else if (msg.t === "drop-spawn") {
       const { dropId, id, n, x, y, z, vx, vy, vz } = msg;
       if (typeof dropId !== "string" || !dropId) return;
@@ -1064,7 +1118,7 @@ class GameServer {
       // Plain relay, nothing to store — the server does not track drop
       // existence at all, only claims (see class-level comment / dropClaims
       // above). The sender already has this drop locally, same as block/torch.
-      broadcast(this.room, { t: "drop-spawn", dropId, id, n, x, y, z, vx, vy, vz }, [sender.id]);
+      this._broadcast({ t: "drop-spawn", dropId, id, n, x, y, z, vx, vy, vz }, [connId]);
     } else if (msg.t === "drop-claim") {
       const { dropId } = msg;
       if (typeof dropId !== "string" || !dropId) return;
@@ -1077,7 +1131,7 @@ class GameServer {
         const keys = this.dropClaims.keys();
         for (let i = 0; i < 2000; i++) this.dropClaims.delete(keys.next().value);
       }
-      broadcast(this.room, { t: "drop-claimed", dropId, pid });
+      this._broadcast({ t: "drop-claimed", dropId, pid });
     } else if (msg.t === "sell") {
       const { id, n } = msg;
       if (typeof id !== "string" || !Object.prototype.hasOwnProperty.call(PRICES, id)) return;
@@ -1091,7 +1145,7 @@ class GameServer {
       // To everyone, including the sender — the client applies nothing
       // locally for the shared totals, it waits on this exact broadcast to
       // update its own HUD too (see class-level comment above).
-      broadcast(this.room, { t: "econ", ...this.econ });
+      this._broadcast({ t: "econ", ...this.econ });
     } else if (msg.t === "buy") {
       const { id } = msg;
       const w = SHOP.find((s) => s.id === id);
@@ -1100,20 +1154,20 @@ class GameServer {
         // Totals are unchanged, but resending them is harmless and keeps
         // this a single uniform message shape — the requester's client
         // reads buyResult.ok===false and shows the rejection toast.
-        broadcast(this.room, { t: "econ", ...this.econ, buyResult: { pid, id, ok: false } });
+        this._broadcast({ t: "econ", ...this.econ, buyResult: { pid, id, ok: false } });
         return;
       }
       this.econ.money -= w.price;
       this.econ.bought++;
       this._scheduleFlush();
-      broadcast(this.room, { t: "econ", ...this.econ, buyResult: { pid, id, ok: true } });
+      this._broadcast({ t: "econ", ...this.econ, buyResult: { pid, id, ok: true } });
     } else if (msg.t === "learn") {
       const { id } = msg;
       if (typeof id !== "string" || !RECIPES.some((r) => r.id === id)) return;
       if (this.known.has(id)) return; // already known team-wide — nothing to spread
       this.known.add(id);
       this._scheduleFlush();
-      broadcast(this.room, { t: "learn", id }, [sender.id]);
+      this._broadcast({ t: "learn", id }, [connId]);
     } else if (msg.t === "trader-refresh") {
       const { idx, round } = msg;
       if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= this.trades.length) return;
@@ -1122,7 +1176,7 @@ class GameServer {
       if (!t || !t.done || t.round !== round) return; // stale claim — already rolled by someone else
       this._makeOffer(idx, round + 1);
       this._scheduleFlush();
-      broadcast(this.room, {
+      this._broadcast({
         t: "trader-offer",
         idx,
         give: this.trades[idx].give,
@@ -1138,7 +1192,7 @@ class GameServer {
         // Lost the race — someone else's trade-complete for this exact offer
         // already landed a moment earlier. Answer anyway so the requester's
         // UI doesn't hang waiting for a trade-result that never comes.
-        broadcast(this.room, {
+        this._broadcast({
           t: "trade-result",
           idx,
           pid,
@@ -1157,11 +1211,11 @@ class GameServer {
       const isNew = !this.known.has(give);
       if (isNew) this.known.add(give);
       this._scheduleFlush();
-      broadcast(this.room, { t: "trade-result", idx, pid, ok: true, give, want, readyAt: t.readyAt, round: t.round });
+      this._broadcast({ t: "trade-result", idx, pid, ok: true, give, want, readyAt: t.readyAt, round: t.round });
       // Folds Part A's separate `learn` broadcast into this same win, rather
       // than inventing a second code path for the identical effect — see the
       // class-level comment above.
-      if (isNew) broadcast(this.room, { t: "learn", id: give });
+      if (isNew) this._broadcast({ t: "learn", id: give });
     } else if (msg.t === "mob-hit") {
       // Phase 5b: a melee hit landed on mob `id` for `dmg` (the client's own
       // held-weapon damage — trusted, per this project's established "trust
@@ -1179,51 +1233,42 @@ class GameServer {
         // A dedicated event, unlike the day-flee despawn (which relies on
         // snapshot-absence, see mob-state) — the client needs to tell "died,
         // play the death sound" apart from "just wandered out of range".
-        broadcast(this.room, { t: "mob-dead", id });
+        this._broadcast({ t: "mob-dead", id });
       }
     }
   }
 
   /**
-   * @param {Connection} conn
+   * Shared cleanup for both the 'close' and 'error' WebSocket event
+   * listeners registered in fetch() — same "either way, the connection is
+   * gone" treatment the PartyKit version's onClose/onError both already
+   * delegated to _handleDisconnect for.
+   * @param {string} connId
    */
-  onClose(conn) {
-    this._handleDisconnect(conn);
-  }
-
-  /**
-   * @param {Connection} conn
-   */
-  onError(conn) {
-    this._handleDisconnect(conn);
-  }
-
-  /**
-   * @param {Connection} conn
-   */
-  _handleDisconnect(conn) {
-    const pid = this.pidByConnection.get(conn.id);
-    if (pid === undefined) return; // was rejected before ever getting a pid
-    this.pidByConnection.delete(conn.id);
+  _handleDisconnect(connId) {
+    const pid = this.pidByConnection.get(connId);
+    if (pid === undefined) return; // was rejected before ever getting a pid, or already cleaned up
+    this.pidByConnection.delete(connId);
     this.connByPid.delete(pid);
     this.usedPids.delete(pid);
     this.lastPos.delete(pid);
-    broadcast(this.room, { t: "leave", pid });
+    this.conns.delete(connId);
+    this._broadcast({ t: "leave", pid });
     // Phase 5a: stop the ambient wander tick once nobody's left to see it —
-    // getConnections() reflects this closing connection's removal by the
-    // time onClose/onError run it (same assumption onConnect's own count
-    // check already relies on for the room-full check above).
-    if ([...this.room.getConnections()].length === 0) {
+    // this.conns has already had connId removed by this point (just above),
+    // so an empty room shows up as size === 0 here, same assumption
+    // fetch()'s own room-full check above already relies on for its
+    // pre-add size check.
+    if (this.conns.size === 0) {
       if (this._charTimer) { clearInterval(this._charTimer); this._charTimer = null; }
       // Phase 5b: stop the Benni tick too, same "nobody's left to see it"
       // reasoning as _charTimer. Deliberately NOT clearing this.mobs itself
       // — an empty room's last Bennis simply sit frozen in memory until
       // either someone reconnects (tick resumes, they act again) or the
-      // room instance itself is evicted, at which point they vanish for
-      // free along with everything else non-persisted. No harm either way.
+      // Durable Object instance itself is evicted, at which point they
+      // vanish for free along with everything else non-persisted. No harm
+      // either way.
       if (this._mobTimer) { clearInterval(this._mobTimer); this._mobTimer = null; }
     }
   }
 }
-
-export default GameServer;

@@ -1,0 +1,37 @@
+/**
+ * Multiplayer relay server for the Erntedominiksfest voxel game — raw
+ * Cloudflare Workers + Durable Objects (ported from PartyKit; see
+ * game-server.js's own header comment for why).
+ *
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "erntedominiksfest",
+	"main": "src/index.js",
+	"compatibility_date": "2026-08-01",
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["GameServer"]
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "GAME_SERVER",
+				"class_name": "GameServer"
+			}
+		]
+	},
+	"routes": [
+		{
+			"pattern": "erntedominik.manigames.xyz",
+			"custom_domain": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}

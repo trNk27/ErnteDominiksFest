@@ -1,5 +1,4 @@
 node_modules/
-.partykit/
-.env
-.env.local
+.wrangler/
+.dev.vars
 *.log
