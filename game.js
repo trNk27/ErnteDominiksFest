@@ -370,6 +370,7 @@ const ITEMS={
   chest   :{ic:'🧰',nm:'Truhe',       block:'chest'},
   pot     :{ic:'🍲',nm:'Kochtopf',    block:'pot'},
   torch   :{ic:'🔥',nm:'Fackel',      torch:true},
+  sign    :{ic:'🪧',nm:'Schild',      sign:true},
   stick   :{ic:'🥢',nm:'Stock'},
   bowl    :{ic:'🥣',nm:'Schale'},
   dominik :{ic:'🍑',nm:'Dominik',     food:4},
@@ -446,7 +447,7 @@ const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
 // Emoji bleibt als alt-Text stehen: fehlt der Ordner (oder lädt eine Datei
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','chest','pot','torch',
-                     'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
+                     'sign','stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
                      'compote','panfry','soup','junk','boat','board','glider',
                      'hoe','kern','mycel','korn']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
@@ -461,6 +462,7 @@ function itemNote(id){
   if(it.axe) p.push('🪓 schnell bei Holz');
   if(it.pick) p.push('⛏️ schnell bei Stein');
   if(it.torch) p.push('🔥 hält Bennis fern');
+  if(it.sign) p.push('🪧 beschreibbar');
   if(it.hoe) p.push('🧑‍🌾 macht Gras und Erde zu Acker');
   if(it.seed) p.push('🌱 auf Acker säen — wird zu '+ITEMS[BLOCKS[it.seed.ripe].drop].nm);
   if(it.boat) p.push('🛶 trägt dich übers Wasser');
@@ -743,6 +745,76 @@ function emitTorches(){
   }
   torchPost.instanceMatrix.needsUpdate=true;
   torchFlame.instanceMatrix.needsUpdate=true;
+}
+
+// ------------------------------------------------------------------ Schilder
+// signs: "x,y,z" → {text}. Wie Fackeln leben Schilder außerhalb des Block-
+// Rasters (kein Würfel, keine Kollision, kein Abbau über das normale
+// Grabsystem) — anders als eine Fackel trägt ein Schild aber einen eigenen,
+// veränderlichen Zustand (den Text), der wie bei Truhen/Töpfen über eine
+// eigene Map läuft und mit dem Server synchronisiert wird (optimistisch,
+// kein Wettlauf-Schiedsrichter nötig — siehe die 'sign-*'-Netzwerk-Handler
+// weiter unten). Der Text selbst hängt als kamerafester Sprite über dem
+// Platzierungspunkt (makeLabel/labelTex sind Funktionsdeklarationen, weiter
+// unten im Datei definiert, aber dank Hoisting schon von hier aus aufrufbar
+// — genau die Funktionen, die schon für Namensschilder/Sprechblasen laufen).
+const signs=new Map();
+const signSprites=new Map();              // "x,y,z" → THREE.Sprite (der Text)
+const signPost=batch(TEX.log,240);        // rein kosmetischer Pfosten, wie bei Fackeln
+const SIGN_MAX=80;                        // muss zum server- UND HTML-seitigen maxlength passen
+function emitSignPosts(){
+  signPost.count=0;
+  for(const key of signs.keys()){
+    const [x,y,z]=key.split(',').map(Number);
+    blk(signPost,x,y-.35,z,.16);
+    blk(signPost,x,y-.14,z,.16);
+  }
+  signPost.instanceMatrix.needsUpdate=true;
+}
+// Kurze Zeilen fürs Schild — wie say(), nur ohne dessen 3-Zeilen-Deckel (ein
+// Schild darf ruhig etwas mehr zeigen) und mit einem sichtbaren Platzhalter,
+// solange niemand etwas draufgeschrieben hat.
+function signLines(text){
+  if(!text) return ['(leer)'];
+  const words=text.split(' ');
+  const lines=[]; let cur='';
+  for(const w of words){ if((cur+' '+w).trim().length>20){lines.push(cur.trim());cur=w;} else cur+=' '+w; }
+  if(cur.trim()) lines.push(cur.trim());
+  return lines.slice(0,5);
+}
+// Legt beim ersten Aufruf Sprite (und kosmetischen Pfosten) an, erneuert die
+// Textur sonst nur — ein Aufruf genügt damit sowohl fürs frische Setzen als
+// auch für jede spätere Textänderung, ob eigene oder fremde (siehe die
+// 'sign-*'-Handler weiter unten und openSignEditor/saveSignEditor).
+function ensureSignLabel(x,y,z){
+  const key=K(x,y,z);
+  const s=signs.get(key);
+  if(!s) return null;
+  let sp=signSprites.get(key);
+  if(!sp){
+    sp=makeLabel(signLines(s.text),'#ffe9b0',.42);
+    sp.position.set(x,y+1.15,z);
+    scene.add(sp);
+    signSprites.set(key,sp);
+    emitSignPosts();
+  }else{
+    sp.material.map?.dispose();
+    const tex=labelTex(signLines(s.text),'#ffe9b0');
+    sp.material.map=tex;
+    sp.scale.set(.42*tex.image.width/tex.image.height,.42,1);
+  }
+  return sp;
+}
+function removeSignLabel(x,y,z){
+  const key=K(x,y,z);
+  const sp=signSprites.get(key);
+  if(sp){
+    scene.remove(sp);
+    sp.material.map?.dispose();
+    sp.material.dispose();
+    signSprites.delete(key);
+  }
+  emitSignPosts();
 }
 
 // ------------------------------------------------------------------ Fallende Sachen
@@ -1364,6 +1436,22 @@ function aimChar(maxD=4.2){
   }
   return best;
 }
+// Wer steht vor einem Schild? Exakt dasselbe Prinzip wie aimChar, nur über
+// die signs-Map statt CHARS — Schilder leben außerhalb des Block-Rasters
+// (siehe Design-Kommentar bei signs weiter oben), brauchen also dieselbe
+// eigene Zielerfassung wie ein Bewohner statt über rayPick/target zu laufen.
+function aimSign(maxD=4.2){
+  camera.getWorldDirection(_rd);
+  let best=null, bd=1e9;
+  for(const [key,s] of signs){
+    const [x,y,z]=key.split(',').map(Number);
+    const dx=x-player.x, dz=z-player.z, d=Math.hypot(dx,dz)||1e-4;
+    if(d>maxD||Math.abs(y-player.y)>2.5) continue;
+    if((dx/d)*_rd.x+(dz/d)*_rd.z<.55) continue;
+    if(d<bd){ bd=d; best={x,y,z,key,sign:s}; }
+  }
+  return best;
+}
 function updateBillboards(){
   for(const m of billboards){
     m.getWorldPosition(_wp);
@@ -1571,22 +1659,27 @@ function rayPick(){
   }
   return null;
 }
-let target=null, aimed=null;
+let target=null, aimed=null, aimedSign=null;
 function updateTarget(){
   target=rayPick();
   // Ein Bewohner zählt nur, wenn kein Block näher steht — sonst redet man
   // durch die Hauswand hindurch.
   aimed=aimChar(target?Math.min(4.2,target.dist+.5):4.2);
+  // Ein Schild tritt genau eine Stufe dahinter an: nur wenn gerade kein
+  // Bewohner im Blick ist, aber mit derselben Block-Vorrang-Regel wie bei
+  // aimed (ein näherer Block verdeckt das Schild dahinter).
+  aimedSign=!aimed?aimSign(target?Math.min(4.2,target.dist+.5):4.2):null;
   // Nur Bedienbares bekommt eine Beschriftung — der Rest spricht für sich.
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
-  const atPot=!aimed&&b&&b.use==='pot'?target.cell:null;
+  const atPot=!aimed&&!aimedSign&&b&&b.use==='pot'?target.cell:null;
   updatePotPanel(atPot);
   const txt=aimed?aimed.name+(aimed.trade&&!aimed.trade.done?' — Rechtsklick zum Tauschen':' — Rechtsklick')
+           :aimedSign?'🪧 '+(aimedSign.sign.text||'(leer)')+' — Rechtsklick zum Beschriften'
            :atPot?potTip(atPot)
            :b&&b.use?b.nm+' — Rechtsklick':'';
   if(tip.textContent!==txt) tip.textContent=txt;
-  el('cross').classList.toggle('hot',!!aimed||(!!target&&!!BLOCKS[target.type].use));
+  el('cross').classList.toggle('hot',!!aimed||!!aimedSign||(!!target&&!!BLOCKS[target.type].use));
 }
 
 // ------------------------------------------------------------------ Abbauen & Setzen
@@ -1718,6 +1811,11 @@ function useRight(){
     say(aimed,pick(aimed.lines),4200);
     return;
   }
+  // 1b. Ein Schild lesen/beschriften — wie das Ansprechen eines Bewohners
+  // (Schilder leben ja außerhalb des Block-Rasters, siehe Design-Kommentar
+  // bei signs), darum direkt danach und noch vor der Kisten/Werkbank/Topf-
+  // Bedienung.
+  if(aimedSign){ openSignEditor(aimedSign.x,aimedSign.y,aimedSign.z); return; }
   // 2. Kiste, Werkbank, Kochtopf bedienen
   if(target&&BLOCKS[target.type].use){
     const u=BLOCKS[target.type].use;
@@ -1747,6 +1845,20 @@ function useRight(){
     torches.push({x:p.x,y:p.y,z:p.z});
     emitTorches(); consumeHeld(); SND.place(); updateHUD();
     if(isConnected()) send({t:'torch',x:p.x,y:p.y,z:p.z});
+    return;
+  }
+  // 5b. Schild setzen — frisch gesetzt öffnet es gleich den Editor, damit man
+  // nicht extra nochmal hinsehen und Rechtsklick drücken muss.
+  if(it&&it.sign&&target){
+    const p=target.place;
+    if(!canPlaceAt(p.x,p.y,p.z)||!blockAt(p.x,p.y-1,p.z)) return;
+    const key=K(p.x,p.y,p.z);
+    if(signs.has(key)) return;               // hier steht schon eines
+    signs.set(key,{text:''});
+    ensureSignLabel(p.x,p.y,p.z);
+    consumeHeld(); SND.place(); updateHUD();
+    if(isConnected()) send({t:'sign-place',x:p.x,y:p.y,z:p.z});
+    openSignEditor(p.x,p.y,p.z);
     return;
   }
   // 6. Block setzen
@@ -1924,6 +2036,67 @@ async function takeAllFromChest(){
   updateHUD();
 }
 
+// ------------------------------------------------------------------ Schilder
+// Text, den irgendein Mitspieler getippt hat, landet unescaped in signs —
+// beim Bau des Editor-Fensters (innerHTML, siehe showModal) muss er darum
+// escaped werden, sonst könnte ein böswillig beschriftetes Schild anderen
+// Spielern beliebiges HTML unterschieben.
+const escHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let openSignCell=null;
+// Kein Wettlauf-Schiedsrichter nötig (siehe Design-Kommentar bei signs):
+// Speichern/Entfernen wenden sich sofort lokal an UND broadcasten — im
+// schlimmsten Fall gewinnt bei zwei fast gleichzeitigen Änderungen einfach
+// der zuletzt angekommene Text, was für ein Kosmetik-Feld unbedenklich ist.
+function openSignEditor(x,y,z){
+  const key=K(x,y,z);
+  const s=signs.get(key);
+  if(!s) return;                          // inzwischen entfernt — nichts zu bearbeiten
+  openSignCell={x,y,z};
+  showModal(`<h2>🪧 Schild</h2>
+    <p><input id="signInput" type="text" maxlength="${SIGN_MAX}" autocomplete="off"
+      placeholder="Was soll hier stehen?" value="${escHtml(s.text)}" style="
+      width:100%;box-sizing:border-box;padding:10px;border-radius:8px;
+      border:1px solid #4a774a;background:#0f1c0f;color:#eaf3ea;font-size:15px"></p>
+    <div class="btnrow">
+      <button data-act="signremove">Entfernen</button>
+      <button data-act="close">Abbrechen</button>
+      <button class="primary" data-act="signsave">Speichern</button>
+    </div>`);
+  const inp=el('signInput');
+  if(inp){
+    inp.focus();
+    inp.setSelectionRange(inp.value.length,inp.value.length);
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); saveSignEditor(); } });
+  }
+}
+// Auto-vivify wie potAdd/pot-add: taucht die Zelle inzwischen (z.B. durch
+// ein fast gleichzeitiges Entfernen von einem anderen Client) lokal gar
+// nicht mehr auf, legt Speichern sie einfach neu an — der eigene, gerade
+// eingegebene Text gewinnt, siehe Design-Kommentar oben.
+function saveSignEditor(){
+  if(!openSignCell) return;
+  const {x,y,z}=openSignCell;
+  const key=K(x,y,z);
+  const inp=el('signInput');
+  const text=(inp?inp.value:'').slice(0,SIGN_MAX);
+  let s=signs.get(key);
+  if(!s){ s={text:''}; signs.set(key,s); }
+  s.text=text;
+  ensureSignLabel(x,y,z);
+  if(isConnected()) send({t:'sign-write',x,y,z,text});
+  SND.tap();
+  hideModal();
+}
+function removeSignEditor(){
+  if(!openSignCell) return;
+  const {x,y,z}=openSignCell;
+  signs.delete(K(x,y,z));
+  removeSignLabel(x,y,z);
+  if(isConnected()) send({t:'sign-remove',x,y,z});
+  SND.pop();
+  hideModal();
+}
+
 // ------------------------------------------------------------------ Rezeptbuch
 // Gelernt wird beim Handeln, und gezeigt wird es als Bild: das Muster, wie es
 // ins Raster gehört, und daneben, was dabei herauskommt. Kein Fließtext.
@@ -2063,7 +2236,7 @@ function hideModal(){
   clearGrid();                           // was im Raster liegt, gehört dem Spieler
   dropCarry();
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
-  tradePartner=null; mining=false;
+  tradePartner=null; mining=false; openSignCell=null;
 }
 const modalOpen=()=>!modal.classList.contains('hidden');
 
@@ -2360,6 +2533,8 @@ mbox.addEventListener('click',e=>{
   else if(act==='help') openIntro();
   else if(act==='start'){ localStorage.setItem('edf_seen','1'); hideModal(); state.started=true; }
   else if(act==='pwsubmit') submitPassword();
+  else if(act==='signsave') saveSignEditor();
+  else if(act==='signremove') removeSignEditor();
 });
 
 // ------------------------------------------------------------------ Mitspieler (Phase 2)
@@ -2525,6 +2700,14 @@ on('welcome',msg=>{
   for(const [key,g] of msg.growing||[]) growing.set(key,g);
   for(const [key,p] of msg.pots||[])
     pots.set(key,{items:p.items,cook:p.cook,readyAt:p.readyAt,_claiming:false});
+  // Schilder: wie chests/pots ein einfaches .set() pro Eintrag — von selbst
+  // idempotent bei einem Reconnect. ensureSignLabel legt den Sprite an (oder
+  // erneuert ihn, falls er von einem vorigen Verbindungsstand noch hängt).
+  for(const [key,s] of msg.signs||[]){
+    signs.set(key,{text:typeof s.text==='string'?s.text:''});
+    const [x,y,z]=key.split(',').map(Number);
+    ensureSignLabel(x,y,z);
+  }
   // Phase 4a: die gemeinsame Kasse kommt beim (Wieder-)Verbinden ebenfalls im
   // Ganzen mit. Kein winGame() hier, auch wenn schon gewonnen — ein spät
   // Beitretender soll nicht ungefragt das Sieg-Fenster aufgerissen bekommen,
@@ -2629,6 +2812,25 @@ on('block',msg=>{
 on('torch',msg=>{
   torches.push({x:msg.x,y:msg.y,z:msg.z});
   emitTorches();
+});
+// Schilder: optimistischer Broadcast wie Block/Fackel (siehe Design-
+// Kommentar bei signs oben) — kein Grant/Claim-Umweg nötig, einfach
+// übernehmen und den Sprite (neu) aufbauen.
+on('sign-place',msg=>{
+  const key=K(msg.x,msg.y,msg.z);
+  if(!signs.has(key)) signs.set(key,{text:''});
+  ensureSignLabel(msg.x,msg.y,msg.z);
+});
+on('sign-write',msg=>{
+  const key=K(msg.x,msg.y,msg.z);
+  let s=signs.get(key);
+  if(!s){ s={text:''}; signs.set(key,s); }
+  s.text=typeof msg.text==='string'?msg.text.slice(0,SIGN_MAX):'';
+  ensureSignLabel(msg.x,msg.y,msg.z);
+});
+on('sign-remove',msg=>{
+  signs.delete(K(msg.x,msg.y,msg.z));
+  removeSignLabel(msg.x,msg.y,msg.z);
 });
 // ---------------------------------------------------------------- Phase 3b
 // Wachsende Saat: nur die Wachstums-Uhr übernehmen, NICHT setBlock/setBlockData
@@ -3309,6 +3511,8 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,updatePotPanel,icon,iconSrc,
   clickCell,clickChestCell,takeAllFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
+  signs,signSprites,aimSign,ensureSignLabel,openSignEditor,saveSignEditor,removeSignEditor,SIGN_MAX,
+  get aimedSign(){return aimedSign;},
   carried(){return carry;},
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);

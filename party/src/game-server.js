@@ -114,6 +114,11 @@ const STORAGE_KEY = "world";
 // How long to wait after the last edit before writing to storage — avoids a
 // storage.put() per dig/place while someone is rapidly mining.
 const FLUSH_DEBOUNCE_MS = 2000;
+// Signs: a placeable, player-writable text object living outside the block
+// grid (see the `sign-*` handlers and class-level comment below). Same
+// defense-in-depth character cap the client's own <input maxlength> already
+// enforces — never trust the client alone.
+const SIGN_TEXT_MAX = 80;
 
 // WebSocket close codes in the 4000-4999 range are reserved for application use
 // (RFC 6455 7.4.2). We define our own small protocol here.
@@ -341,6 +346,15 @@ export class GameServer extends DurableObject {
     this.growing = new Map();
     /** @type {Map<string, {items:{id:string,n:number}[], cook:number, readyAt:number}>} "x,y,z" -> pot state */
     this.pots = new Map();
+    // Signs: also no equivalent in shared/world.js (same reasoning as
+    // growing/pots above) — a placeable, player-writable text object that
+    // deliberately lives OUTSIDE the block grid (no collision, not mineable,
+    // see the client's own design comment near its `signs` Map). Simplest of
+    // the runtime maps: unlike chests/pots there is no claim/grant machinery
+    // at all, just apply-and-broadcast (see the `sign-*` handlers below) —
+    // last-write-wins is fine for a cosmetic text field.
+    /** @type {Map<string, {text:string}>} "x,y,z" -> sign text */
+    this.signs = new Map();
     // Ephemeral pot-cook claim arbitration only — never persisted, starts
     // empty on every restart. A cook already granted before a restart has
     // already gone idle/empty everywhere (see the `pot-claim` handler, which
@@ -667,6 +681,9 @@ export class GameServer extends DurableObject {
     for (const [key, p] of stored.pots || []) {
       this.pots.set(key, p);
     }
+    for (const [key, s] of stored.signs || []) {
+      this.signs.set(key, s);
+    }
     // Phase 4a: the persisted shared wallet, if any (absent on the very
     // first room start, or on a blob written before this phase existed).
     if (stored.econ && typeof stored.econ === "object") {
@@ -723,6 +740,7 @@ export class GameServer extends DurableObject {
       chests: [...this.world.chests.entries()],
       growing: [...this.growing.entries()],
       pots: [...this.pots.entries()],
+      signs: [...this.signs.entries()],
       // Phase 4a: the shared wallet, small and flat enough to store wholesale
       // alongside everything else in this one debounced blob.
       econ: { ...this.econ },
@@ -847,6 +865,7 @@ export class GameServer extends DurableObject {
       chests: [...this.world.chests.entries()],
       growing: [...this.growing.entries()],
       pots: [...this.pots.entries()],
+      signs: [...this.signs.entries()],
       // Phase 4a: the shared wallet, same "whole persisted state up front"
       // shape as everything else above.
       econ: { ...this.econ },
@@ -893,6 +912,13 @@ export class GameServer extends DurableObject {
    *     persisted (debounced), and broadcast to everyone else.
    *   - `torch` (Phase 3a): a placed torch, same apply/persist/broadcast
    *     shape as `block`.
+   *   - `sign-place` / `sign-write` / `sign-remove`: a placeable, player-
+   *     writable sign living outside the block grid (see `this.signs`'
+   *     class-level comment) — same optimistic apply/persist/broadcast shape
+   *     as `block`/`torch`/`plant`, broadcast to everyone ELSE (the sender
+   *     already applied its own change locally). `sign-write`'s `text` is
+   *     truncated server-side to SIGN_TEXT_MAX regardless of what the client
+   *     sends, the only real validation any of the three needs.
    *   - `plant` (Phase 3b): a growing-crop timer, same optimistic
    *     apply/persist/broadcast shape as `block`/`torch` — the sprout BLOCK
    *     itself already arrives via a separate `block` message (plantSeed()
@@ -1052,6 +1078,47 @@ export class GameServer extends DurableObject {
       this.world.torches.push({ x, y, z });
       this._scheduleFlush();
       this._broadcast({ t: "torch", x, y, z }, [connId]);
+    } else if (msg.t === "sign-place") {
+      // A freshly placed, still-empty sign — same optimistic apply/persist/
+      // broadcast shape as `torch` above (see the class-level comment on
+      // `this.signs` for why no claim/grant round-trip is needed here).
+      // Idempotent like the chest/pot auto-vivify in the `block` handler: if
+      // this exact spot somehow already has an entry (e.g. a replayed/late
+      // duplicate), leave its text alone rather than clobbering it.
+      const { x, y, z } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      const key = `${x},${y},${z}`;
+      if (!this.signs.has(key)) this.signs.set(key, { text: "" });
+      this._scheduleFlush();
+      this._broadcast({ t: "sign-place", x, y, z }, [connId]);
+    } else if (msg.t === "sign-write") {
+      // The sender already applied this text locally (see the class-level
+      // comment) — validate defensively (never trust the client for the
+      // length cap), auto-vivify if this spot's entry is somehow missing
+      // (mirrors pot-add's own auto-vivify: harmless, and covers the rare
+      // race where a `sign-remove` for the same spot lands here first), then
+      // persist and broadcast to everyone ELSE.
+      const { x, y, z, text } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof text !== "string") return;
+      const truncated = text.slice(0, SIGN_TEXT_MAX);
+      const key = `${x},${y},${z}`;
+      let s = this.signs.get(key);
+      if (!s) { s = { text: "" }; this.signs.set(key, s); }
+      s.text = truncated;
+      this._scheduleFlush();
+      this._broadcast({ t: "sign-write", x, y, z, text: truncated }, [connId]);
+    } else if (msg.t === "sign-remove") {
+      const { x, y, z } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      const key = `${x},${y},${z}`;
+      if (!this.signs.has(key)) return; // nothing here — nothing to remove/broadcast
+      this.signs.delete(key);
+      this._scheduleFlush();
+      this._broadcast({ t: "sign-remove", x, y, z }, [connId]);
     } else if (msg.t === "plant") {
       const { x, y, z, to, at } = msg;
       if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
