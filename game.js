@@ -446,8 +446,12 @@ const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
 // Für jeden Gegenstand liegt ein Sprite unter sprites/items/<id>.png. Das
 // Emoji bleibt als alt-Text stehen: fehlt der Ordner (oder lädt eine Datei
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
-const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','chest','pot','torch',
-                     'sign','stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
+// 'chest'/'sign' bewusst nicht dabei: es gibt kein sprites/items/chest.png
+// bzw. sign.png, und ein <img> mit 404 zeigt in manchen Browsern das
+// kaputte-Bild-Symbol statt sauber auf den alt-Text (das Emoji) auszuweichen
+// — ganz ohne <img>-Versuch bleibt es zuverlässig beim Emoji.
+const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
+                     'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
                      'compote','panfry','soup','junk','boat','board','glider',
                      'hoe','kern','mycel','korn']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
@@ -485,7 +489,7 @@ function icon(id,cls=''){
 
 // Die zwei offensichtlichen kennt man von zu Hause, der Rest will gefunden
 // oder ausprobiert werden.
-const known=new Set(['plank','stick']);
+const known=new Set(['plank','stick','bench']);
 const knowsSoup=()=>known.has('soup');
 // Auf den kleinsten belegten Ausschnitt zuschneiden — genau wie das, was im
 // Raster liegt. Sonst hängt an 'SS ' eine leere Spalte, und die Axt passt zu
@@ -2378,7 +2382,13 @@ function clickCell(ref,one){
     cur.n+=t; carry.n-=t; if(carry.n<=0) carry=null;
   } else if(one) return;                 // getauscht wird nur mit voller Hand
   else { refSet(ref,carry); carry=cur; }
-  SND.tap(); updateHUD(); renderCraft();
+  SND.tap(); updateHUD();
+  // clickCell bedient das Rucksack-Gitter, das sowohl das Werkbank-/
+  // Rucksackfenster als auch (seit den Truhen) das Truhenfenster mitbenutzt —
+  // neu zeichnen muss darum das gerade offene Fenster, nicht blind das
+  // Werkbankfenster, sonst reißt ein Klick ins eigene Inventar bei offener
+  // Truhe die Ansicht auf die Werkbank um.
+  if(openChestCell) renderChest(); else renderCraft();
 }
 function dropCarry(){                    // beim Schließen zurück in den Rucksack
   if(!carry) return;

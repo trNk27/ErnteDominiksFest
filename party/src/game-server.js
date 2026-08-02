@@ -383,7 +383,7 @@ export class GameServer extends DurableObject {
     // Set rather than arbitrated like chests/pots — recipe knowledge is
     // never contested, only trade OFFERS and their completion are).
     /** @type {Set<string>} recipe ids */
-    this.known = new Set(["plank", "stick"]);
+    this.known = new Set(["plank", "stick", "bench"]);
 
     // Phase 5a: day/night is now a pure function of wall-clock elapsed since
     // this epoch (see the `welcome`/_onMessage class comment) — set once on
@@ -696,6 +696,13 @@ export class GameServer extends DurableObject {
     if (Array.isArray(stored.known)) {
       this.known = new Set(stored.known);
     }
+    // "bench" became a starter recipe after this room may already have been
+    // running with persisted state from before that change — add it
+    // unconditionally rather than only via the constructor default above, so
+    // an already-live room picks it up too, not just a brand new one. Same
+    // idempotent-Set.add reasoning as everywhere else `known` is touched:
+    // adding an already-known id is a harmless no-op.
+    this.known.add("bench");
     if (Array.isArray(stored.trades) && stored.trades.length === this.trades.length) {
       this.trades = stored.trades;
     }
