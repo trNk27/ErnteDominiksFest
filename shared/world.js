@@ -127,7 +127,7 @@ export const BLOCKS={
   brick  :{tex:'brick', hard:2.2, drop:'brick',  nm:'Ziegel',  pick:true},
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
   pot    :{tex:'pot',   hard:2.2, drop:'pot',    nm:'Kochtopf',pick:true, use:'pot'},
-  chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
+  chest  :{tex:'chest', hard:1.6, drop:'chest',  nm:'Truhe',   use:'chest', axe:true},
   // Alles, was wächst, steht als gekreuzte Fläche im Gelände: man geht
   // hindurch, es verdeckt nichts (siehe fills()), und es ist mit einem
   // Klick gepflückt statt abgebaut — hard bleibt darum ungenutzt bei 0.
@@ -186,7 +186,12 @@ export function createWorld(){
   const scenery=new Map();                 // "x,y,z" → Blocktyp (Bäume, Häuser, Truhen)
   const edits=new Map();                   // "x,y,z" → Blocktyp oder null (abgebaut)
   const colRange=new Map();                // "x,z" → [lo,hi] der zu vernetzenden Höhen
-  const chests=new Map();                  // "x,y,z" → {items:[{id,n}],opened}
+  // "x,y,z" → {items, opened}. items is a FIXED 24-slot array (index i holds
+  // {id,n} or null, exactly like the inventory/craft-grid slots) — not a
+  // variable-length list — so every chest can be addressed by slot index
+  // for both taking and putting (see game.js clickChestCell/chest-take/
+  // chest-put).
+  const chests=new Map();
   const torches=[];
   const chestSpots=[];
   const houseSpots=[];                     // Stube im zweiten Haus jedes Dorfes
@@ -371,12 +376,16 @@ export function createWorld(){
                 ['stone',3,8],['dirt',2,6],['brick',2,6],['sword',1,1]];
     chestSpots.forEach(c=>{
       put('chest',c.x,c.y,c.z);
-      const items=[];
+      // Fixed 24-slot array (see the `chests` doc comment above) — same
+      // loot-selection probability/logic as before, just written into
+      // indexed slots instead of pushed onto a variable-length list.
+      const items=Array(24).fill(null);
       const cnt=2+Math.floor(r()*3);
+      let idx=0;
       for(let k=0;k<cnt;k++){
         const [id,lo,hi]=LOOT[Math.floor(r()*LOOT.length)];
-        if(items.some(it=>it.id===id)) continue;
-        items.push({id,n:lo+Math.floor(r()*(hi-lo+1))});
+        if(items.some(it=>it&&it.id===id)) continue;
+        items[idx++]={id,n:lo+Math.floor(r()*(hi-lo+1))};
       }
       chests.set(K(c.x,c.y,c.z),{items,opened:false});
     });

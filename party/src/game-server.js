@@ -898,12 +898,15 @@ export class GameServer extends DurableObject {
    *     itself already arrives via a separate `block` message (plantSeed()
    *     calls the client's own broadcasting setBlock() for that), this only
    *     carries the ripening deadline.
-   *   - `chest-take` (Phase 3b): a request to take `n` of item `id` from the
-   *     chest at x/y/z. NOT optimistic — the server is the sole arbiter of
-   *     how much a request actually gets (see the class-level comment for
-   *     why), and always answers with a `chest-sync` broadcast (to
-   *     everyone, including the sender) carrying the chest's authoritative
-   *     resulting `items` and a `grant` telling the requester what it won.
+   *   - `chest-take` / `chest-put` (Phase 3b, extended for craftable/
+   *     breakable 24-slot chests): a request to take `n` from, or put `n` of
+   *     item `id` into, `slot` (0..23) of the chest at x/y/z. NOT optimistic
+   *     — the server is the sole arbiter of how much a request actually gets
+   *     or how much actually lands (see the class-level comment for why),
+   *     and always answers with a `chest-sync` broadcast (to everyone,
+   *     including the sender) carrying the chest's authoritative resulting
+   *     24-slot `items` array and a `grant:{pid,kind:'take'|'put',id,n}`
+   *     telling the requester what it actually won/landed.
    *   - `pot-add` / `pot-start` (Phase 3b): optimistic apply/persist/
    *     broadcast, same shape as `block`/`torch` — purely additive state
    *     (ingredients added, cook timer started), no duplication risk.
@@ -1015,6 +1018,29 @@ export class GameServer extends DurableObject {
       if (this.growing.has(growKey) && !String(type).startsWith("sprout")) {
         this.growing.delete(growKey);
       }
+      // Chest/pot lifecycle: chests and pots are now player-placeable and
+      // -breakable (chests as of this revision, pots already were, but never
+      // had this cleanup — same latent bug, fixed here for both). A newly
+      // placed chest/pot needs a fresh server-side entry so a chest-take/
+      // chest-put/pot-add arriving a moment later has somewhere to land; a
+      // chest/pot that's broken or overwritten by something else must drop
+      // its stale entry, or a NEW chest/pot immediately placed at the same
+      // spot would incorrectly inherit the old one's contents/cook-state.
+      // Mirrors the growing-crop cleanup just above.
+      if (type === "chest") {
+        if (!this.world.chests.has(growKey)) {
+          this.world.chests.set(growKey, { items: Array(24).fill(null), opened: false });
+        }
+      } else if (this.world.chests.has(growKey)) {
+        this.world.chests.delete(growKey);
+      }
+      if (type === "pot") {
+        if (!this.pots.has(growKey)) {
+          this.pots.set(growKey, { items: [], cook: 0, readyAt: 0 });
+        }
+      } else if (this.pots.has(growKey)) {
+        this.pots.delete(growKey);
+      }
       this._scheduleFlush();
       this._broadcast({ t: "block", x, y, z, type }, [connId]);
     } else if (msg.t === "torch") {
@@ -1038,28 +1064,76 @@ export class GameServer extends DurableObject {
       this._scheduleFlush();
       this._broadcast({ t: "plant", x, y, z, to, at }, [connId]);
     } else if (msg.t === "chest-take") {
-      const { x, y, z, id, n } = msg;
+      // Slot-indexed (not id-searched, unlike the original Phase 3b version)
+      // — chests are now a FIXED 24-slot array (see shared/world.js), same
+      // addressing scheme as the inventory/craft grid. `slot` identifies
+      // exactly which of the 24 fixed fields the client clicked; the server
+      // remains the sole arbiter of how much a request actually gets, same
+      // reasoning/shape as before (see the class-level comment).
+      const { x, y, z, slot, n } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
       if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
-      if (typeof id !== "string" || typeof n !== "number" || !Number.isFinite(n) || n <= 0) return;
+      if (typeof slot !== "number" || !Number.isInteger(slot) || slot < 0 || slot > 23) return;
+      if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return;
       const chest = this.world.chests.get(`${x},${y},${z}`);
       if (!chest) return; // no chest here — nothing to arbitrate
-      const entry = chest.items.find((it) => it.id === id);
+      const entry = chest.items[slot];
       if (!entry) {
         // Nothing to grant, but the requester isn't optimistically waiting
-        // on anything else — still answer so its UI doesn't just hang.
-        this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: 0 } });
+        // on anything else — still answer so its UI doesn't just hang (same
+        // "chest exists but nothing to give" no-op reply as before).
+        this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "take", id: null, n: 0 } });
         return;
       }
       const granted = Math.min(n, entry.n);
       entry.n -= granted;
-      if (entry.n <= 0) chest.items.splice(chest.items.indexOf(entry), 1);
+      const grantedId = entry.id;
+      if (entry.n <= 0) chest.items[slot] = null;
       this._scheduleFlush();
       // To everyone, INCLUDING the sender — unlike block/torch/pos, the
       // sender needs this response to know how much to actually grant its
-      // own (server-arbitrated) inventory; it never applied anything
+      // own (server-arbitrated) carry/inventory; it never applied anything
       // optimistically.
-      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: granted } });
+      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "take", id: grantedId, n: granted } });
+    } else if (msg.t === "chest-put") {
+      // The put-side counterpart to chest-take above — also slot-indexed and
+      // NOT optimistic, for the same duplication-prevention reason: two
+      // players racing to fill the same empty slot with different items must
+      // never both succeed (that would either silently merge two different
+      // items into one slot, or overwrite one player's contribution while
+      // discarding it from their own carry). The server is the sole arbiter
+      // of whether — and how much of — a put actually lands.
+      const { x, y, z, slot, id, n } = msg;
+      if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof slot !== "number" || !Number.isInteger(slot) || slot < 0 || slot > 23) return;
+      if (typeof id !== "string" || !id) return;
+      // 64 mirrors the client's own STACK constant (game.js) — not imported
+      // from shared/ since it's a plain inventory-shape constant, not world
+      // or economy data; kept here as a literal with this comment instead.
+      if (typeof n !== "number" || !Number.isInteger(n) || n <= 0 || n > 64) return;
+      const chest = this.world.chests.get(`${x},${y},${z}`);
+      if (!chest) return; // no chest here — nothing to arbitrate
+      const cur = chest.items[slot];
+      let accepted = 0;
+      if (!cur) {
+        accepted = Math.min(n, 64);
+        chest.items[slot] = { id, n: accepted };
+      } else if (cur.id === id) {
+        accepted = Math.min(n, 64 - cur.n);
+        cur.n += accepted;
+      }
+      // else: occupied by a DIFFERENT item — reject the whole put (accepted
+      // stays 0). The sender's own client already guards against sending
+      // this (see clickChestCell), but never trust the client alone.
+      if (accepted <= 0) {
+        // Still answer so the sender's carry isn't left hanging — mirrors
+        // chest-take's "nothing to grant, still respond" case above.
+        this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "put", id, n: 0 } });
+        return;
+      }
+      this._scheduleFlush();
+      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "put", id, n: accepted } });
     } else if (msg.t === "pot-add") {
       const { x, y, z, items } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;

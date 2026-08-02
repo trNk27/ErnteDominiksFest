@@ -367,6 +367,7 @@ const ITEMS={
   plank   :{ic:'🟧',nm:'Bretter',     block:'plank'},
   brick   :{ic:'🧱',nm:'Ziegel',      block:'brick'},
   bench   :{ic:'🛠️',nm:'Werkbank',    block:'bench'},
+  chest   :{ic:'🧰',nm:'Truhe',       block:'chest'},
   pot     :{ic:'🍲',nm:'Kochtopf',    block:'pot'},
   torch   :{ic:'🔥',nm:'Fackel',      torch:true},
   stick   :{ic:'🥢',nm:'Stock'},
@@ -444,7 +445,7 @@ const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
 // Für jeden Gegenstand liegt ein Sprite unter sprites/items/<id>.png. Das
 // Emoji bleibt als alt-Text stehen: fehlt der Ordner (oder lädt eine Datei
 // nicht), zeigt der Browser wieder Emoji statt eines kaputten Bildes.
-const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
+const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','chest','pot','torch',
                      'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
                      'compote','panfry','soup','junk','boat','board','glider',
                      'hoe','kern','mycel','korn']);
@@ -1663,6 +1664,15 @@ function breakBlock(x,y,z,t){
       pots.delete(K(x,y,z));
     }
   }
+  // Eine Truhe voller Inhalt gibt beim Abbauen alle 24 Fächer wieder her —
+  // spawnDrop() broadcastet selbst (Phase 6), kein weiterer Sync-Code nötig.
+  if(t==='chest'){
+    const c=chests.get(K(x,y,z));
+    if(c){
+      for(const it of c.items) if(it) spawnDrop(it.id,it.n,x,y+.4,z,rnd(-1,1),1.8,rnd(-1,1));
+      chests.delete(K(x,y,z));
+    }
+  }
   setBlock(x,y,z,null);
   state.mined++;
   if(b.drop==='dominik') playSample('dominik_break',.7)||SND.pop();
@@ -1744,6 +1754,16 @@ function useRight(){
     const p=target.place;
     if(!canPlaceAt(p.x,p.y,p.z)) return;
     setBlock(p.x,p.y,p.z,it.block);
+    // Frisch gesetzte Truhe: sofort lokal ein leeres 24-Fächer-Objekt anlegen,
+    // damit man sie ohne Wartezeit auf eine Server-Antwort öffnen und
+    // benutzen kann. Der Server legt serverseitig unabhängig dasselbe an
+    // (siehe der 'block'-Handler dort) — rein für die eigene, sofortige
+    // Reaktionsfähigkeit hier, kein Sync-Anliegen, da der Server ohnehin
+    // Autorität bleibt.
+    if(it.block==='chest'){
+      const k=K(p.x,p.y,p.z);
+      if(!chests.has(k)) chests.set(k,{items:Array(24).fill(null),opened:false});
+    }
     consumeHeld(); state.placed++;
     SND.place(); updateHUD();
   }
@@ -1778,52 +1798,130 @@ function attack(){
 // ------------------------------------------------------------------ Truhen
 let openChestCell=null;
 function openChest(cell){
-  const c=chests.get(K(cell.x,cell.y,cell.z));
-  if(!c) return;
+  const k=K(cell.x,cell.y,cell.z);
+  // Truhen, die dieser Client noch nie berührt hat (z.B. gerade erst von
+  // einem ANDEREN Spieler gesetzt), haben hier lokal noch gar keinen
+  // Eintrag — bisher kam der erst mit der ersten chest-take/chest-put-
+  // Antwort an, was ein frisch gesetztes, noch unberührtes Fach unmöglich
+  // zu öffnen machte. Da man diese Funktion ohnehin nur über einen echten
+  // Truhen-Block erreicht (target.type==='chest' in useRight, oder ein
+  // Testaufruf mit derselben Annahme), ist "kein Eintrag" hier gleichbedeutend
+  // mit "leere Truhe" — genau das legt on('chest-sync',...) im selben Fall
+  // ebenfalls an.
+  let c=chests.get(k);
+  if(!c){ c={items:Array(24).fill(null),opened:false}; chests.set(k,c); }
   if(!c.opened){ c.opened=true; state.chests++; }
   openChestCell=cell;
   SND.chest();
   renderChest();
 }
+// Zweiseitiges Fenster: 24 feste Truhenfächer oben, das eigene Inventar
+// (invGrid(), unverändert wiederverwendet — genau wie renderCraft() das
+// schon für das Rucksackraster tut) darunter. Kein Knopf-basiertes "Alles
+// nehmen" mehr als einzige Bedienung — direktes Klicken auf ein Fach nimmt
+// oder legt, genau wie im Handwerksraster.
+function chestGrid(c){
+  let h='<div class="invgrid">';
+  for(let i=0;i<24;i++) h+=`<div class="cell" data-chest="${i}">${stackHTML(c.items[i])}</div>`;
+  h+='</div>';
+  return h;
+}
 function renderChest(){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
-  let h='<h2>🧰 Truhe</h2>';
-  if(!c.items.length) h+='<p style="text-align:center;opacity:.7">Leer.</p>';
-  else{
-    h+='<div class="invgrid">'+c.items.map((it,i)=>
-      `<div class="cell" data-chest="${i}">${icon(it.id)}<span class="n">${it.n>1?it.n:''}</span></div>`
-    ).join('')+'</div>';
-    h+='<p style="font-size:11.5px;opacity:.7;text-align:center">Anklicken zum Mitnehmen</p>';
-  }
-  h+='<div class="btnrow">'+(c.items.length?'<button data-act="takeall">Alles nehmen</button>':'')+
-     '<button class="primary" data-act="close">Schließen</button></div>';
+  if(!c) return;
+  const hasAny=c.items.some(Boolean);
+  let h='<h2>🧰 Truhe</h2>'+chestGrid(c)+
+    '<h3>Rucksack</h3>'+invGrid()+
+    '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
+    '<div class="btnrow">'+(hasAny?'<button data-act="takeall">Alles nehmen</button>':'')+
+    '<button class="primary" data-act="close">Schließen</button></div>';
   showModal(h,true);
+  drawCarry();
   updateItemTip();
 }
-// Truhen-Entnahme fasst zwei gekoppelte Wirkungen an: den gemeinsamen
-// Truhenbestand UND das eigene (lokale, unsynchronisierte) Inventar. Würden
-// zwei Spieler fast gleichzeitig denselben Stapel anklicken und jeder
+// Truhen-Klicks fassen zwei gekoppelte Wirkungen an: den gemeinsamen
+// Truhenbestand UND das eigene (lokale, unsynchronisierte) Inventar/carry.
+// Würden zwei Spieler fast gleichzeitig denselben Stapel anklicken und jeder
 // optimistisch lokal anwenden, könnten beide sich den vollen Bestand
-// gutschreiben, obwohl er nur einmal da war — echte Vervielfältigung.
-// Darum entscheidet ausschließlich der SERVER, wieviel eine Anfrage wirklich
-// bekommt (chest-take → chest-sync), und der anfragende Client rührt sein
-// Inventar erst an, wenn die Antwort da ist (siehe on('chest-sync',...)).
-// Offline/Einzelspieler fällt auf das alte Direkt-Verhalten zurück.
-function takeFromChest(i,one){
+// gutschreiben, obwohl er nur einmal da war — echte Vervielfältigung. Darum
+// entscheidet ausschließlich der SERVER, wieviel eine Anfrage wirklich
+// bekommt (chest-take/chest-put → chest-sync), und der anfragende Client
+// rührt sein Inventar/carry erst an, wenn die Antwort da ist (siehe
+// on('chest-sync',...)). Offline/Einzelspieler fällt auf das alte
+// Direkt-Verhalten zurück. Bewusst OHNE Tausch mit einem andersartigen
+// Gegenstand (anders als clickCell) — ein serverseitig arbitrierter Swap
+// wäre eine echte Race-Falle für wenig Nutzen; wer tauschen will, nimmt
+// erst heraus und legt dann in zwei Klicks hinein.
+function clickChestCell(i,one){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
-  const it=c.items[i]; if(!it) return;
-  const want=one?1:it.n;                     // rechts nimmt einzeln aus der Truhe
-  if(isConnected()){
-    send({t:'chest-take',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,id:it.id,n:want});
+  if(!c) return;
+  const cur=c.items[i];
+  if(!carry){
+    if(!cur) return;
+    const want=one?1:cur.n;
+    if(isConnected()){
+      send({t:'chest-take',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,slot:i,n:want});
+      return;
+    }
+    carry={id:cur.id,n:want};
+    cur.n-=want; if(cur.n<=0) c.items[i]=null;
+    SND.tap(); renderChest();
+  }else{
+    if(cur&&cur.id!==carry.id) return;      // keine Tausch-Unterstützung, s.o.
+    const spaceLeft=cur?STACK-cur.n:STACK;
+    const want=Math.min(one?1:carry.n,spaceLeft);
+    if(want<=0) return;
+    if(isConnected()){
+      send({t:'chest-put',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,slot:i,id:carry.id,n:want});
+      return;
+    }
+    if(cur) cur.n+=want; else c.items[i]={id:carry.id,n:want};
+    carry.n-=want; if(carry.n<=0) carry=null;
+    SND.tap(); renderChest();
+  }
+}
+// Bequemlichkeits-Knopf: alles auf einmal in den eigenen Rucksack. Läuft
+// online bewusst NACHEINANDER (ein chest-take in der Luft, dann erst das
+// nächste) statt alle 24 Fächer auf einmal loszuschicken — grant landet
+// serverseitig im gemeinsamen `carry`-Zeiger (genau wie ein manueller Klick),
+// und der hätte bei gleichzeitig eintreffenden Antworten für mehrere
+// verschiedene Gegenstände keinen Platz für mehr als einen Stapel. Jeder
+// Schritt wartet auf die eigene chest-sync-Antwort und räumt den Zeiger
+// sofort in den Rucksack, bevor der nächste startet — keine Vervielfältigung,
+// weil pro Fach weiterhin genau eine servergeprüfte Anfrage unterwegs ist.
+function waitForChestSync(pos,timeoutMs=2500){
+  return new Promise(resolve=>{
+    let done=false;
+    const off=on('chest-sync',msg=>{
+      if(msg.x!==pos.x||msg.y!==pos.y||msg.z!==pos.z) return;
+      if(done) return; done=true;
+      clearTimeout(t); off(); resolve();
+    });
+    const t=setTimeout(()=>{ if(done) return; done=true; off(); resolve(); },timeoutMs);
+  });
+}
+async function takeAllFromChest(){
+  const pos={x:openChestCell.x,y:openChestCell.y,z:openChestCell.z};
+  const c=chests.get(K(pos.x,pos.y,pos.z));
+  if(!c) return;
+  if(!isConnected()){
+    for(let i=0;i<24;i++){
+      const it=c.items[i]; if(!it) continue;
+      const rest=give(it.id,it.n);
+      it.n=rest; if(it.n<=0) c.items[i]=null;
+    }
+    SND.tap(); updateHUD(); renderChest();
     return;
   }
-  const rest=give(it.id,want);
-  if(rest===want){ toast('🎒 Inventar voll.','warn',1400); return; }
-  it.n-=want-rest;
-  if(it.n<=0) c.items.splice(i,1);
-  SND.tap();
+  for(let i=0;i<24;i++){
+    if(!openChestCell||openChestCell.x!==pos.x||openChestCell.y!==pos.y||openChestCell.z!==pos.z) return;
+    const it=c.items[i]; if(!it) continue;
+    if(carry) break;                        // etwas anderes hängt schon am Zeiger — nicht überschreiben
+    send({t:'chest-take',x:pos.x,y:pos.y,z:pos.z,slot:i,n:it.n});
+    await waitForChestSync(pos);
+    if(carry){ giveOrDrop(carry.id,carry.n); carry=null; drawCarry(); }
+  }
   updateHUD();
-  renderChest();
 }
 
 // ------------------------------------------------------------------ Rezeptbuch
@@ -2244,7 +2342,7 @@ mbox.addEventListener('mousedown',e=>{
   e.preventDefault(); e.stopPropagation();
   ac();
   const one=e.button===2;
-  if(c.dataset.chest!=null) takeFromChest(+c.dataset.chest,one);
+  if(c.dataset.chest!=null) clickChestCell(+c.dataset.chest,one);
   else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
   else clickCell({k:'g',i:+c.dataset.g},one);
 });
@@ -2258,19 +2356,7 @@ mbox.addEventListener('click',e=>{
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='trade'){ doTrade(); return; }
   if(act==='close') hideModal();
-  else if(act==='takeall'){
-    const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
-    if(isConnected()){
-      // Erst eine Momentaufnahme, dann pro Stapel eine eigene chest-take-
-      // Anfrage — c.items ändert sich sonst unter der Schleife weg, sobald
-      // die erste chest-sync-Antwort hereinkommt.
-      const items=c.items.slice();
-      for(const it of items)
-        send({t:'chest-take',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,id:it.id,n:it.n});
-    }else{
-      for(let i=c.items.length-1;i>=0;i--) takeFromChest(i);
-    }
-  }
+  else if(act==='takeall'){ takeAllFromChest(); }
   else if(act==='help') openIntro();
   else if(act==='start'){ localStorage.setItem('edf_seen','1'); hideModal(); state.started=true; }
   else if(act==='pwsubmit') submitPassword();
@@ -2553,17 +2639,31 @@ on('plant',msg=>{
   growing.set(K(msg.x,msg.y,msg.z),{to:msg.to,at:msg.at});
 });
 // Truhen: Server ist alleinige Autorität, wer wieviel bekommt (siehe
-// takeFromChest oben). items ist der vollständige, schon aktualisierte
-// Truheninhalt — einfach übernehmen. grant sagt, ob (und was) DIESER Client
-// für seine eigene Anfrage bekommen hat; giveOrDrop übernimmt das restliche
-// Verhalten (Inventar voll → vor die Füße legen) genau wie beim Handeln/
-// Kochen schon heute.
+// clickChestCell oben). items ist der vollständige, schon aktualisierte
+// 24-Fächer-Truheninhalt — einfach übernehmen (die Truhe lokal anlegen, falls
+// sie hier noch gar nicht existiert — z.B. weil DIESER Client sie gerade erst
+// gesetzt hat, s. useRight). grant sagt, ob (und was) DIESER Client für seine
+// eigene Anfrage bekommen hat: bei 'take' landet es am carry-Zeiger (genau
+// wie ein Griff ins Handwerksraster), bei 'put' schrumpft der carry-Stapel um
+// genau das, was wirklich ankam — der Rest (falls die Anfrage durch ein
+// Wettrennen nur teilweise durchkam) bleibt am Zeiger hängen, statt verloren
+// zu gehen.
 on('chest-sync',msg=>{
   const key=K(msg.x,msg.y,msg.z);
   let c=chests.get(key);
-  if(!c){ c={items:[],opened:true}; chests.set(key,c); }
+  if(!c){ c={items:Array(24).fill(null),opened:true}; chests.set(key,c); }
   c.items=msg.items;
-  if(msg.grant&&msg.grant.pid===getPid()&&msg.grant.n>0) giveOrDrop(msg.grant.id,msg.grant.n);
+  if(msg.grant&&msg.grant.pid===getPid()){
+    const g=msg.grant;
+    if(g.kind==='take'&&g.n>0){
+      if(!carry) carry={id:g.id,n:g.n};
+      else if(carry.id===g.id) carry.n+=g.n;   // defensiv: sollte bei leerem Zeiger starten
+      else giveOrDrop(g.id,g.n);                // Zeiger schon anderweitig belegt — nicht überschreiben
+    }else if(g.kind==='put'&&carry&&carry.id===g.id){
+      carry.n-=g.n; if(carry.n<=0) carry=null;
+    }
+    drawCarry();
+  }
   if(openChestCell&&openChestCell.x===msg.x&&openChestCell.y===msg.y&&openChestCell.z===msg.z) renderChest();
   updateHUD();
 });
@@ -3207,7 +3307,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   get sel(){return heldId();},
   openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,breakBlock,updatePots,
   learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,updatePotPanel,icon,iconSrc,
-  clickCell,takeFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
+  clickCell,clickChestCell,takeAllFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
   carried(){return carry;},
   tp(x,z,yaw){

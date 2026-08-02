@@ -35,6 +35,7 @@ export const RECIPES=[
   {id:'plank', rank:0, out:['plank',4], shapeless:['log']},
   {id:'stick', rank:1, out:['stick',4], pat:['P','P'],     key:{P:'plank'}},
   {id:'bench', rank:2, out:['bench',1], pat:['PP','PP'],   key:{P:'plank'}},
+  {id:'chest', rank:2.5,out:['chest',1],pat:['PPP','P P','PPP'], key:{P:'plank'}},
   {id:'torch', rank:3, out:['torch',4], pat:['S','K'],     key:{S:'stone',K:'stick'}},
   {id:'brick', rank:4, out:['brick',4], pat:['SA','AS'],   key:{S:'stone',A:'sand'}},
   {id:'bowl',  rank:5, out:['bowl',2],  pat:['P P',' P '], key:{P:'plank'}},
