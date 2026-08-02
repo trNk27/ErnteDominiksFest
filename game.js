@@ -2330,7 +2330,7 @@ function openPasswordModal(msg){
   showModal(`<h2>🔒 Serverzugang</h2>
     <p>BOMBA BOOM, BOMBA BOOM...</p>
     ${msg?`<p style="color:#ff9a86">${msg}</p>`:''}
-    <p><input id="pwInput" type="password" placeholder="Passwort" autocomplete="off" style="
+    <p><input id="pwInput" type="text" placeholder="Passwort" autocomplete="off" style="
       width:100%;box-sizing:border-box;padding:10px;border-radius:8px;
       border:1px solid #4a774a;background:#0f1c0f;color:#eaf3ea;font-size:15px"></p>
     <div class="btnrow"><button class="primary" data-act="pwsubmit">Verbinden</button></div>`);
@@ -3026,6 +3026,11 @@ canvas.addEventListener('wheel',e=>{
   SND.tap(); updateHUD();
 },{passive:false});
 addEventListener('keydown',e=>{
+  // Tippt man gerade in ein Textfeld (z.B. das Passwortfeld), sollen Tasten
+  // wie E/P/Q/Ziffern/Leertaste normal ihr Zeichen eingeben statt als
+  // Spielsteuerung abgefangen zu werden — sonst schließt "e" tippen sogar
+  // gleich das offene Fenster.
+  if(document.activeElement&&document.activeElement.tagName==='INPUT') return;
   if(e.repeat&&e.code!=='Space') return;
   keys[e.code]=true;
   if(e.code==='Escape'){ if(document.pointerLockElement) document.exitPointerLock(); return; }
