@@ -1486,7 +1486,7 @@ function ensureMob(id,x,y,z){
   let m=mobs.find(mm=>mm.id===id);
   if(m) return m;
   const mesh=makeMobMesh(x,y,z);
-  m={id,x,y,z,hp:MOB_HP,hurtT:false,mesh,target:{x,y,z}};
+  m={id,x,y,z,hp:MOB_HP,hurtT:false,mesh,target:{x,y,z},screamCd:rnd(3,7)};
   mobs.push(m);
   return m;
 }
@@ -1504,6 +1504,16 @@ function updateMobsOnline(dt){
     m.z=lerp(m.z,m.target.z,f);
     m.mesh.position.set(m.x,m.y+.98,m.z);
     m.mesh.material.color.setRGB(1,m.hurtT?.4:1,m.hurtT?.4:1);
+    // Online übernimmt der Server Bewegung/Kampf, aber das Gruseln bei Nacht
+    // (zufälliges Kreischen in Hörweite) ist rein kosmetisch und lokal — dafür
+    // gibt es keinen Netzwerkgrund, nur denselben Cooldown wie offline.
+    if(state.night){
+      m.screamCd-=dt;
+      if(Math.hypot(m.x-player.x,m.z-player.z)<14&&m.screamCd<=0){
+        playSample(pick(['benni1','benni2','benni3']),.7);
+        m.screamCd=rnd(8,14);
+      }
+    }
   }
 }
 function hurtPlayer(dmg){
@@ -1758,7 +1768,7 @@ function attack(){
     // tatsächliche Änderung kommt einen Tick später über mob-state/mob-dead
     // zurück (siehe die Handler weiter unten). Eine bewusste, kleine
     // Latenz, kein Bug.
-    if(isConnected()){ send({t:'mob-hit',id:best.id,dmg:heldDmg()}); return true; }
+    if(isConnected()){ playSample('punch',.6); send({t:'mob-hit',id:best.id,dmg:heldDmg()}); return true; }
     damageMob(best,heldDmg());
     return true;
   }
