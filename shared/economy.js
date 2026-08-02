@@ -1,0 +1,77 @@
+/* =====================================================================
+   shared/economy.js — Rezepte, Preise und Jannes-Angebotslogik, ohne
+   three.js und ohne DOM. Wird von game.js UND vom PartyKit-Server
+   importiert: der Server braucht dieselben Daten, um Verkäufe/Käufe zu
+   validieren und — ab Phase 4 — die Jannes-Angebote selbst auszuwürfeln,
+   statt sich auf einen Client zu verlassen, der abweichen könnte.
+   ===================================================================== */
+
+// ------------------------------------------------------------------ Geld
+// Das Ziel des Spiels: zehntausend Euro umgesetzt. Gezählt wird, was man
+// insgesamt verdient hat, nicht was in der Kasse liegt — Einkaufen bringt
+// einen also nicht zurück.
+export const GOAL=10000;
+// Was beim Pflücken an Saatgut abfällt — der Anfang jedes Beetes.
+export const SEED_OF={dominik:'kern',bush:'kern',shroom:'mycel',pepper:'korn'};
+// Was Manni annimmt und was er dafür zahlt. Die Frucht ist der Cent, die
+// Suppe der große Schein; die beiden Gerichte liegen dazwischen, damit sich
+// der Kochtopf auch lohnt, bevor man das Suppenrezept hat.
+export const PRICES={dominik:1,compote:12,panfry:15,soup:100};
+// Was Manni verkauft — nichts davon lässt sich bauen.
+export const SHOP=[
+  {id:'board', price:250,  txt:'Auf festem Boden fast doppelt so flott.'},
+  {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
+  {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
+];
+
+// ------------------------------------------------------------------ Rezepte
+// pat  Zeilen von oben nach unten, key übersetzt die Zeichen, ' ' bleibt leer
+// shapeless  Zutaten in beliebiger Anordnung
+// rank je kleiner, desto alltäglicher — danach sortiert sich das Rezeptbuch
+// secret  nur mit Rezept zu bauen; ohne bleibt der Topf leer
+// Ob eine Werkbank nötig ist, steht nirgends: was breiter oder höher als zwei
+// ist, passt schlicht nicht ins 2×2-Raster des Inventars.
+export const RECIPES=[
+  {id:'plank', rank:0, out:['plank',4], shapeless:['log']},
+  {id:'stick', rank:1, out:['stick',4], pat:['P','P'],     key:{P:'plank'}},
+  {id:'bench', rank:2, out:['bench',1], pat:['PP','PP'],   key:{P:'plank'}},
+  {id:'torch', rank:3, out:['torch',4], pat:['S','K'],     key:{S:'stone',K:'stick'}},
+  {id:'brick', rank:4, out:['brick',4], pat:['SA','AS'],   key:{S:'stone',A:'sand'}},
+  {id:'bowl',  rank:5, out:['bowl',2],  pat:['P P',' P '], key:{P:'plank'}},
+  {id:'sword', rank:6, out:['sword',1], pat:['S','S','K'], key:{S:'stone',K:'stick'}},
+  {id:'pick',  rank:7, out:['pick',1],  pat:['SSS',' K ',' K '], key:{S:'stone',K:'stick'}},
+  {id:'axe',   rank:8, out:['axe',1],   pat:['SS ','SK ',' K '], key:{S:'stone',K:'stick'}},
+  {id:'pot',   rank:9, out:['pot',1],   pat:['S S','S S','SPS'], key:{S:'stone',P:'plank'}},
+  {id:'hoe',   rank:3, out:['hoe',1],   pat:['SS ',' K ',' K '], key:{S:'stone',K:'stick'}},
+  // Gerichte. Sie entstehen nur im Kochtopf und nur mit Rezept — das gibt es
+  // bei den Jannessen, nicht durch Herumprobieren. Im Topf liegt alles
+  // durcheinander, darum zählt hier die Zutatenliste und kein Muster.
+  {id:'compote',rank:10,out:['compote',1], station:'pot', secret:true,
+   shapeless:['dominik','dominik','salt','bowl']},
+  {id:'panfry', rank:11,out:['panfry',1],  station:'pot', secret:true,
+   shapeless:['mushroom','mushroom','pepper','bowl']},
+  {id:'soup',  rank:99,out:['soup',1],     station:'pot', secret:true,
+   shapeless:['dominik','dominik','dominik','mushroom','mushroom',
+              'salt','pepper','pepper','bowl']},
+];
+
+// ------------------------------------------------------------------ Angebote
+// Jedes Rezept ist bei irgendeinem Jannes zu haben, und keines zweimal: was
+// einer aushängen hat, bietet der nächste nicht an. Nach einem Handel
+// überlegt er sich eine Weile etwas Neues — und wird dabei jedes Mal ein
+// bisschen gieriger.
+export const REFRESH=40;                 // Sekunden bis zum nächsten Angebot
+export const RAW=['dominik','mushroom','pepper'];
+// offerWant ist rein — der aufrufende Zufallsgenerator (OFFER_RND) wird von
+// außen übergeben, damit Client und Server je ihre eigene Instanz halten
+// können, ohne dass beide Seiten irgendetwas synchron auswürfeln müssten.
+export function offerWant(r,round,offerRnd){
+  if(r.id==='soup') return [['compote',1+round],['panfry',1+round]];
+  const grow=1+round*.7;
+  const base=r.rank>=10?7:r.rank>=6?5:3;
+  // Pfeffer verlangt nur, wer schon Werkzeug hergibt — vorher war man kaum
+  // hinter dem Fluss.
+  const pool=r.rank>=6?RAW:RAW.slice(0,2);
+  const id=pool[Math.floor(offerRnd()*pool.length)];
+  return [[id,Math.max(1,Math.round(base*grow))]];
+}

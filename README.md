@@ -23,6 +23,65 @@ python3 -m http.server 8000
 
 Beim ersten Klick ins Bild fängt die Maus ein (Pointer-Lock), `Esc` gibt sie wieder frei.
 
+## Zu viert spielen (Multiplayer)
+
+Bis zu **vier Spieler** teilen sich eine einzige, dauerhafte Welt hinter einem
+gemeinsamen Passwort. Was geteilt ist: die Welt selbst (abgebaute/gesetzte
+Blöcke, Truhen, Kochtöpfe, Felder, Fackeln), die Kasse (💶 und 🎯 sind ein
+gemeinsamer Topf, kein Wettbewerb), das Rezeptbuch (📜 — wer ein Rezept
+lernt, kann es allen zeigen) und die Bewohner (Jannessen, Manni, Bennis laufen
+für alle gleich). Was **nicht** geteilt ist und nur im eigenen Browser bleibt:
+Rucksack, Leben, Hunger, Position — keine Accounts, kein Login, keine
+Spielerdaten auf dem Server.
+
+### Server aufsetzen (einmalig)
+
+Der Mehrspieler-Teil läuft als kleiner [PartyKit](https://www.partykit.io/)-Server
+unter `party/`, getrennt vom eigentlichen Spiel:
+
+```bash
+cd party
+npm install
+npx partykit login                       # einmalig, öffnet den Browser
+npx partykit deploy                       # baut & deployt party/server.js
+npx partykit env add ROOM_PASSWORD        # das Passwort für den Beitritt festlegen
+```
+
+`partykit deploy` gibt eine Adresse wie `erntedominiksfest.<dein-name>.partykit.dev`
+aus. Die trägst du in [`net.js`](net.js) ein:
+
+```js
+export const PARTY_URL = 'wss://erntedominiksfest.<dein-name>.partykit.dev';
+```
+
+Danach `net.js` committen und pushen — die statische Seite (GitHub Pages/Vercel/…)
+zieht die neue Adresse beim nächsten Deploy automatisch mit. Das Passwort teilst
+du deinen Mitspielern auf einem anderen Weg mit (Chat, nicht im Repo).
+
+**Zwei getrennte Deploy-Wege**: Änderungen unter `party/` oder `shared/` brauchen
+`npx partykit deploy`; alles andere (`game.js`, `index.html`, …) braucht nur den
+normalen Git-Push. Leicht zu vergessen, wenn man nur an einer der beiden Seiten
+gearbeitet hat.
+
+### Lokal entwickeln/testen
+
+Ohne laufenden Server startet das Spiel trotzdem — offline, als Einzelspieler,
+genau wie bisher (ein Toast weist kurz darauf hin). Für einen echten
+Mehrspieler-Test lokal:
+
+```bash
+cd party && npx partykit dev              # Server auf ws://127.0.0.1:1999
+python3 -m http.server 8000               # Spiel wie gewohnt, zweiter Terminal
+```
+
+`party/.env.local` (nicht eingecheckt, siehe `party/.gitignore`) mit
+`ROOM_PASSWORD=<irgendein-testpasswort>` legt für den lokalen Server ein Passwort
+fest; ohne diese Datei lehnt er jede Verbindung ab (kein Passwort konfiguriert
+heißt zu, nicht offen).
+
+Ein falsches Passwort öffnet erneut die Passwortabfrage, ein volles Zimmer
+(schon vier Spieler drin) ebenso mit entsprechendem Hinweis.
+
 ## Steuerung
 
 | Taste | Wirkung |
@@ -320,6 +379,14 @@ die ganze Welt.
 - `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch; dieselben
   Bilder tragen auch die Würfel, die herumliegen
 - `sprites/ui/` — Herzen, Essensbalken und die Knöpfe oben rechts
+- `shared/world.js`, `shared/economy.js` — Weltgenerierung, Rezepte und Preise als
+  reines JS ohne three.js/DOM, damit `game.js` **und** der Mehrspieler-Server exakt
+  dieselben Daten aus demselben Samen erzeugen, ohne dass eine Seite der anderen
+  etwas davon schicken müsste
+- `net.js` — die Netzwerkverbindung des Spiels zum Server (rohes WebSocket, keine
+  Bibliothek)
+- `party/` — der Mehrspieler-Server selbst (siehe „Zu viert spielen" oben);
+  `party/server.js` ist die einzige Datei, die man normalerweise anfasst
 
 Die Sprites sind Gegenstände auf durchsichtigem Grund, keine Kachelmuster —
 die Blockflächen der Welt entstehen weiterhin als Pixelrauschen im Code.

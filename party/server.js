@@ -1,0 +1,1229 @@
+// PartyKit multiplayer relay server.
+//
+// Phase 1: connection + password-gate skeleton.
+//   - Exactly one fixed room for the whole game, named "world".
+//   - Password gate via `?pw=` query param, checked against ROOM_PASSWORD.
+//   - Cap at 4 simultaneous connections.
+//   - Assign each connection a small numeric player id (pid).
+//   - welcome / join / leave broadcast on connect / disconnect.
+// Phase 2 added `pos` (position/pose) sync, cached in memory only.
+// Phase 3a added block-edit (`edits`) and torch sync, backed by persistent
+// per-room storage so the world survives a server restart.
+// Phase 3b (this revision) adds growing-crop, chest, and cooking-pot sync:
+//   - growing crops: same optimistic broadcast pattern as blocks/torches.
+//   - chests: server-arbitrated request/response (`chest-take` ->
+//     `chest-sync`) — taking from a chest both decrements shared stock and
+//     grants items to the taker's own inventory, so two players racing the
+//     same stack must never both be granted the full amount.
+//   - cooking pots: ingredients/start are optimistic broadcasts like blocks,
+//     but completion is a claim/grant race (`pot-claim` -> `pot-grant`) —
+//     finishing a cook spawns a real, pickeable drop, so with un-networked
+//     drops (Phase 6) every nearby client independently "finishing" the same
+//     cook would each spawn and could each pick up their own copy of the
+//     dish. The server arbitrates exactly one winner per cook cycle; it
+//     never needs recipe knowledge, only who gets to call the client's own
+//     finishCook().
+// Phase 4a adds the shared team wallet (`econ`):
+//   - selling (`sell`) is never contested (nobody can race you for an item
+//     already in your own hand), so the client shows cosmetic feedback
+//     immediately, but the actual money/earned/sold totals are still
+//     entirely server-authoritative and broadcast to everyone via `econ`.
+//   - buying (`buy`) IS contested — two players can race the last
+//     affordable purchase out of the shared wallet — so it is never
+//     optimistic; the server alone decides affordability and answers with
+//     `econ` (carrying `buyResult`) so only the requester's own client
+//     reacts to the outcome.
+// Phase 5a adds server-authoritative day/night and NPC wander sync:
+//   - day/night is a pure function of wall-clock time, not a ticked/synced
+//     value — the server hands out a single epoch timestamp (`dayEpoch0`, in
+//     `welcome`, persisted so it survives a restart) and every client
+//     independently computes identical day/dayT from Date.now()-dayEpoch0,
+//     no further network traffic needed.
+//   - the 8 Jannessen + Manni wander around their home spot using the exact
+//     same random-walk math the client used to run independently per client
+//     (and so diverged within seconds) — now ticked server-side only
+//     (`this.chars`, ~5Hz, see CHAR_TICK_MS) and broadcast as `char-pos`,
+//     the same "server owns position, clients just lerp toward the last
+//     broadcast" shape as Phase 2's player-position sync.
+// Phase 5b adds server-authoritative Benni (mob) simulation:
+//   - the server is now the SOLE owner of every Benni's position, hp and
+//     AI (flee-by-day / chase-and-hit-by-night) — `this.mobs`, ticked at
+//     MOB_TICK_MS (10Hz, faster than the ambient char tick since combat
+//     needs to feel responsive) and broadcast wholesale as `mob-state`,
+//     the same "server owns position, clients just lerp" shape as `pos`/
+//     `char-pos` above. Spawning picks a random connected player's last
+//     known position (`this.lastPos`) as the anchor instead of a single
+//     local `player`, and the spawn cap is halved (see mobCap) since a mob
+//     is now a shared threat to up to 4 players at once, not one.
+//   - `mob-hit` (client -> server) is a plain, unarbitrated apply-and-
+//     broadcast: hp isn't a scarce resource two players could "duplicate"
+//     by both claiming a hit, it's just a countdown, so unlike chest-take/
+//     pot-claim there is nothing here to race-arbitrate.
+//   - a mob's attack (`mob-attack`, server -> client) is sent to ONLY the
+//     one player actually being hit, never broadcast — player hp is (by
+//     design, same as ever) entirely client-local, so nobody else needs to
+//     hear about it.
+//   - mobs are fully ephemeral: no persistence, not included in the storage
+//     blob at all (see _flush) — a server restart simply starts with an
+//     empty mob list, exactly like a freshly joined room.
+// Phase 6 adds ground-item drop sync:
+//   - spawning (`drop-spawn`) is a plain relay, exactly like block/torch —
+//     the spawning client already resolved its own random kick velocity, so
+//     the server has nothing to decide, only to tell everyone else a new
+//     drop exists.
+//   - consuming a drop (auto-sell, auto-pickup, auto-pot-feed) IS contested
+//     the same way pot-claim is: every connected client simulates that
+//     drop's physics independently, so two clients can both decide "I
+//     should act on this drop" at nearly the same moment. `drop-claim` ->
+//     `drop-claimed` reuses pot-claim's exact shape — first request for a
+//     given dropId wins, broadcast to everyone (including the winner, who
+//     also waits for this rather than assuming success). The server never
+//     needs to know WHY a drop was claimed (`reason` is purely
+//     informational for the client), only who claimed it first.
+
+/** @typedef {import("partykit/server").Room} Room */
+/** @typedef {import("partykit/server").Server} Server */
+/** @typedef {import("partykit/server").Connection} Connection */
+/** @typedef {import("partykit/server").ConnectionContext} ConnectionContext */
+/** @typedef {import("partykit/server").Request} PartyRequest */
+/** @typedef {import("partykit/server").Lobby} Lobby */
+/** @typedef {import("partykit/server").ExecutionContext} PartyExecutionContext */
+
+import {
+  createWorld, BOUND, BLOCKS, mulberry, MARKET, lerp, clamp, SEA,
+  DAYLEN, NIGHT_START, NIGHT_END, MOB_HP, MOB_SPEED, MOB_DMG, MOB_ATK_CD,
+} from "../shared/world.js";
+import { PRICES, SHOP, GOAL, RECIPES, REFRESH, offerWant } from "../shared/economy.js";
+
+const ROOM_NAME = "world";
+const MAX_PLAYERS = 4;
+// Storage key for the single JSON blob holding all persisted world edits and
+// torches. One blob (not per-key storage) is simplest and plenty fast for
+// the edit volume a 4-player casual game produces.
+const STORAGE_KEY = "world";
+// How long to wait after the last edit before writing to storage — avoids a
+// storage.put() per dig/place while someone is rapidly mining.
+const FLUSH_DEBOUNCE_MS = 2000;
+
+// WebSocket close codes in the 4000-4999 range are reserved for application use
+// (RFC 6455 7.4.2). We define our own small protocol here.
+const CLOSE_WRONG_PASSWORD = 4001;
+const CLOSE_ROOM_FULL = 4002;
+
+// Phase 5a: how often the server advances/broadcasts Jannes/Manni wander
+// positions. Ambient wandering doesn't need to look combat-crisp (unlike the
+// later Benni-AI work this paves the way for) — 5Hz is plenty and keeps the
+// broadcast volume for 9 small position updates negligible.
+const CHAR_TICK_MS = 200;
+// Phase 5b: how often the server advances/broadcasts Benni positions and
+// resolves attacks. Combat needs to feel responsive in a way ambient
+// wandering doesn't, hence a faster tick than CHAR_TICK_MS — a separate
+// timer (not a unified one) since the two run at genuinely different rates
+// for genuinely different reasons; see the class-level comment above.
+const MOB_TICK_MS = 100;
+// The client's own mobCap (game.js) is `Math.min(12,3+Math.floor(day*1.1))`
+// — a single player's threat budget. Online, up to 4 players share the same
+// mob pool, so the server halves it (rounded up, floored at 1 so day 1 never
+// rounds to zero) rather than letting a full room face the single-player cap
+// four times over.
+const mobCap = (day) => Math.max(1, Math.ceil(Math.min(12, 3 + Math.floor(day * 1.1)) / 2));
+
+/**
+ * Plain (non-seeded) random in [a,b) — matches the client's own `rnd()`,
+ * which `wander()` already used via un-seeded Math.random(). Fine here even
+ * though the server is the sole authority: unlike world generation, nothing
+ * needs this to be reproducible.
+ * @param {number} a
+ * @param {number} b
+ */
+function rnd(a, b) {
+  return a + Math.random() * (b - a);
+}
+
+/**
+ * Server-side port of the client's `wander(c,dt)` (game.js) — same pure
+ * movement math (a random nearby target within `c.roam` of `c.home`, walked
+ * toward at a fixed speed, then a pause before picking the next one), just
+ * reading `world.surfaceAt`/`world.fillsAt` instead of the client's
+ * module-scope versions of the same functions. Mutates `c` in place; no
+ * rendering concerns here, `c.group.position.set(...)` stays a client-only
+ * concern (see updateChars in game.js).
+ * @param {{home:{x:number,z:number}, roam:number, x:number, z:number, y:number, tx:number|null, tz:number|null, waitT:number}} c
+ * @param {number} dt
+ * @param {ReturnType<typeof createWorld>} world
+ */
+function wanderChar(c, dt, world) {
+  if (!c.roam) return;
+  if (c.tx == null) {
+    c.waitT -= dt;
+    if (c.waitT > 0) return;
+    for (let k = 0; k < 8; k++) {
+      const a = rnd(0, 6.28), d = rnd(0.6, c.roam);
+      const tx = c.home.x + Math.cos(a) * d, tz = c.home.z + Math.sin(a) * d;
+      const y = world.surfaceAt(tx, tz);
+      if (Math.abs(y - c.y) > 1) continue;
+      if (world.fillsAt(Math.round(tx), y, Math.round(tz))) continue;
+      c.tx = tx; c.tz = tz; break;
+    }
+    return;
+  }
+  const dx = c.tx - c.x, dz = c.tz - c.z, d = Math.hypot(dx, dz);
+  if (d < 0.12) { c.tx = null; c.waitT = rnd(2.5, 7); return; }
+  const st = Math.min(d, 0.85 * dt);
+  c.x += (dx / d) * st; c.z += (dz / d) * st;
+  const y = world.surfaceAt(c.x, c.z);
+  c.y = Math.abs(y - c.y) > 2 ? y : lerp(c.y, y, Math.min(1, dt * 9));
+}
+
+/**
+ * Server-side port of the client's `mobY(m,dt)` (game.js) — surfaceAt()
+ * snaps to whole blocks, so nudging `m.y` toward it instead of setting it
+ * outright avoids a Benni popping at every cell boundary. Only the
+ * rendering-free half of the original: no mesh.position write here, that's
+ * the client's job once it lerps toward the broadcast `y`.
+ * @param {{x:number,z:number,y:number}} m
+ * @param {number} dt
+ * @param {ReturnType<typeof createWorld>} world
+ */
+function mobY(m, dt, world) {
+  const g = world.surfaceAt(m.x, m.z);
+  m.y = Math.abs(g - m.y) > 2.5 ? g : lerp(m.y, g, Math.min(1, dt * 11));
+  return m.y;
+}
+
+/**
+ * Server-side port of the client's per-mob body inside `updateMobs(dt)`
+ * (game.js) — same movement/attack math, reading `world.surfaceAt`/
+ * `world.mobBlocked` instead of the client's module-scope versions, and
+ * reacting to the NEAREST of possibly several connected `players` instead
+ * of a single local `player`. All mesh/material/sound statements are
+ * dropped (see the class-level comment: scream cues and the day-flee fade
+ * are accepted client-only simplifications, not ported here at all).
+ * Mutates `m` in place; returns what the caller (the mob tick) needs to act
+ * on — whether to drop this mob from `this.mobs`, and whether an attack
+ * landed on a specific player this tick.
+ * @param {{x:number,z:number,y:number,hp:number,hurtT:number,atkCd:number,fleeing:boolean}} m
+ * @param {number} dt
+ * @param {ReturnType<typeof createWorld>} world
+ * @param {{pid:number,x:number,y:number,z:number}[]} players currently connected, position-known players
+ * @param {boolean} night
+ * @returns {{remove:boolean, attack:{pid:number,dmg:number}|null}}
+ */
+function stepMob(m, dt, world, players, night) {
+  if (m.hurtT > 0) m.hurtT -= dt;
+  if (!players.length) {
+    // Nobody connected/positioned to react to yet (a brief window right
+    // after connect, before anyone's first `pos` has arrived). By day
+    // there's nothing to flee toward — same "nothing to chase, drop it"
+    // outcome as the distance check below would eventually reach. By night
+    // just sit still; players are more than likely to reappear next tick.
+    return { remove: !night, attack: null };
+  }
+  let nearest = players[0], nd = Math.hypot(nearest.x - m.x, nearest.z - m.z);
+  for (let i = 1; i < players.length; i++) {
+    const p = players[i], d = Math.hypot(p.x - m.x, p.z - m.z);
+    if (d < nd) { nd = d; nearest = p; }
+  }
+  const dx = nearest.x - m.x, dz = nearest.z - m.z, d = nd || 1;
+  if (!night) {                                 // Tagesanbruch: sie verziehen sich
+    m.fleeing = true;
+    m.x -= dx / d * MOB_SPEED * 1.6 * dt;
+    m.z -= dz / d * MOB_SPEED * 1.6 * dt;
+    mobY(m, dt, world);
+    const allFar = players.every((p) => Math.hypot(p.x - m.x, p.z - m.z) > 44);
+    return { remove: allFar, attack: null };
+  }
+  let attack = null;
+  if (d > 1.9) {
+    const my = world.surfaceAt(m.x, m.z);
+    let nx = m.x + dx / d * MOB_SPEED * dt, nz = m.z + dz / d * MOB_SPEED * dt;
+    if (world.mobBlocked(nx, nz, my)) {          // an Wänden und Steilhängen entlang
+      nx = m.x + (dz / d) * MOB_SPEED * dt; nz = m.z - (dx / d) * MOB_SPEED * dt;
+      if (world.mobBlocked(nx, nz, my)) { nx = m.x; nz = m.z; }
+    }
+    m.x = clamp(nx, BOUND.x0, BOUND.x1); m.z = clamp(nz, BOUND.z0, BOUND.z1);
+  } else {
+    m.atkCd -= dt;
+    if (m.atkCd <= 0) {
+      m.atkCd = MOB_ATK_CD;
+      // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher.
+      if (Math.abs(world.surfaceAt(m.x, m.z) - nearest.y) < 2.2) {
+        attack = { pid: nearest.pid, dmg: MOB_DMG };
+      }
+    }
+  }
+  mobY(m, dt, world);
+  return { remove: false, attack };
+}
+
+/**
+ * JSON-encodes a `{t: ...}` message and sends it to a single connection.
+ * All messages in this protocol are JSON strings with a `t` field naming the
+ * message type — keep using this helper (and `broadcast` below) as new
+ * message types are added in later phases.
+ * @param {Connection} conn
+ * @param {Record<string, unknown>} msg
+ */
+function send(conn, msg) {
+  // A connection can close in the gap between being handed to us and this
+  // call (e.g. a client that disconnects immediately after the WS upgrade,
+  // mid-onConnect) — swallow that rather than letting it throw out of an
+  // event handler and potentially skip cleanup for everyone else.
+  try {
+    conn.send(JSON.stringify(msg));
+  } catch (e) {
+    // ignore — the connection's own onClose/onError will handle cleanup.
+  }
+}
+
+/**
+ * JSON-encodes a `{t: ...}` message and broadcasts it to every connection in
+ * the room except those listed in `without`.
+ * @param {Room} room
+ * @param {Record<string, unknown>} msg
+ * @param {string[]} [without]
+ */
+function broadcast(room, msg, without) {
+  room.broadcast(JSON.stringify(msg), without);
+}
+
+/**
+ * Checks the `?pw=` query string param on a connection request against the
+ * ROOM_PASSWORD secret.
+ * @param {PartyRequest | Request} req
+ * @param {Record<string, unknown>} env
+ * @returns {boolean}
+ */
+function hasCorrectPassword(req, env) {
+  const expected = env.ROOM_PASSWORD;
+  if (typeof expected !== "string" || expected.length === 0) {
+    // No password configured server-side: fail closed rather than open.
+    return false;
+  }
+  const url = new URL(req.url);
+  const pw = url.searchParams.get("pw");
+  return pw === expected;
+}
+
+/**
+ * @implements {Server}
+ */
+class GameServer {
+  /**
+   * @param {Room} room
+   */
+  constructor(room) {
+    this.room = room;
+    /** @type {Map<string, number>} connection.id -> pid, for currently-joined connections */
+    this.pidByConnection = new Map();
+    // Phase 5b: the reverse of pidByConnection. Needed specifically so the
+    // mob tick (a bare setInterval, not running inside any connection's own
+    // request) can look up a target player's Connection to deliver a
+    // targeted `mob-attack` WITHOUT calling this.room.getConnections() —
+    // that call is only valid from within a live request context; from a
+    // detached timer it throws an opaque "internal error" in the workerd
+    // runtime (discovered the hard way — see _startMobTimer's own comment).
+    /** @type {Map<number, Connection>} pid -> connection, for currently-joined connections */
+    this.connByPid = new Map();
+    /** @type {Set<number>} pids currently assigned (pool is 1..MAX_PLAYERS) */
+    this.usedPids = new Set();
+    /** @type {Map<number, {x:number,y:number,z:number,yaw:number,pitch:number,hp:number,food:number,sel:number}>} pid -> last known position/pose */
+    this.lastPos = new Map();
+    // Phase 3b: growing crops and cooking pots have no equivalent in
+    // shared/world.js (unlike chests, which createWorld() already builds
+    // deterministically into this.world.chests) — own instance-level maps,
+    // same "x,y,z" key format as the client's `growing`/`pots` maps.
+    /** @type {Map<string, {to:string, at:number}>} "x,y,z" -> growing crop */
+    this.growing = new Map();
+    /** @type {Map<string, {items:{id:string,n:number}[], cook:number, readyAt:number}>} "x,y,z" -> pot state */
+    this.pots = new Map();
+    // Ephemeral pot-cook claim arbitration only — never persisted, starts
+    // empty on every restart. A cook already granted before a restart has
+    // already gone idle/empty everywhere (see the `pot-claim` handler, which
+    // also resets this.pots so a post-restart welcome doesn't replay a
+    // stale "still cooking" snapshot that would let the same cook finish
+    // twice).
+    /** @type {Map<string, number>} "x,y,z:readyAt" -> winning pid */
+    this.potClaims = new Map();
+    // Phase 6: ground-item drop claim arbitration only — the server never
+    // tracks drop EXISTENCE (spawning is a plain relay, see the `drop-spawn`
+    // handler), only who won the race to consume a given dropId. Same
+    // ephemeral, never-persisted treatment as potClaims above: dropIds are
+    // minted fresh per spawn and never reused, so there is nothing here a
+    // restart could meaningfully replay.
+    /** @type {Map<string, number>} dropId -> winning pid */
+    this.dropClaims = new Map();
+    // Phase 4a: the shared team wallet. Server-authoritative for the exact
+    // same reason chest takes are: two players selling/buying at nearly the
+    // same instant must never each compute their own (possibly diverging)
+    // total — see the `sell`/`buy` handlers below, which are the only place
+    // this object is ever mutated.
+    /** @type {{money:number, earned:number, sold:number, bought:number, won:boolean}} */
+    this.econ = { money: 0, earned: 0, sold: 0, bought: 0, won: false };
+    // Phase 4b: recipes known team-wide (see class-level comment near the
+    // `learn`/`trade-complete` handlers for why this is a plain optimistic
+    // Set rather than arbitrated like chests/pots — recipe knowledge is
+    // never contested, only trade OFFERS and their completion are).
+    /** @type {Set<string>} recipe ids */
+    this.known = new Set(["plank", "stick"]);
+
+    // Phase 5a: day/night is now a pure function of wall-clock elapsed since
+    // this epoch (see the `welcome`/onMessage class comment) — set once on
+    // first-ever room creation and never touched again except by
+    // _loadPersisted reusing a previously persisted value, so the in-game
+    // calendar survives a server restart instead of resetting to day 1.
+    /** @type {number} */
+    this.dayEpoch0 = Date.now();
+
+    // Same deterministic base world (terrain, trees, chests, ...) as the
+    // client builds from shared/world.js — the server only cares about the
+    // parts of it that change at runtime: `edits` (dug/placed blocks) and
+    // `torches`. Building this re-runs the ~1200-tree generation once per
+    // room instance (same one-time cost the client already pays at boot).
+    this.world = createWorld();
+
+    // Phase 4b: the server is now the SOLE author of what each Jannes is
+    // currently offering — see the class-level comment near `trader-refresh`/
+    // `trade-complete` for why this can no longer be simulated independently
+    // per client the way blocks/torches/growing-crops can. Indexed identically
+    // to `this.world.traderSpots` (and the client's own `traders` array,
+    // which is built from the very same deterministic traderSpots), so index
+    // i always means the same physical Jannes on both sides.
+    /** @type {({give:string|null, want:[string,number][], done:boolean, round:number, readyAt:number}|null)[]} */
+    this.trades = this.world.traderSpots.map(() => null);
+    // Own seeded RNG instance, same seed the client's OFFER_RND used to use
+    // for its (now offline-only) local rolls — not load-bearing since the
+    // server is the sole authority either way, just tidy for reproducibility.
+    this._offerRnd = mulberry(20260101);
+    // The Jannes im Tal starts with the hoe, same as the client's boot-time
+    // placeholder — everyone else is rolled via _makeOffer. Persisted state
+    // (if any) overwrites this a moment later, in _loadPersisted below.
+    const hoe = RECIPES.find((r) => r.id === "hoe");
+    this.trades[0] = { give: hoe.id, want: offerWant(hoe, 0, this._offerRnd), done: false, round: 0, readyAt: 0 };
+    for (let i = 1; i < this.trades.length; i++) this._makeOffer(i, 0);
+
+    // Phase 5a: server-owned wander state for every roaming character —
+    // index 0 is Manni (home = his market stall, same MARKET constant the
+    // client uses), indices 1..8 are the 8 Jannessen in the exact same order
+    // as `this.world.traderSpots` (and thus the same order the client's own
+    // `CHARS` array ends up in: it starts with just Manni, then pushes the
+    // traderSpots-derived Jannessen one by one — see game.js). The `roam`
+    // values for the Jannessen mirror the client's `i>=1&&i<=3?1.1:3.2`
+    // exactly (i here is the traderSpots index, 0-based).
+    /** @type {{home:{x:number,z:number}, roam:number, x:number, z:number, y:number, tx:number|null, tz:number|null, waitT:number}[]} */
+    this.chars = [
+      { home: { x: MARKET.x, z: MARKET.z }, roam: 1 },
+      ...this.world.traderSpots.map((s, i) => ({
+        home: { x: s.x, z: s.z },
+        roam: i >= 1 && i <= 3 ? 1.1 : 3.2,
+      })),
+    ].map((c) => {
+      const y = this.world.surfaceAt(c.home.x, c.home.z);
+      return { ...c, x: c.home.x, z: c.home.z, y, tx: null, tz: null, waitT: rnd(2.5, 7) };
+    });
+    // Ticks this.chars via wanderChar() and broadcasts the result — only
+    // runs while at least one connection is open (started in onConnect,
+    // cleared in _handleDisconnect once the room empties, see there).
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._charTimer = null;
+
+    // Phase 5b: server-owned Bennis. No equivalent in shared/world.js (mobs
+    // aren't part of the deterministic world-gen the way chests/traderSpots
+    // are) — a fresh, empty, purely in-memory Map, same "ephemeral, never
+    // persisted" treatment as this.potClaims above. id -> mob state; no
+    // `mesh`, obviously, this is data only (see stepMob/mobY).
+    /** @type {Map<number, {id:number,x:number,z:number,y:number,hp:number,hurtT:number,atkCd:number,fleeing:boolean}>} */
+    this.mobs = new Map();
+    /** @type {number} next id handed out by _spawnMob */
+    this._nextMobId = 1;
+    // Counts down between spawn attempts, mirroring the client's own
+    // (now offline-only) `mobTimer` in game.js.
+    this._mobSpawnTimer = 0;
+    // Ticks this.mobs via stepMob() and broadcasts the result — same
+    // start-in-onConnect/clear-in-_handleDisconnect lifecycle as
+    // _charTimer above, just at a faster rate (see MOB_TICK_MS).
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._mobTimer = null;
+
+    // True once persisted edits/torches have been replayed into this.world.
+    // onConnect awaits `this._ready` before sending `welcome`, so a
+    // connection can never observe a partially-loaded world — see onStart().
+    this._ready = this._loadPersisted();
+
+    this._dirty = false;
+    this._flushTimer = null;
+  }
+
+  /**
+   * Rolls a fresh offer for trader `idx` (mirrors the client's own
+   * setOffer+makeOffer combined, but reading/writing this.known/this.trades
+   * instead of the client's known/CHARS). Never offers a recipe already
+   * known team-wide, nor one currently live (undone) on ANOTHER trader —
+   * each recipe is offered by exactly one Jannes, ever.
+   * @param {number} idx
+   * @param {number} round
+   */
+  _makeOffer(idx, round) {
+    const taken = new Set(
+      this.trades
+        .filter((t, i) => i !== idx && t && t.give && !t.done)
+        .map((t) => t.give)
+    );
+    const pool = RECIPES.filter((r) => !this.known.has(r.id) && !taken.has(r.id));
+    const r = pool.length ? pool[Math.floor(this._offerRnd() * pool.length)] : null;
+    this.trades[idx] = r
+      ? { give: r.id, want: offerWant(r, round, this._offerRnd), done: false, round, readyAt: 0 }
+      : { give: null, want: [], done: false, round, readyAt: 0 };
+  }
+
+  /**
+   * Starts the ambient Jannes/Manni wander tick (see CHAR_TICK_MS) if it
+   * isn't already running. Idempotent — safe to call from onConnect on every
+   * connect, not just the first. Cleared again in _handleDisconnect once the
+   * room empties (see there), so an unattended room doesn't keep a timer
+   * (and the CPU/storage-adjacent work it implies) running forever.
+   */
+  _startCharTimer() {
+    if (this._charTimer) return;
+    const dt = CHAR_TICK_MS / 1000;
+    this._charTimer = setInterval(() => {
+      for (const c of this.chars) wanderChar(c, dt, this.world);
+      broadcast(this.room, {
+        t: "char-pos",
+        list: this.chars.map((c, idx) => ({ idx, x: c.x, z: c.z, y: c.y })),
+      });
+    }, CHAR_TICK_MS);
+  }
+
+  /**
+   * Day/night as a pure function of wall-clock elapsed since this.dayEpoch0
+   * — the exact same formula the client now computes independently (see
+   * game.js update(dt)), just needed server-side too so mob spawning/fleeing
+   * knows whether it's currently night without any client telling it.
+   * @returns {{day:number, dayT:number, night:boolean}}
+   */
+  _dayNight() {
+    const elapsed = (Date.now() - this.dayEpoch0) / 1000;
+    const dayT = (elapsed % DAYLEN) / DAYLEN;
+    const day = 1 + Math.floor(elapsed / DAYLEN);
+    const night = dayT >= NIGHT_START && dayT < NIGHT_END;
+    return { day, dayT, night };
+  }
+
+  /**
+   * Server-side port of the client's (now offline-only) `spawnMob()` —
+   * same position-picking loop (lit spots are avoided, a few tries before
+   * giving up; never spawns over water), just anchored on a random
+   * currently-connected player's last-known position instead of the single
+   * local `player`, and with no mesh/texture concerns at all. A no-op if
+   * nobody has sent a `pos` yet (this.lastPos empty) — nothing to anchor on.
+   */
+  _spawnMob() {
+    const anchors = [...this.lastPos.values()];
+    if (!anchors.length) return;
+    const anchor = anchors[Math.floor(Math.random() * anchors.length)];
+    let x, z, tries = 0;
+    do {
+      const a = rnd(0, 6.28), d = rnd(18, 30);
+      x = clamp(Math.round(anchor.x + Math.cos(a) * d), BOUND.x0 + 2, BOUND.x1 - 2);
+      z = clamp(Math.round(anchor.z + Math.sin(a) * d), BOUND.z0 + 2, BOUND.z1 - 2);
+    } while (this.world.litAt(x, z) && ++tries < 12);
+    if (this.world.litAt(x, z)) return;
+    const y = this.world.surfaceAt(x, z);
+    if (y < SEA - 1) return;
+    const id = this._nextMobId++;
+    this.mobs.set(id, { id, x, z, y, hp: MOB_HP, hurtT: 0, atkCd: rnd(0, 1), fleeing: false });
+  }
+
+  /**
+   * Starts the Benni tick (see MOB_TICK_MS) if it isn't already running —
+   * same idempotent-and-lifecycle-matched shape as _startCharTimer above,
+   * just a separate timer since combat wants a faster rate than ambient
+   * wandering (see the class-level comment). Each tick: maybe spawns one
+   * new Benni (night-gated, capped, see mobCap), steps every existing one's
+   * AI (see stepMob), delivers any attacks landed this tick to the ONE
+   * player actually hit (never broadcast — see the class-level comment),
+   * and broadcasts a full position/hp snapshot to everyone.
+   */
+  _startMobTimer() {
+    if (this._mobTimer) return;
+    const dt = MOB_TICK_MS / 1000;
+    this._mobTimer = setInterval(() => {
+      const { day, night } = this._dayNight();
+
+      this._mobSpawnTimer -= dt;
+      if (this._mobSpawnTimer <= 0) {
+        this._mobSpawnTimer = rnd(2.5, 5);
+        // No explicit "is anyone connected" check needed here (unlike
+        // onConnect/_handleDisconnect, which legitimately need a fresh
+        // room.getConnections() read) — this timer's own lifecycle already
+        // guarantees at least one connection is open for as long as it's
+        // ticking at all (started in onConnect, cleared once the room empties
+        // in _handleDisconnect, see there). Also: room.getConnections() is a
+        // live-request-context API — calling it from a bare setInterval that
+        // isn't running inside any particular connection's request turns
+        // into an opaque "internal error" in the workerd runtime, silently
+        // killing the whole tick. this.connByPid (below) exists specifically
+        // to avoid ever needing that call from in here.
+        if (night && this.mobs.size < mobCap(day)) {
+          this._spawnMob();
+        }
+      }
+
+      // lastPos only ever holds currently-connected pids (see the `pos`
+      // handler / _handleDisconnect's this.lastPos.delete(pid)), so no
+      // extra liveness filter is needed here.
+      const players = [...this.lastPos.entries()].map(([pid, p]) => ({ pid, x: p.x, y: p.y, z: p.z }));
+
+      for (const [id, m] of this.mobs) {
+        const result = stepMob(m, dt, this.world, players, night);
+        if (result.remove) {
+          this.mobs.delete(id); continue;
+        }
+        if (result.attack) {
+          // Not a broadcast — only the one player actually hit needs to
+          // know (see the class-level comment: player hp is entirely
+          // client-local, by design). Looked up via this.connByPid, NOT
+          // room.getConnections() — see the comment above.
+          const conn = this.connByPid.get(result.attack.pid);
+          if (conn) send(conn, { t: "mob-attack", dmg: result.attack.dmg });
+        }
+      }
+
+      broadcast(this.room, {
+        t: "mob-state",
+        list: [...this.mobs.values()].map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, hp: m.hp, hurtT: m.hurtT > 0 })),
+      });
+    }, MOB_TICK_MS);
+  }
+
+  /**
+   * Called by the PartyKit runtime once when the room starts, before the
+   * first onConnect/onRequest (confirmed against the installed
+   * partykit@0.0.115 type definitions, node_modules/partykit/server.d.ts:
+   * `onStart?(): void | Promise<void>` — "Called when the server is
+   * started, before first `onConnect` or `onRequest`. Useful for loading
+   * data from storage."). Returning/awaiting the same promise the
+   * constructor already kicked off both satisfies that contract and lets
+   * onConnect await `this._ready` directly as a defense-in-depth guard, in
+   * case any deployment target doesn't honor the ordering guarantee.
+   */
+  onStart() {
+    return this._ready;
+  }
+
+  /**
+   * Loads any previously persisted edits/torches (see _scheduleFlush) from
+   * per-room storage and replays them into this.world, so a server restart
+   * doesn't lose the world. No-op (world stays freshly generated) the first
+   * time a room ever starts, when nothing has been stored yet.
+   */
+  async _loadPersisted() {
+    const stored = await this.room.storage.get(STORAGE_KEY);
+    if (!stored || typeof stored !== "object") return;
+    for (const [key, type] of stored.edits || []) {
+      this.world.edits.set(key, type);
+    }
+    for (const t of stored.torches || []) {
+      this.world.torches.push(t);
+    }
+    // Phase 3b: chests are keyed like edits, so a plain per-key overwrite of
+    // the world-gen defaults is idempotent and correct (a chest nobody ever
+    // touched simply never appears in `stored.chests` — most chests, per the
+    // room-size estimate below).
+    for (const [key, c] of stored.chests || []) {
+      this.world.chests.set(key, c);
+    }
+    for (const [key, g] of stored.growing || []) {
+      this.growing.set(key, g);
+    }
+    for (const [key, p] of stored.pots || []) {
+      this.pots.set(key, p);
+    }
+    // Phase 4a: the persisted shared wallet, if any (absent on the very
+    // first room start, or on a blob written before this phase existed).
+    if (stored.econ && typeof stored.econ === "object") {
+      this.econ = { ...this.econ, ...stored.econ };
+    }
+    // Phase 4b: known recipes and per-trader offer state, if any (both
+    // absent on the very first room start, or on a blob written before this
+    // phase existed — in that case the constructor's freshly rolled
+    // this.trades/this.known, set up just above this call, stand as-is).
+    if (Array.isArray(stored.known)) {
+      this.known = new Set(stored.known);
+    }
+    if (Array.isArray(stored.trades) && stored.trades.length === this.trades.length) {
+      this.trades = stored.trades;
+    }
+    // Phase 5a: reuse the persisted day/night epoch, if any (absent on the
+    // very first room start, or on a blob written before this phase
+    // existed — in that case the constructor's freshly-set Date.now() from
+    // just above stands as-is, which is the correct "day 1 starts now"
+    // behavior for a brand-new world).
+    if (typeof stored.dayEpoch0 === "number" && Number.isFinite(stored.dayEpoch0)) {
+      this.dayEpoch0 = stored.dayEpoch0;
+    }
+  }
+
+  /**
+   * Marks the persisted world blob stale and (re)schedules a debounced
+   * write. A plain setTimeout is fine here: this.room.env confirms
+   * `hibernate` isn't opted into (see partykit/server.d.ts ServerOptions,
+   * default false), so the room instance stays resident in memory for the
+   * lifetime of its connections instead of being evicted between messages —
+   * there's no risk of the timer being silently dropped between a dig and
+   * the flush a couple seconds later.
+   */
+  _scheduleFlush() {
+    this._dirty = true;
+    if (this._flushTimer) return;
+    this._flushTimer = setTimeout(() => {
+      this._flushTimer = null;
+      this._flush();
+    }, FLUSH_DEBOUNCE_MS);
+  }
+
+  async _flush() {
+    if (!this._dirty) return;
+    this._dirty = false;
+    await this.room.storage.put(STORAGE_KEY, {
+      edits: [...this.world.edits.entries()],
+      torches: [...this.world.torches],
+      // Phase 3b: most of the 8 chests never get touched, and item stacks
+      // per chest are tiny — storing the full snapshot every flush (same
+      // approach as `edits`) is simplest and the data volume is negligible.
+      chests: [...this.world.chests.entries()],
+      growing: [...this.growing.entries()],
+      pots: [...this.pots.entries()],
+      // Phase 4a: the shared wallet, small and flat enough to store wholesale
+      // alongside everything else in this one debounced blob.
+      econ: { ...this.econ },
+      // Phase 4b: team-wide recipe knowledge and per-trader offer state,
+      // same "small enough to store wholesale" reasoning as econ above.
+      known: [...this.known],
+      trades: this.trades,
+      // Phase 5a: the day/night epoch — small and flat, same "store
+      // wholesale alongside everything else" reasoning as econ/known above.
+      dayEpoch0: this.dayEpoch0,
+    });
+  }
+
+  /**
+   * Runs on the edge worker before the WebSocket upgrade completes. Only
+   * rejects on a wrong ROOM_NAME here (a plain HTTP 404 is fine for that,
+   * since the client never needs to distinguish it from any other failure).
+   *
+   * Deliberately NOT checking the password here, even though that would
+   * normally be the cleaner rejection path: a pre-upgrade HTTP 401 has no
+   * WebSocket close code for client-side JS to read (browsers don't expose
+   * the failed-upgrade status to WebSocket `onclose`), so it surfaces as a
+   * generic abnormal closure (code 1006) — indistinguishable from "no
+   * server running at all". Since net.js needs to tell "wrong password"
+   * (re-prompt) apart from "offline" (silently continue single-player), the
+   * password check has to happen in onConnect below instead, where a
+   * rejection can close with a real, distinguishable 4001.
+   * @param {PartyRequest} req
+   * @param {Lobby} lobby
+   * @param {PartyExecutionContext} ctx
+   */
+  static onBeforeConnect(req, lobby, ctx) {
+    if (lobby.id !== ROOM_NAME) {
+      return new Response("Not found", { status: 404 });
+    }
+    return req;
+  }
+
+  /**
+   * Finds the lowest pid (1..MAX_PLAYERS) not currently in use.
+   * @returns {number} an available pid, or -1 if the pool is exhausted
+   */
+  _allocatePid() {
+    for (let pid = 1; pid <= MAX_PLAYERS; pid++) {
+      if (!this.usedPids.has(pid)) return pid;
+    }
+    return -1;
+  }
+
+  /**
+   * @param {Connection} conn
+   * @param {ConnectionContext} ctx
+   */
+  async onConnect(conn, ctx) {
+    // Defense in depth: re-check the password here too, in case
+    // onBeforeConnect isn't available/bypassed on some deployment target.
+    if (!hasCorrectPassword(ctx.request, this.room.env)) {
+      conn.close(CLOSE_WRONG_PASSWORD, "wrong password");
+      return;
+    }
+
+    // Defense in depth alongside onStart() (see there): make absolutely
+    // sure persisted edits/torches have been replayed into this.world
+    // before this connection can read or broadcast against it.
+    await this._ready;
+
+    // The connection manager has already added `conn` to room.getConnections()
+    // by the time onConnect runs, so a full room shows up as count > MAX_PLAYERS.
+    const currentCount = [...this.room.getConnections()].length;
+    const pid = currentCount > MAX_PLAYERS ? -1 : this._allocatePid();
+    if (pid === -1) {
+      conn.close(CLOSE_ROOM_FULL, "room full");
+      return;
+    }
+
+    this.usedPids.add(pid);
+    this.pidByConnection.set(conn.id, pid);
+    this.connByPid.set(pid, conn);
+    // Phase 5a: (re)start the ambient Jannes/Manni wander tick now that
+    // there's at least one connection — no-op if it's already running (see
+    // _startCharTimer's own doc comment).
+    this._startCharTimer();
+    // Phase 5b: same for the Benni tick — see _startMobTimer's own doc
+    // comment.
+    this._startMobTimer();
+
+    const roster = [...this.pidByConnection.entries()]
+      .filter(([id]) => id !== conn.id)
+      .map(([, otherPid]) => otherPid);
+    const positions = roster
+      .filter((otherPid) => this.lastPos.has(otherPid))
+      .map((otherPid) => ({ pid: otherPid, ...this.lastPos.get(otherPid) }));
+
+    // Phase 3a: late joiners get the whole persisted world-edit/torch state
+    // up front. edits is serialized as plain [key,type] pairs (Map isn't
+    // JSON-serializable) — the client already knows the "x,y,z" key format
+    // (world.K) and parses it back itself.
+    // Phase 3b: late joiners additionally get chest contents, growing crops,
+    // and pot state — same "whole persisted blob up front" shape as
+    // edits/torches above.
+    send(conn, {
+      t: "welcome",
+      pid,
+      roster,
+      positions,
+      edits: [...this.world.edits.entries()],
+      torches: [...this.world.torches],
+      chests: [...this.world.chests.entries()],
+      growing: [...this.growing.entries()],
+      pots: [...this.pots.entries()],
+      // Phase 4a: the shared wallet, same "whole persisted state up front"
+      // shape as everything else above.
+      econ: { ...this.econ },
+      // Phase 4b: team-wide recipe knowledge, and the authoritative offer
+      // currently live on every trader — the client's on('welcome',...)
+      // applies `trades` the same way it applies incoming 'trader-offer'.
+      known: [...this.known],
+      trades: this.trades.map((t, idx) => ({ idx, ...t })),
+      now: Date.now(),
+      // Phase 5a: the day/night epoch — every client independently computes
+      // identical day/dayT from Date.now()-dayEpoch0 each frame, no further
+      // network traffic needed for it (see game.js update(dt)). Plus the
+      // full Jannes/Manni wander roster, applied by snapping directly (see
+      // the client's on('welcome',...)) so a joining player doesn't see
+      // every NPC lerp in from nowhere.
+      dayEpoch0: this.dayEpoch0,
+      chars: this.chars.map((c, idx) => ({ idx, x: c.x, z: c.z, y: c.y })),
+    });
+    broadcast(this.room, { t: "join", pid }, [conn.id]);
+  }
+
+  /**
+   * Client -> server message types:
+   *   - `pos` (Phase 2): a small unreliable-in-spirit (but sent over the
+   *     same ordered WS) position/pose update, broadcast to everyone else
+   *     in the room and cached so late joiners see where everyone already
+   *     is via `welcome.positions`.
+   *   - `block` (Phase 3a): a dig/place/till/plant/grow-tick result, mirror
+   *     of the client's local optimistic setBlockData() call. Applied to
+   *     this.world (same pure data mutation as the client's own
+   *     shared/world.js setBlock — no rendering concerns server-side),
+   *     persisted (debounced), and broadcast to everyone else.
+   *   - `torch` (Phase 3a): a placed torch, same apply/persist/broadcast
+   *     shape as `block`.
+   *   - `plant` (Phase 3b): a growing-crop timer, same optimistic
+   *     apply/persist/broadcast shape as `block`/`torch` — the sprout BLOCK
+   *     itself already arrives via a separate `block` message (plantSeed()
+   *     calls the client's own broadcasting setBlock() for that), this only
+   *     carries the ripening deadline.
+   *   - `chest-take` (Phase 3b): a request to take `n` of item `id` from the
+   *     chest at x/y/z. NOT optimistic — the server is the sole arbiter of
+   *     how much a request actually gets (see the class-level comment for
+   *     why), and always answers with a `chest-sync` broadcast (to
+   *     everyone, including the sender) carrying the chest's authoritative
+   *     resulting `items` and a `grant` telling the requester what it won.
+   *   - `pot-add` / `pot-start` (Phase 3b): optimistic apply/persist/
+   *     broadcast, same shape as `block`/`torch` — purely additive state
+   *     (ingredients added, cook timer started), no duplication risk.
+   *   - `pot-claim` (Phase 3b): a request to be the one client that gets to
+   *     finish a specific cook cycle (identified by x/y/z + readyAt, so a
+   *     later cook at the same spot isn't confused with an earlier one).
+   *     The server grants the first claim per cycle and ignores the rest,
+   *     broadcasting exactly one `pot-grant` (to everyone) naming the
+   *     winning pid.
+   *   - `sell` (Phase 4a): sell `n` of item `id` to Manni. Never contested —
+   *     selling your own already-in-hand item can't race against anyone
+   *     else — but the resulting totals are still server-authoritative
+   *     (the client applies nothing locally), so the reply always goes to
+   *     EVERYONE via `econ`, not just the sender.
+   *   - `buy` (Phase 4a): buy item `id` from Manni's shop, paid out of the
+   *     shared wallet. NOT optimistic — two players can legitimately race
+   *     the last-affordable purchase, and the server is the sole arbiter of
+   *     whether it's still affordable at the moment it's processed. Always
+   *     answers with an `econ` broadcast to everyone, additionally carrying
+   *     `buyResult:{pid, id, ok}` so only the requester's own client reacts
+   *     (spawns the drop on success / shows the rejection toast on
+   *     failure).
+   *   - `learn` (Phase 4b): a recipe was just discovered by laying out its
+   *     pattern in the crafting grid WITHOUT ever trading for it (see
+   *     craftFromGrid on the client). Optimistic like block/torch — known.add
+   *     is idempotent, two players discovering the same recipe at once is
+   *     harmless, there's no scarcity to arbitrate — applied to this.known
+   *     and broadcast to everyone except the sender (who already applied it
+   *     locally). A no-op (nothing broadcast) if already known, to avoid
+   *     redundant traffic when several players stumble onto the same pattern
+   *     near-simultaneously.
+   *   - `trader-refresh` (Phase 4b): a client's local Jannes-at-idx has an
+   *     expired cooldown (`done && past readyAt`) and is asking the server to
+   *     roll its next offer — this can NOT be optimistic/client-rolled like
+   *     blocks, since every client's `known`/RNG state could diverge on which
+   *     recipe comes next. `round` is a staleness guard: if this offer's
+   *     round has already been advanced (by another client's earlier
+   *     trader-refresh for the same idx), the request is ignored. Broadcasts
+   *     `trader-offer` (to everyone) on success.
+   *   - `trade-complete` (Phase 4b): a request to be the one client that
+   *     actually completes trader `idx`'s current (live, undone) offer —
+   *     server-arbitrated exactly like chest-take/pot-claim, because letting
+   *     two simultaneous completions both succeed would double-advance the
+   *     offer's done/round/readyAt bookkeeping. Ingredients are NOT validated
+   *     server-side (inventory is deliberately client-local/untrusted, same
+   *     as chest-take's `give()` side) — `tradeOK` on the client is a purely
+   *     cosmetic gate on the "Tauschen" button. The first request per live
+   *     offer wins: `this.known` gains the traded recipe (if new — folding
+   *     the Part A `learn` broadcast into this same win, so no separate
+   *     message is needed for a recipe learned via trading), and a
+   *     `trade-result` is broadcast to EVERYONE (the winner needs it to
+   *     actually deduct their own ingredients — like chest-take, nothing was
+   *     applied optimistically) carrying the ORIGINAL give/want (echoed back,
+   *     not re-read from the now-mutated this.trades[idx], so the winner
+   *     applies exactly what was agreed even if the offer has already moved
+   *     on by the time this is processed) and `ok`. A losing/late request
+   *     (the offer is already done) gets its own `trade-result` with
+   *     `ok:false` so its client isn't left hanging.
+   *   - `mob-hit` (Phase 5b): a melee hit landed on Benni `id` for `dmg`.
+   *     Not arbitrated at all (unlike chest-take/pot-claim/trade-complete) —
+   *     hp isn't scarce, two players hitting the same Benni just both apply
+   *     — a plain apply-and-broadcast (`mob-dead` if it dies, otherwise the
+   *     drop shows up in the next `mob-state` snapshot's `hurtT`/`hp`).
+   *     `mob-state` (server -> everyone, every MOB_TICK_MS) and `mob-dead`/
+   *     `mob-attack` (server -> everyone / a single targeted player) are
+   *     never received here, only sent — see _startMobTimer and the
+   *     class-level comment.
+   * @param {string | ArrayBuffer | ArrayBufferView} message
+   * @param {Connection} sender
+   */
+  onMessage(message, sender) {
+    let msg;
+    try {
+      msg = JSON.parse(message);
+    } catch (e) {
+      return; // malformed JSON — ignore
+    }
+    const pid = this.pidByConnection.get(sender.id);
+    if (pid === undefined) return; // shouldn't happen for an authorized connection, but be defensive
+
+    if (msg.t === "pos") {
+      const { x, y, z, yaw, pitch, hp, food, sel } = msg;
+      const nums = [x, y, z, yaw, pitch, hp, food, sel];
+      if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) {
+        return; // reject the whole message rather than half-apply it
+      }
+      const pos = { x, y, z, yaw, pitch, hp, food, sel };
+      this.lastPos.set(pid, pos);
+      broadcast(this.room, { t: "pos", pid, ...pos }, [sender.id]);
+    } else if (msg.t === "block") {
+      const { x, y, z, type } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
+        return; // reject the whole message rather than half-apply it
+      }
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      // Roughly matches the client's canPlaceAt() y-range (game.js: y<-8||y>60);
+      // a little slack either side since digging/growth can touch bedrock/edges.
+      if (y < -20 || y > 70) return;
+      if (type !== null && !(typeof type === "string" && Object.prototype.hasOwnProperty.call(BLOCKS, type))) {
+        return;
+      }
+      this.world.setBlock(x, y, z, type);
+      // Phase 3b cleanup: piggyback on information already at hand here —
+      // if this block change turned a sprout into something else (dug up,
+      // or anything not a sprout_* type), drop any stale growing-timer
+      // entry for the same spot rather than letting this.growing accumulate
+      // dead entries forever. No new message type needed for this.
+      const growKey = `${x},${y},${z}`;
+      if (this.growing.has(growKey) && !String(type).startsWith("sprout")) {
+        this.growing.delete(growKey);
+      }
+      this._scheduleFlush();
+      broadcast(this.room, { t: "block", x, y, z, type }, [sender.id]);
+    } else if (msg.t === "torch") {
+      const { x, y, z } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isFinite(n))) {
+        return;
+      }
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      this.world.torches.push({ x, y, z });
+      this._scheduleFlush();
+      broadcast(this.room, { t: "torch", x, y, z }, [sender.id]);
+    } else if (msg.t === "plant") {
+      const { x, y, z, to, at } = msg;
+      if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
+        return;
+      }
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof to !== "string" || !Object.prototype.hasOwnProperty.call(BLOCKS, to)) return;
+      if (typeof at !== "number" || !Number.isFinite(at)) return;
+      this.growing.set(`${x},${y},${z}`, { to, at });
+      this._scheduleFlush();
+      broadcast(this.room, { t: "plant", x, y, z, to, at }, [sender.id]);
+    } else if (msg.t === "chest-take") {
+      const { x, y, z, id, n } = msg;
+      if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof id !== "string" || typeof n !== "number" || !Number.isFinite(n) || n <= 0) return;
+      const chest = this.world.chests.get(`${x},${y},${z}`);
+      if (!chest) return; // no chest here — nothing to arbitrate
+      const entry = chest.items.find((it) => it.id === id);
+      if (!entry) {
+        // Nothing to grant, but the requester isn't optimistically waiting
+        // on anything else — still answer so its UI doesn't just hang.
+        broadcast(this.room, { t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: 0 } });
+        return;
+      }
+      const granted = Math.min(n, entry.n);
+      entry.n -= granted;
+      if (entry.n <= 0) chest.items.splice(chest.items.indexOf(entry), 1);
+      this._scheduleFlush();
+      // To everyone, INCLUDING the sender — unlike block/torch/pos, the
+      // sender needs this response to know how much to actually grant its
+      // own (server-arbitrated) inventory; it never applied anything
+      // optimistically.
+      broadcast(this.room, { t: "chest-sync", x, y, z, items: chest.items, grant: { pid, id, n: granted } });
+    } else if (msg.t === "pot-add") {
+      const { x, y, z, items } = msg;
+      if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (!Array.isArray(items) || !items.every((it) =>
+        it && typeof it.id === "string" && typeof it.n === "number" && Number.isFinite(it.n))) {
+        return;
+      }
+      const key = `${x},${y},${z}`;
+      let p = this.pots.get(key);
+      if (!p) { p = { items: [], cook: 0, readyAt: 0 }; this.pots.set(key, p); }
+      p.items = items;
+      this._scheduleFlush();
+      broadcast(this.room, { t: "pot-add", x, y, z, items }, [sender.id]);
+    } else if (msg.t === "pot-start") {
+      const { x, y, z, readyAt } = msg;
+      if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof readyAt !== "number" || !Number.isFinite(readyAt)) return;
+      const key = `${x},${y},${z}`;
+      let p = this.pots.get(key);
+      if (!p) { p = { items: [], cook: 0, readyAt: 0 }; this.pots.set(key, p); }
+      p.cook = 1;
+      p.readyAt = readyAt;
+      this._scheduleFlush();
+      broadcast(this.room, { t: "pot-start", x, y, z, readyAt }, [sender.id]);
+    } else if (msg.t === "pot-claim") {
+      const { x, y, z, readyAt } = msg;
+      if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
+      if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
+      if (typeof readyAt !== "number" || !Number.isFinite(readyAt)) return;
+      const claimKey = `${x},${y},${z}:${readyAt}`;
+      if (this.potClaims.has(claimKey)) return; // this exact cook cycle is already won — stay quiet
+      this.potClaims.set(claimKey, pid);
+      if (this.potClaims.size > 50) {
+        // Light, not-critical-for-correctness cleanup: this Map only ever
+        // grows, drop the oldest entry once it's gotten a little large.
+        const oldestKey = this.potClaims.keys().next().value;
+        this.potClaims.delete(oldestKey);
+      }
+      // Also reflect completion in this.pots itself (not just potClaims):
+      // otherwise a server restart before another pot-add/pot-start touches
+      // this spot would replay a stale "still cooking" snapshot in the next
+      // welcome, and a freshly-joined client's own updatePots would then
+      // re-claim and re-finish a cook that already happened.
+      const pot = this.pots.get(`${x},${y},${z}`);
+      if (pot) { pot.items = []; pot.cook = 0; pot.readyAt = 0; }
+      this._scheduleFlush();
+      broadcast(this.room, { t: "pot-grant", x, y, z, readyAt, pid });
+    } else if (msg.t === "drop-spawn") {
+      const { dropId, id, n, x, y, z, vx, vy, vz } = msg;
+      if (typeof dropId !== "string" || !dropId) return;
+      if (typeof id !== "string") return;
+      const nums = [n, x, y, z, vx, vy, vz];
+      if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return;
+      // Plain relay, nothing to store — the server does not track drop
+      // existence at all, only claims (see class-level comment / dropClaims
+      // above). The sender already has this drop locally, same as block/torch.
+      broadcast(this.room, { t: "drop-spawn", dropId, id, n, x, y, z, vx, vy, vz }, [sender.id]);
+    } else if (msg.t === "drop-claim") {
+      const { dropId } = msg;
+      if (typeof dropId !== "string" || !dropId) return;
+      if (this.dropClaims.has(dropId)) return; // already claimed — the original grant broadcast told everyone
+      this.dropClaims.set(dropId, pid);
+      if (this.dropClaims.size > 4000) {
+        // Light, not-critical-for-correctness cleanup, same spirit as
+        // potClaims above: evict the oldest half once this gets large rather
+        // than growing forever for the lifetime of the room.
+        const keys = this.dropClaims.keys();
+        for (let i = 0; i < 2000; i++) this.dropClaims.delete(keys.next().value);
+      }
+      broadcast(this.room, { t: "drop-claimed", dropId, pid });
+    } else if (msg.t === "sell") {
+      const { id, n } = msg;
+      if (typeof id !== "string" || !Object.prototype.hasOwnProperty.call(PRICES, id)) return;
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 9999) return;
+      const sum = PRICES[id] * n;
+      this.econ.money += sum;
+      this.econ.earned += sum;
+      this.econ.sold += n;
+      if (!this.econ.won && this.econ.earned >= GOAL) this.econ.won = true;
+      this._scheduleFlush();
+      // To everyone, including the sender — the client applies nothing
+      // locally for the shared totals, it waits on this exact broadcast to
+      // update its own HUD too (see class-level comment above).
+      broadcast(this.room, { t: "econ", ...this.econ });
+    } else if (msg.t === "buy") {
+      const { id } = msg;
+      const w = SHOP.find((s) => s.id === id);
+      if (!w) return; // malformed request, nothing to arbitrate
+      if (this.econ.money < w.price) {
+        // Totals are unchanged, but resending them is harmless and keeps
+        // this a single uniform message shape — the requester's client
+        // reads buyResult.ok===false and shows the rejection toast.
+        broadcast(this.room, { t: "econ", ...this.econ, buyResult: { pid, id, ok: false } });
+        return;
+      }
+      this.econ.money -= w.price;
+      this.econ.bought++;
+      this._scheduleFlush();
+      broadcast(this.room, { t: "econ", ...this.econ, buyResult: { pid, id, ok: true } });
+    } else if (msg.t === "learn") {
+      const { id } = msg;
+      if (typeof id !== "string" || !RECIPES.some((r) => r.id === id)) return;
+      if (this.known.has(id)) return; // already known team-wide — nothing to spread
+      this.known.add(id);
+      this._scheduleFlush();
+      broadcast(this.room, { t: "learn", id }, [sender.id]);
+    } else if (msg.t === "trader-refresh") {
+      const { idx, round } = msg;
+      if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= this.trades.length) return;
+      if (typeof round !== "number" || !Number.isInteger(round)) return;
+      const t = this.trades[idx];
+      if (!t || !t.done || t.round !== round) return; // stale claim — already rolled by someone else
+      this._makeOffer(idx, round + 1);
+      this._scheduleFlush();
+      broadcast(this.room, {
+        t: "trader-offer",
+        idx,
+        give: this.trades[idx].give,
+        want: this.trades[idx].want,
+        round: this.trades[idx].round,
+      });
+    } else if (msg.t === "trade-complete") {
+      const { idx } = msg;
+      if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= this.trades.length) return;
+      const t = this.trades[idx];
+      if (!t || !t.give) return; // no live offer here — nothing to arbitrate, well-behaved clients won't hit this
+      if (t.done) {
+        // Lost the race — someone else's trade-complete for this exact offer
+        // already landed a moment earlier. Answer anyway so the requester's
+        // UI doesn't hang waiting for a trade-result that never comes.
+        broadcast(this.room, {
+          t: "trade-result",
+          idx,
+          pid,
+          ok: false,
+          give: null,
+          want: [],
+          readyAt: t.readyAt,
+          round: t.round,
+        });
+        return;
+      }
+      const give = t.give;
+      const want = t.want;
+      t.done = true;
+      t.readyAt = Date.now() + REFRESH * 1000;
+      const isNew = !this.known.has(give);
+      if (isNew) this.known.add(give);
+      this._scheduleFlush();
+      broadcast(this.room, { t: "trade-result", idx, pid, ok: true, give, want, readyAt: t.readyAt, round: t.round });
+      // Folds Part A's separate `learn` broadcast into this same win, rather
+      // than inventing a second code path for the identical effect — see the
+      // class-level comment above.
+      if (isNew) broadcast(this.room, { t: "learn", id: give });
+    } else if (msg.t === "mob-hit") {
+      // Phase 5b: a melee hit landed on mob `id` for `dmg` (the client's own
+      // held-weapon damage — trusted, per this project's established "trust
+      // local combat, arbitrate only shared/contested state" philosophy; see
+      // the class-level comment for why hp needs no race-arbitration at all).
+      const { id, dmg } = msg;
+      if (typeof id !== "number" || !Number.isFinite(id)) return;
+      if (typeof dmg !== "number" || !Number.isFinite(dmg) || dmg <= 0 || dmg > 20) return;
+      const m = this.mobs.get(id);
+      if (!m) return; // already dead/despawned — a late/duplicate hit, quietly ignored
+      m.hp -= dmg;
+      m.hurtT = 1; // seconds; ticks down in stepMob, shows as hurtT:true in the next few mob-state snapshots
+      if (m.hp <= 0) {
+        this.mobs.delete(id);
+        // A dedicated event, unlike the day-flee despawn (which relies on
+        // snapshot-absence, see mob-state) — the client needs to tell "died,
+        // play the death sound" apart from "just wandered out of range".
+        broadcast(this.room, { t: "mob-dead", id });
+      }
+    }
+  }
+
+  /**
+   * @param {Connection} conn
+   */
+  onClose(conn) {
+    this._handleDisconnect(conn);
+  }
+
+  /**
+   * @param {Connection} conn
+   */
+  onError(conn) {
+    this._handleDisconnect(conn);
+  }
+
+  /**
+   * @param {Connection} conn
+   */
+  _handleDisconnect(conn) {
+    const pid = this.pidByConnection.get(conn.id);
+    if (pid === undefined) return; // was rejected before ever getting a pid
+    this.pidByConnection.delete(conn.id);
+    this.connByPid.delete(pid);
+    this.usedPids.delete(pid);
+    this.lastPos.delete(pid);
+    broadcast(this.room, { t: "leave", pid });
+    // Phase 5a: stop the ambient wander tick once nobody's left to see it —
+    // getConnections() reflects this closing connection's removal by the
+    // time onClose/onError run it (same assumption onConnect's own count
+    // check already relies on for the room-full check above).
+    if ([...this.room.getConnections()].length === 0) {
+      if (this._charTimer) { clearInterval(this._charTimer); this._charTimer = null; }
+      // Phase 5b: stop the Benni tick too, same "nobody's left to see it"
+      // reasoning as _charTimer. Deliberately NOT clearing this.mobs itself
+      // — an empty room's last Bennis simply sit frozen in memory until
+      // either someone reconnects (tick resumes, they act again) or the
+      // room instance itself is evicted, at which point they vanish for
+      // free along with everything else non-persisted. No harm either way.
+      if (this._mobTimer) { clearInterval(this._mobTimer); this._mobTimer = null; }
+    }
+  }
+}
+
+export default GameServer;

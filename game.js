@@ -5,6 +5,14 @@
    fertige Gerichte und zeigen dafür ein Rezept — als Bild, nicht als Text.
    ===================================================================== */
 import * as THREE from './vendor/three.module.min.js';
+import {
+  createWorld, DAYLEN, NIGHT_START, NIGHT_END, REACH, BOUND, HOME, SEA, RIVER_BED, RIVER_W,
+  WATER_Y, BEDROCK, SPAWN, MARKET, hash2, vnoise, riverAt, beyondRiver, rawHeight,
+  VILLAGES, VILL_R, VILL_FADE, terrainH, surfaceTex, BLOCKS, TREE_TOP, TRUNK_MIN, FRUIT_OFF, treeSpot,
+  MOB_HP, MOB_SPEED, MOB_DMG, MOB_ATK_CD,
+} from './shared/world.js';
+import {GOAL, SEED_OF, PRICES, SHOP, RECIPES, REFRESH, RAW, offerWant} from './shared/economy.js';
+import {PARTY_URL, connect, on, send, isConnected, getPid} from './net.js';
 
 // ------------------------------------------------------------------ Helfer
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -18,7 +26,13 @@ function mulberry(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s
 
 // ------------------------------------------------------------------ Ton
 let AC=null;
-const ac=()=>{ if(!AC){ try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){} } return AC; };
+const SAMPLES={};
+const _pd=[];   // pending decode: [name, ArrayBuffer] before AudioContext exists
+const ac=()=>{
+  if(!AC){ try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}
+    if(AC){_pd.forEach(([n,b])=>AC.decodeAudioData(b).then(d=>{SAMPLES[n]=d;}).catch(()=>{}));_pd.length=0;}
+  } return AC;
+};
 function tone(f,d,type='sine',v=.1,w=0){
   const c=ac(); if(!c) return;
   if(c.state==='suspended') c.resume();
@@ -29,13 +43,25 @@ function tone(f,d,type='sine',v=.1,w=0){
   o.connect(g).connect(c.destination);
   o.start(c.currentTime+w); o.stop(c.currentTime+w+d+.02);
 }
+function playSample(name,vol=1){
+  const c=ac(); if(!c||!SAMPLES[name]) return false;
+  if(c.state==='suspended') c.resume();
+  const src=c.createBufferSource(),g=c.createGain();
+  src.buffer=SAMPLES[name]; g.gain.value=vol;
+  src.connect(g).connect(c.destination); src.start(); return true;
+}
+async function loadSample(name,url){
+  try{ const buf=await fetch(url).then(r=>r.arrayBuffer());
+    if(AC) SAMPLES[name]=await AC.decodeAudioData(buf); else _pd.push([name,buf]);
+  }catch(e){}
+}
 const SND={
   tap:()=>tone(620,.05,'square',.05),
-  dig:()=>tone(150+Math.random()*70,.05,'square',.045),
+  dig:()=>playSample('dig',.7)||tone(150+Math.random()*70,.05,'square',.045),
   pop:()=>{tone(523,.07,'triangle',.08);tone(784,.09,'triangle',.08,.06);},
   place:()=>tone(240,.07,'square',.06),
   craft:()=>{tone(392,.09,'square',.08);tone(587,.09,'square',.08,.08);tone(784,.14,'square',.08,.16);},
-  eat:()=>{tone(300,.08,'triangle',.07);tone(240,.1,'triangle',.06,.09);},
+  eat:()=>playSample('eat',.7)||(tone(300,.08,'triangle',.07),tone(240,.1,'triangle',.06,.09)),
   swing:()=>tone(300,.07,'sawtooth',.05),
   hit:()=>{tone(140,.09,'square',.1);tone(90,.12,'square',.08,.05);},
   hurt:()=>{tone(180,.2,'sawtooth',.13);tone(120,.25,'sawtooth',.1,.1);},
@@ -50,109 +76,61 @@ const SND={
   land:()=>tone(110,.07,'triangle',.05),
   fail:()=>tone(160,.15,'square',.06),
 };
+loadSample('dig','./block_break.wav');
+loadSample('pop','./item_pickupp.ogg');
+loadSample('punch','./punch.wav');
+loadSample('eat','./eating.wav');
+loadSample('dominik_break','./dominik_break.wav');
+loadSample('benni1','./benni_scream1.wav');
+loadSample('benni2','./benni_scream2.wav');
+loadSample('benni3','./benni_scream3.wav');
+for(let i=1;i<=11;i++) loadSample('bird'+i,'./bird'+i+'.ogg');
 
 // ------------------------------------------------------------------ Welt-Eckdaten
-const DAYLEN=200;                       // Sekunden pro Tag/Nacht-Zyklus
-const NIGHT_START=.60, NIGHT_END=.94;   // Nachtfenster
-const REACH=4.6;
-const BOUND={x0:-72,x1:72,z0:-72,z1:72};
-const HOME={x:0,z:5,r:26,fade:13};      // flaches Starttal
-const SEA=0;                            // Wasserspiegel der Flüsse
-// Die Rinne ist tief genug zum Schwimmen; die flachen Stellen bleiben Furten.
-const RIVER_BED=-4, RIVER_W=4.5;
-const WATER_Y=SEA;                      // Oberkante des Wassers
-const BEDROCK=-12;                      // tiefer geht es nicht — hier ist Schluss
-const SPAWN={x:0,z:18};
-const MARKET={x:-6,z:14};               // Manni und sein Stand, gleich beim Start
-
-// ------------------------------------------------------------------ Geländeform
-function hash2(x,z,s){
-  let h=Math.imul(x|0,374761393)+Math.imul(z|0,668265263)+Math.imul(s|0,1274126177)|0;
-  h=Math.imul(h^h>>>13,1274126177);
-  return ((h^h>>>16)>>>0)/4294967296;
-}
-function vnoise(x,z,scale,seed){
-  const fx=x/scale, fz=z/scale;
-  const x0=Math.floor(fx), z0=Math.floor(fz);
-  const tx=fx-x0, tz=fz-z0;
-  const sx=tx*tx*(3-2*tx), sz=tz*tz*(3-2*tz);
-  return lerp(lerp(hash2(x0,z0,seed),  hash2(x0+1,z0,seed),  sx),
-              lerp(hash2(x0,z0+1,seed),hash2(x0+1,z0+1,seed),sx),sz);
-}
-// Zwei Flüsse: einer von Nord nach Süd im Westen, einer quer im Norden.
-const riverAX=z=>-46+(vnoise(0,z,26,7)-.5)*20;
-const riverBZ=x=>-47+(vnoise(x,0,24,8)-.5)*18;
-function riverAt(x,z){
-  const ax=riverAX(z), bz=riverBZ(x);
-  const da=Math.abs(x-ax), db=Math.abs(z-bz);
-  return da<db
-    ? {d:da,bed:vnoise(0,z, 19, 9)>.52?SEA-1:RIVER_BED}
-    : {d:db,bed:vnoise(x,0,19,10)>.52?SEA-1:RIVER_BED};
-}
-// Das Land hinter den Flüssen — nur über eine Furt zu erreichen. Dort und
-// nur dort wächst der 🌶️ Pfeffer.
-const beyondRiver=(x,z)=>x<riverAX(z)-RIVER_W-1||z<riverBZ(x)-RIVER_W-1;
-function rawHeight(x,z){
-  let h=vnoise(x,z,38,1)*7-2.2;                 // weite Hügel
-  h+=vnoise(x,z,14,2)*2.6;                      // feine Wellen
-  const m=vnoise(x,z,62,3);                     // Gebirgsmaske
-  if(m>.56) h+=((m-.56)/.44)**2.2*27;
-  return h;
-}
-const VILLAGES=[{x:21,z:52},{x:44,z:-26},{x:50,z:24}]
-  .map(v=>({...v,y:clamp(Math.round(rawHeight(v.x,v.z)),1,6)}));
-const VILL_R=14, VILL_FADE=11;
-const _hCache=new Map();
-// Oberkante der Säule: fester Grund liegt bei y < terrainH, gelaufen wird auf terrainH.
-function terrainH(x,z){
-  x=Math.round(x); z=Math.round(z);
-  const k=x+','+z;
-  let v=_hCache.get(k);
-  if(v!==undefined) return v;
-  const hd=Math.hypot(x-HOME.x,z-HOME.z);
-  if(hd<HOME.r) v=0;
-  else{
-    let h=rawHeight(x,z);
-    const {d:rd,bed}=riverAt(x,z);
-    if(rd<26){
-      if(rd<RIVER_W) h=bed;
-      else{ const t=clamp((rd-RIVER_W)/(26-RIVER_W),0,1); h=lerp(bed,h,Math.sqrt(t)); }
-    }
-    if(hd<HOME.r+HOME.fade){
-      const t=(hd-HOME.r)/HOME.fade;
-      h=lerp(0,h,t*t*(3-2*t));
-    }
-    let near=null, nd=Infinity;
-    for(const g of VILLAGES){
-      const d=Math.hypot(x-g.x,z-g.z);
-      if(d<nd){ nd=d; near=g; }
-    }
-    if(nd<VILL_R) h=near.y;
-    else if(nd<VILL_R+VILL_FADE){
-      const t=(nd-VILL_R)/VILL_FADE; h=lerp(near.y,h,t*t*(3-2*t));
-    }
-    v=Math.round(h);
-  }
-  if(_hCache.size<120000) _hCache.set(k,v);
-  return v;
-}
-function surfaceTex(x,z,h){
-  if(h<=SEA-1) return 'sand';
-  if(h>=18) return 'snow';
-  if(h>=9)  return 'rock';
-  if(h<=SEA+1&&riverAt(x,z).d<RIVER_W+3.5) return 'sand';
-  return 'grass';
-}
+// ------------------------------------------------------------------ Welt
+// Terrain, Landschaft und alles, was sich darin ändern kann, kommt aus
+// shared/world.js — dieselbe Instanz-Erzeugung läuft identisch im
+// PartyKit-Server, damit beide Seiten ohne Netzwerkverkehr dieselbe
+// Landschaft, Truhenplätze und Höhenlogik haben.
+const world=createWorld();
+const {
+  scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
+  K, terrainType, saltVein,
+  blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, litAt,
+  setBlock: setBlockData,
+}=world;
 
 // ------------------------------------------------------------------ Zustand
 const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
-  mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,trades:0,won:false,checkT:0,
+  mined:0,placed:0,killed:0,deaths:0,crafted:0,chests:0,trades:0,won:false,checkT:0,saveTick:0,
   underwater:false,money:0,earned:0,sold:0,bought:0,planted:0,
   spikes:0};                            // verworfene Maus-Ausreisser, siehe unten
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
   bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0};
+
+// ------------------------------------------------------------------ Speichern
+// Nur die sinnvollen Felder sichern; transiente Pro-Frame-Physik (vy,
+// onGround,wet,bob,stepT,atkCd,hurtT,invT,fallFrom) soll beim Laden neu
+// starten statt in einem seltsamen Zwischenzustand aufzutauchen.
+function savePersist(){
+  try{
+    const{x,y,z,yaw,pitch,hp,food}=player;
+    localStorage.setItem('edf_player',JSON.stringify({x,y,z,yaw,pitch,hp,food}));
+    localStorage.setItem('edf_slots',JSON.stringify(slots));
+  }catch(e){}
+}
+function loadPersist(){
+  try{
+    const p=JSON.parse(localStorage.getItem('edf_player'));
+    if(p) Object.assign(player,p);
+  }catch(e){}
+  try{
+    const s=JSON.parse(localStorage.getItem('edf_slots'));
+    if(Array.isArray(s)) for(let i=0;i<NSLOT;i++) slots[i]=s[i]||null;
+  }catch(e){}
+}
 
 // ------------------------------------------------------------------ Toasts
 function toast(msg,type='',ms=3000){
@@ -374,43 +352,7 @@ const CRACKS=(()=>{
 })();
 
 // ------------------------------------------------------------------ Blöcke
-// tex   Texturname · hard Abbauzeit in Sekunden · drop Item-Id beim Abbau
-const BLOCKS={
-  grass  :{tex:'grass', hard:.7,  drop:'dirt',   nm:'Gras'},
-  dirt   :{tex:'dirt',  hard:.7,  drop:'dirt',   nm:'Erde'},
-  rock   :{tex:'stone', hard:2.4, drop:'stone',  nm:'Stein',  pick:true},
-  sand   :{tex:'sand',  hard:.6,  drop:'sand',   nm:'Sand'},
-  snow   :{tex:'snow',  hard:.5,  drop:'snow',   nm:'Schnee'},
-  log    :{tex:'log',   hard:1.6, drop:'log',    nm:'Holzstamm', axe:true},
-  leaf   :{tex:'leaf',  hard:.3,  drop:null,     nm:'Laub'},
-  plank  :{tex:'plank', hard:1.3, drop:'plank',  nm:'Bretter', axe:true},
-  brick  :{tex:'brick', hard:2.2, drop:'brick',  nm:'Ziegel',  pick:true},
-  bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
-  pot    :{tex:'pot',   hard:2.2, drop:'pot',    nm:'Kochtopf',pick:true, use:'pot'},
-  chest  :{tex:'chest', hard:0,   drop:null,     nm:'Truhe',   use:'chest', noBreak:true},
-  // Alles, was wächst, steht als gekreuzte Fläche im Gelände: man geht
-  // hindurch, es verdeckt nichts (siehe fills()), und es ist mit einem
-  // Klick gepflückt statt abgebaut — hard bleibt darum ungenutzt bei 0.
-  dominik:{tex:'dominik',hard:0, drop:'dominik',nm:'Dominik',
-           cross:true, size:.85, alpha:true, pass:true},
-  shroom :{tex:'shroom',hard:0,  drop:'mushroom',nm:'Pilz',
-           cross:true, size:.8, sit:true, alpha:true, pass:true},
-  pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
-           cross:true, size:.95,sit:true, alpha:true, pass:true},
-  saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
-  // --- Acker und was darauf wächst
-  till   :{tex:'till',  hard:.6,  drop:'dirt',   nm:'Ackerboden'},
-  // Der gezogene Dominik hängt an keinem Baum, er sitzt im Beet.
-  bush   :{tex:'dominik',hard:0,  drop:'dominik',nm:'Dominikstrauch',
-           cross:true, size:.9, sit:true, alpha:true, pass:true},
-  sprout_d:{tex:'sprout_d',hard:0,drop:'kern',   nm:'Dominik-Setzling',
-            cross:true, size:.7, sit:true, alpha:true, pass:true},
-  sprout_m:{tex:'sprout_m',hard:0,drop:'mycel',  nm:'Pilzbrut',
-            cross:true, size:.7, sit:true, alpha:true, pass:true},
-  sprout_p:{tex:'sprout_p',hard:0,drop:'korn',   nm:'Pfeffer-Setzling',
-            cross:true, size:.7, sit:true, alpha:true, pass:true},
-  bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
-};
+// BLOCKS (Härte, Drop, Name, Cross-Flags) kommt aus shared/world.js.
 // Fällt auf einen unbekannten Typ zurück, statt die Vernetzung zu sprengen:
 // eine kaputte Textur ist ein Schönheitsfehler, eine Ausnahme killt die Schleife.
 const blockTex=t=>TEX[BLOCKS[t]?.tex]||TEX.stone;
@@ -459,13 +401,7 @@ const ITEMS={
 // Das Ziel des Spiels: zehntausend Euro umgesetzt. Gezählt wird, was man
 // insgesamt verdient hat, nicht was in der Kasse liegt — Einkaufen bringt
 // einen also nicht zurück.
-const GOAL=10000;
-// Was beim Pflücken an Saatgut abfällt — der Anfang jedes Beetes.
-const SEED_OF={dominik:'kern',bush:'kern',shroom:'mycel',pepper:'korn'};
-// Was Manni annimmt und was er dafür zahlt. Die Frucht ist der Cent, die
-// Suppe der große Schein; die beiden Gerichte liegen dazwischen, damit sich
-// der Kochtopf auch lohnt, bevor man das Suppenrezept hat.
-const PRICES={dominik:1,compote:12,panfry:15,soup:100};
+// GOAL/SEED_OF/PRICES kommen aus shared/economy.js.
 
 // ------------------------------------------------------------------ Inventar
 const STACK=64, NSLOT=36, NBAR=9;
@@ -502,29 +438,7 @@ const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
 // secret  nur mit Rezept zu bauen; ohne bleibt der Topf leer
 // Ob eine Werkbank nötig ist, steht nirgends: was breiter oder höher als zwei
 // ist, passt schlicht nicht ins 2×2-Raster des Inventars.
-const RECIPES=[
-  {id:'plank', rank:0, out:['plank',4], shapeless:['log']},
-  {id:'stick', rank:1, out:['stick',4], pat:['P','P'],     key:{P:'plank'}},
-  {id:'bench', rank:2, out:['bench',1], pat:['PP','PP'],   key:{P:'plank'}},
-  {id:'torch', rank:3, out:['torch',4], pat:['S','K'],     key:{S:'stone',K:'stick'}},
-  {id:'brick', rank:4, out:['brick',4], pat:['SA','AS'],   key:{S:'stone',A:'sand'}},
-  {id:'bowl',  rank:5, out:['bowl',2],  pat:['P P',' P '], key:{P:'plank'}},
-  {id:'sword', rank:6, out:['sword',1], pat:['S','S','K'], key:{S:'stone',K:'stick'}},
-  {id:'pick',  rank:7, out:['pick',1],  pat:['SSS',' K ',' K '], key:{S:'stone',K:'stick'}},
-  {id:'axe',   rank:8, out:['axe',1],   pat:['SS ','SK ',' K '], key:{S:'stone',K:'stick'}},
-  {id:'pot',   rank:9, out:['pot',1],   pat:['S S','S S','SPS'], key:{S:'stone',P:'plank'}},
-  {id:'hoe',   rank:3, out:['hoe',1],   pat:['SS ',' K ',' K '], key:{S:'stone',K:'stick'}},
-  // Gerichte. Sie entstehen nur im Kochtopf und nur mit Rezept — das gibt es
-  // bei den Jannessen, nicht durch Herumprobieren. Im Topf liegt alles
-  // durcheinander, darum zählt hier die Zutatenliste und kein Muster.
-  {id:'compote',rank:10,out:['compote',1], station:'pot', secret:true,
-   shapeless:['dominik','dominik','salt','bowl']},
-  {id:'panfry', rank:11,out:['panfry',1],  station:'pot', secret:true,
-   shapeless:['mushroom','mushroom','pepper','bowl']},
-  {id:'soup',  rank:99,out:['soup',1],     station:'pot', secret:true,
-   shapeless:['dominik','dominik','dominik','mushroom','mushroom',
-              'salt','pepper','pepper','bowl']},
-];
+// RECIPES kommt aus shared/economy.js.
 
 // ------------------------------------------------------------------ Bildchen
 // Für jeden Gegenstand liegt ein Sprite unter sprites/items/<id>.png. Das
@@ -596,253 +510,11 @@ function needList(rows){
 const haveAll=rows=>{ const n=needList(rows); for(const id in n) if(countOf(id)<n[id]) return false; return true; };
 
 // ------------------------------------------------------------------ Weltdaten
-const scenery=new Map();                 // "x,y,z" → Blocktyp (Bäume, Häuser, Truhen)
-const edits=new Map();                   // "x,y,z" → Blocktyp oder null (abgebaut)
-const colRange=new Map();                // "x,z" → [lo,hi] der zu vernetzenden Höhen
-const chests=new Map();                  // "x,y,z" → {items:[{id,n}],opened}
-const K=(x,y,z)=>x+','+y+','+z;
-
-function noteRange(x,z,y){
-  const k=x+','+z, r=colRange.get(k);
-  if(!r) colRange.set(k,[y,y]);
-  else{ if(y<r[0]) r[0]=y; if(y>r[1]) r[1]=y; }
-}
-function put(t,x,y,z){ scenery.set(K(x,y,z),t); noteRange(x,z,y); }
-
-// Salz steckt im Fels, nicht im Sand: Nester von ein paar Blöcken, die sich
-// über drei Höhenlagen ziehen. Aus derselben Rauschformel wie die Landschaft,
-// also überall gleich, ohne dass etwas gespeichert werden müsste. Die
-// Schwelle ist gemessen: gut zwei Prozent des tiefen Gesteins, also ein
-// Fund, den man sucht, und keiner, über den man stolpert.
-function saltVein(x,y,z){
-  const lay=Math.floor(y/3);
-  return vnoise(x+lay*29,z-lay*17,8,61)>.91;
-}
-function terrainType(x,z,y){
-  const H=terrainH(x,z);
-  if(y>=H) return null;
-  if(y<=BEDROCK) return 'bedrock';        // unzerstörbarer Boden der Welt
-  if(y===H-1) return surfaceTex(x,z,H);
-  if(y>=H-3) return 'dirt';
-  if(y<=H-5&&saltVein(x,y,z)) return 'saltore';
-  return 'rock';
-}
-function blockAt(x,y,z){
-  if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) return null;
-  const k=K(x,y,z);
-  const e=edits.get(k);
-  if(e!==undefined) return e;             // null = abgebaut
-  const s=scenery.get(k);
-  if(s) return s;
-  return terrainType(x,z,y);
-}
-const solidAt=(x,y,z)=>!!blockAt(Math.round(x),Math.floor(y),Math.round(z));
-// Füllt der Block seine Zelle wirklich aus? Gekreuzte Flächen — Frucht,
-// Pilzstrauch — tun das nicht: sie sind zwei dünne Blätter mitten in der
-// Zelle. Wer sie als Wand behandelt, schneidet die Fläche dahinter weg, und
-// dann fehlt unter einem Dominik die Unterseite des Laubs und unter einem
-// Pfefferstrauch die Grasnarbe. Zum Verdecken zählt also nur, was voll ist.
-const fills=t=>!!t&&!BLOCKS[t]?.cross;
-const fillsAt=(x,y,z)=>fills(blockAt(x,y,z));
-// Wasser ist kein Block, sondern der Raum unter dem Wasserspiegel über einem
-// Flussbett. Es fließt nicht: wo das Gelände über den Spiegel reicht, ist
-// trocken, und ein gesetzter Block verdrängt das Wasser aus seiner Zelle.
-function waterAt(x,y,z){
-  if(y>=WATER_Y) return false;
-  const bx=Math.round(x), bz=Math.round(z);
-  if(bx<BOUND.x0||bx>BOUND.x1||bz<BOUND.z0||bz>BOUND.z1) return false;
-  if(terrainH(bx,bz)>=WATER_Y) return false;
-  return !blockAt(bx,Math.floor(y),bz);
-}
-
-// Oberkante der Säule: erste freie Höhe über festem Grund. Gewächse zählen
-// nicht mit — sonst stünde ein Benni auf einem Pilz wie auf einer Stufe.
-function surfaceAt(x,z){
-  x=Math.round(x); z=Math.round(z);
-  let y=terrainH(x,z);
-  while(y<64&&fillsAt(x,y,z)) y++;
-  while(y>BEDROCK&&!fillsAt(x,y-1,z)) y--;
-  return y;
-}
-// Erster Platz mit festem Boden und zwei freien Blöcken darüber. Wer sich am
-// Startpunkt einen Schacht gegraben hat, landet sonst beim Sterben in der Luft
-// und fällt endlos in dieselbe Grube zurück.
-function safeSpot(){
-  for(let r=0;r<14;r++)
-    for(let dx=-r;dx<=r;dx++) for(let dz=-r;dz<=r;dz++){
-      if(Math.max(Math.abs(dx),Math.abs(dz))!==r) continue;
-      const x=SPAWN.x+dx, z=SPAWN.z+dz;
-      if(x<BOUND.x0||x>BOUND.x1||z<BOUND.z0||z>BOUND.z1) continue;
-      const y=surfaceAt(x,z);
-      if(y>SEA-2&&blockAt(x,y-1,z)&&!blockAt(x,y,z)&&!blockAt(x,y+1,z)) return {x,y,z};
-    }
-  return {x:SPAWN.x,y:surfaceAt(SPAWN.x,SPAWN.z),z:SPAWN.z};
-}
-
-// ------------------------------------------------------------------ Landschaft
-// Die Krone: zwei breite Lagen und eine schmale obendrauf. An einem langen
-// Stamm sähe eine einzelne breite Lage aus wie ein Besen.
-const TREE_TOP=[];
-(function treeShape(){
-  for(const dy of [0,1])
-    for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++)
-      if(Math.abs(x)+Math.abs(z)<=2) TREE_TOP.push([x,dy,z]);
-  for(let x=-1;x<=1;x++) for(let z=-1;z<=1;z++)
-    if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,2,z]);
-})();
-// Die Dominiks hängen unter der Krone, und die hängt hoch: vom Boden aus
-// kommt man mit REACH nicht heran, es braucht zwei, drei gesetzte Blöcke.
-const TRUNK_MIN=10;
-const FRUIT_OFF=[[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,-1],[1,-1],[-1,1]];
-// Nur auf ebenem Grasland: Hänge, Ufer und Fels bleiben frei.
-function treeSpot(x,z){
-  const h=terrainH(x,z);
-  if(h<SEA+1||h>=9) return -1;
-  if(surfaceTex(x,z,h)!=='grass') return -1;
-  for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]])
-    if(Math.abs(terrainH(x+dx,z+dz)-h)>1) return -1;
-  return h;
-}
-const chestSpots=[];
-const houseSpots=[];                     // Stube im zweiten Haus jedes Dorfes
-const traderSpots=[];                    // wo die Jannessen stehen
-(function landscape(){
-  // --- Dörfer: je vier Häuschen um einen gepflasterten Platz. Ins erste
-  // kommt die Truhe, im zweiten wartet ein Jannes.
-  for(const v of VILLAGES){
-    const {x:vx,z:vz,y:vy}=v;
-    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('rock',vx+dx,vy,vz+dz);
-    [[-8,-7],[5,-7],[-8,5],[5,5]].forEach(([hx,hz],hi)=>{
-      for(let dx=0;dx<5;dx++) for(let dz=0;dz<5;dz++){
-        const edge=dx===0||dx===4||dz===0||dz===4;
-        const x=vx+hx+dx, z=vz+hz+dz;
-        if(edge&&!(dx===2&&dz===4)) for(let y=0;y<3;y++) put('plank',x,vy+y,z);
-        else if(!edge) put('rock',x,vy,z);
-        put('brick',x,vy+3,z);
-      }
-      if(hi===0) chestSpots.push({x:vx+hx+1,y:vy+1,z:vz+hz+2});
-      if(hi===1) houseSpots.push({x:vx+hx+2,z:vz+hz+2});
-    });
-  }
-  // --- Manni-Markt: vier Pfosten, ein Dach, ein Tresen. Er steht im flachen
-  // Starttal und zeigt seine Theke dem Startpunkt zu, damit man beim ersten
-  // Umsehen davorsteht.
-  {
-    const {x:mx,z:mz}=MARKET, my=terrainH(mx,mz);
-    for(const [px,pz] of [[-2,-2],[2,-2],[-2,2],[2,2]])
-      for(let dy=0;dy<3;dy++) put('log',mx+px,my+dy,mz+pz);
-    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('plank',mx+dx,my+3,mz+dz);
-    for(let dx=-1;dx<=1;dx++) put('plank',mx+dx,my,mz+2);      // Tresen zum Startpunkt
-  }
-  // --- Wälder: Rauschen gibt die Dichte, Dörfer und Starttal bleiben frei
-  const r=mulberry(4711);
-  let n=0, trees=[];
-  for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<1200;x++)
-    for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<1200;z++){
-      if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
-      if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
-      const dens=vnoise(x,z,44,11);
-      if(hash2(x,z,55)>(dens>.54?.13:.022)) continue;
-      const h=treeSpot(x,z);
-      if(h<0) continue;
-      const trunk=TRUNK_MIN+Math.floor(hash2(x,z,56)*3);
-      for(let y=0;y<trunk;y++) put('log',x,h+y,z);
-      for(const [dx,dy,dz] of TREE_TOP) put('leaf',x+dx,h+trunk-1+dy,z+dz);
-      trees.push({x,z,h,trunk});
-      n++;
-    }
-  // --- Jeder fünfte Baum trägt Dominiks. Sie hängen eine Lage unter der
-  // Krone, jeder direkt unter einem Blatt — und damit ausser Reichweite.
-  for(const t of trees){
-    if(hash2(t.x,t.z,77)>.22) continue;
-    const y=t.h+t.trunk-2;
-    for(const [dx,dz] of FRUIT_OFF){
-      if(hash2(t.x+dx,t.z+dz,78)>.5) continue;
-      if(scenery.has(K(t.x+dx,y,t.z+dz))) continue;
-      put('dominik',t.x+dx,y,t.z+dz);
-    }
-  }
-  // --- Pilze im Schatten der Wälder
-  for(const t of trees){
-    if(hash2(t.x,t.z,81)>.45) continue;
-    const mx=t.x+(hash2(t.x,t.z,82)>.5?3:-3), mz=t.z+(hash2(t.x,t.z,83)>.5?3:-3);
-    if(treeSpot(mx,mz)<0) continue;
-    if(scenery.has(K(mx,terrainH(mx,mz),mz))) continue;
-    put('shroom',mx,terrainH(mx,mz),mz);
-  }
-  // --- Pfeffer: nur jenseits der Flüsse, in lockeren Feldern auf dem Grasland.
-  for(let x=BOUND.x0+3;x<=BOUND.x1-3;x++)
-    for(let z=BOUND.z0+3;z<=BOUND.z1-3;z++){
-      if(!beyondRiver(x,z)) continue;
-      if(vnoise(x,z,20,91)<.48) continue;             // Felder statt Teppich
-      if(hash2(x,z,92)>.22) continue;
-      const h=treeSpot(x,z);
-      if(h<0||scenery.has(K(x,h,z))) continue;
-      put('pepper',x,h,z);
-    }
-  // --- Truhen: eine je Dorf, dazu ein paar verstreute. Sie sind selten und
-  // halten nur Vorräte bereit — Zutaten holt man sich draußen selbst.
-  // Aus derselben Zufallsformel wie die Wälder, damit die Welt bei jedem
-  // Start dieselbe bleibt.
-  const rr=(a,b)=>a+r()*(b-a);
-  for(let k=0;k<6000&&chestSpots.length<8;k++){
-    const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6));
-    const z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
-    if(Math.hypot(x-HOME.x,z-HOME.z)<12) continue;
-    const h=treeSpot(x,z);
-    if(h<0) continue;
-    if(scenery.has(K(x,h,z))) continue;
-    if(chestSpots.some(c=>Math.hypot(c.x-x,c.z-z)<30)) continue;
-    chestSpots.push({x,y:h,z});
-  }
-  // --- Truhen füllen: Werkzeug und Baustoff, keine Zutaten.
-  const LOOT=[['plank',3,8],['stick',2,6],['torch',2,5],['bowl',1,1],
-              ['stone',3,8],['dirt',2,6],['brick',2,6],['sword',1,1]];
-  chestSpots.forEach(c=>{
-    put('chest',c.x,c.y,c.z);
-    const items=[];
-    const cnt=2+Math.floor(r()*3);
-    for(let k=0;k<cnt;k++){
-      const [id,lo,hi]=LOOT[Math.floor(r()*LOOT.length)];
-      if(items.some(it=>it.id===id)) continue;
-      items.push({id,n:lo+Math.floor(r()*(hi-lo+1))});
-    }
-    chests.set(K(c.x,c.y,c.z),{items,opened:false});
-  });
-
-  // --- Plätze für die Jannessen. Der erste steht im Starttal, drei wohnen in
-  // den Dorfhäusern, der Rest verteilt sich über die Welt: einer weit
-  // draußen, einer an einer Furt, einer auf einem Berg und der letzte hinter
-  // dem Fluss beim Pfeffer. Reihenfolge und Inhalt hängen zusammen — der
-  // k-te Platz gehört zum k-ten Jannes.
-  const freeSpot=(x,z)=>{
-    const h=terrainH(x,z);
-    return h>SEA&&!scenery.has(K(x,h,z))&&!scenery.has(K(x,h+1,z));
-  };
-  const findSpot=(...preds)=>{
-    for(const p of preds)
-      for(let k=0;k<8000;k++){
-        const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6)), z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
-        if(!p(x,z)||!freeSpot(x,z)) continue;
-        if(traderSpots.some(s=>Math.hypot(s.x-x,s.z-z)<22)) continue;
-        if(chestSpots.some(s=>Math.abs(s.x-x)<2&&Math.abs(s.z-z)<2)) continue;
-        return {x,z};
-      }
-    return null;
-  };
-  // Vorne die festen Plätze, dann die gesuchten. Ein nicht gefundener Platz
-  // wäre ein verlorenes Rezept, darum hat jede Suche eine Rückfallebene.
-  const grass=(x,z)=>treeSpot(x,z)>=0;
-  const far  =(x,z)=>Math.hypot(x-SPAWN.x,z-SPAWN.z)>44;
-  traderSpots.push({x:SPAWN.x+7,z:SPAWN.z-1}, ...houseSpots);
-  for(const q of [
-    [(x,z)=>far(x,z)&&grass(x,z), far, ()=>true],
-    [(x,z)=>riverAt(x,z).d<RIVER_W+4&&grass(x,z), (x,z)=>riverAt(x,z).d<RIVER_W+7, ()=>true],
-    [(x,z)=>terrainH(x,z)>=13, (x,z)=>terrainH(x,z)>=9, far, ()=>true],
-    [(x,z)=>beyondRiver(x,z)&&grass(x,z), beyondRiver, far, ()=>true],
-  ]) traderSpots.push(findSpot(...q)||{x:SPAWN.x,z:SPAWN.z-8});
-
-})();
+// scenery/edits/colRange/chests/K sowie blockAt/solidAt/fills/fillsAt/
+// waterAt/surfaceAt/safeSpot und die gesamte Landschafts-/Truhen-/Jannes-
+// Platzierung (chestSpots/houseSpots/traderSpots) kommen aus world (siehe
+// shared/world.js) — dieselbe deterministische Erzeugung läuft unverändert
+// im PartyKit-Server.
 
 // ------------------------------------------------------------------ Chunk-Vernetzung
 // Es werden ausschließlich freiliegende Flächen gebaut, chunkweise, damit die
@@ -984,27 +656,44 @@ function till(cell){
 function plantSeed(cell,it){
   const {x,y,z}=cell;
   if(blockAt(x,y,z)!=='till'||blockAt(x,y+1,z)) return false;
-  setBlock(x,y+1,z,it.seed.sprout);
-  growing.set(K(x,y+1,z),{to:it.seed.ripe,at:state.t+GROW*rnd(.8,1.3)});
+  const gy=y+1;                            // Position des Setzlings — Karten-Schlüssel UND Broadcast nutzen dieselbe Koordinate
+  setBlock(x,gy,z,it.seed.sprout);
+  // Phase 3b: absolute Wanduhrzeit statt state.t (das ist pro Sitzung
+  // relativ und startet bei jedem Neuladen nahe 0 — über Clients hinweg,
+  // die zu verschiedenen echten Zeiten beigetreten sind, unbrauchbar).
+  const at=Date.now()+GROW*rnd(.8,1.3)*1000;
+  growing.set(K(x,gy,z),{to:it.seed.ripe,at});
+  if(isConnected()) send({t:'plant',x,y:gy,z,to:it.seed.ripe,at});
   state.planted++;
   SND.place();
   return true;
 }
 function updateGrow(){
   for(const [k,g] of growing){
-    if(state.t<g.at) continue;
+    if(Date.now()<g.at) continue;
     growing.delete(k);
     const [x,y,z]=k.split(',').map(Number);
-    // Weggehackt oder überbaut? Dann wächst da auch nichts mehr.
+    // Weggehackt oder überbaut? Dann wächst da auch nichts mehr. Läuft bei
+    // jedem verbundenen Client unabhängig gegen dieselbe Wanduhrzeit — wer
+    // zuerst dran ist, ruft das schon broadcastende setBlock() auf, alle
+    // anderen finden hier nur noch keinen Setzling mehr vor und tun nichts.
     if(!String(blockAt(x,y,z)||'').startsWith('sprout')) continue;
     setBlock(x,y,z,g.to);
   }
 }
+// Reine Datenmutation kommt aus shared/world.js (setBlockData); hier nur
+// noch die lokale Rendering-Folge (Chunk neu vernetzen) und — Phase 3a —
+// die Weitergabe an den Server, falls verbunden. Jeder Aufrufer (till,
+// plantSeed, updateGrow, breakBlock, useRight) läuft durch diese eine
+// Funktion, darum genügt hier eine einzige send()-Stelle für alle
+// Block-Änderungen. Eingehende 'block'-Nachrichten vom Server rufen NICHT
+// diese Funktion auf, sondern setBlockData/markDirty direkt (siehe
+// Netzwerk-Abschnitt weiter unten) — sonst würde ein gerade empfangener
+// Fremd-Edit sofort wieder zurückgeschickt.
 function setBlock(x,y,z,type){
-  edits.set(K(x,y,z),type||null);
-  noteRange(x,z,y-1); noteRange(x,z,y+1);
-  for(const [dx,dz] of NB4){ noteRange(x+dx,z+dz,y-1); noteRange(x+dx,z+dz,y+1); }
+  setBlockData(x,y,z,type);
   markDirty(x,z);
+  if(isConnected()) send({t:'block',x,y,z,type});
 }
 
 // ------------------------------------------------------------------ Randmauer
@@ -1040,7 +729,8 @@ const wallMesh=batch(TEX.brick,(BOUND.x1-BOUND.x0+3)*8,null,false);
 })();
 
 // ------------------------------------------------------------------ Fackeln
-const torches=[];
+// torches (Array) und litAt kommen aus shared/world.js (auch vom Server
+// gebraucht, damit Bennis dort ebenso Fackellicht meiden).
 const torchPost=batch(TEX.log,240);
 const torchFlame=batch(TEX.flame,240,{emissive:0xff8c1a,emissiveIntensity:1});
 function emitTorches(){
@@ -1053,7 +743,6 @@ function emitTorches(){
   torchPost.instanceMatrix.needsUpdate=true;
   torchFlame.instanceMatrix.needsUpdate=true;
 }
-const litAt=(x,z,r=14)=>torches.some(t=>Math.hypot(t.x-x,t.z-z)<r);
 
 // ------------------------------------------------------------------ Fallende Sachen
 // Abgebautes fällt nicht mehr geradewegs in den Rucksack. Es liegt als
@@ -1087,7 +776,10 @@ function removeDrop(d){
 // pickT  Schonfrist, bis es aufgehoben werden darf
 // potT   Schonfrist, bis ein Kochtopf es schlucken darf — sonst fiele das
 //        fertige Gericht sofort wieder in den Topf, aus dem es kam
-function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35,potT=0){
+// Gemeinsamer Bau-Kern für einen lokalen UND einen von einem anderen Client
+// übernommenen Drop (Phase 6) — der einzige Unterschied ist, wer die dropId
+// vergibt und ob broadcastet wird, s. spawnDrop/spawnDropRemote unten.
+function _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT){
   if(!ITEMS[id]||n<=0) return null;
   while(drops.length>=DROP_CAP) removeDrop(drops[0]);   // Notbremse gegen Halden
   const mesh=new THREE.Mesh(BLOCKGEO,dropMat(id));
@@ -1098,9 +790,29 @@ function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35,potT=0){
   // age zählt die Lebenszeit, t nur die Phase des Wippens — die startet
   // zufällig, damit nicht alle Würfel im Gleichschritt auf und ab gehen.
   const d={id,n,x,y,z,vx,vy,vz,mesh,spin:rnd(0,6.28),rest:false,
-           pickT,potT,age:0,t:rnd(0,6.28)};
+           pickT,potT,age:0,t:rnd(0,6.28),dropId};
   drops.push(d);
   return d;
+}
+let dropSeq=0;
+// Jeder heutige Aufrufer (giveOrDrop, dropHeld, finishCook, buyFrom/
+// buyResult, breakBlock, ...) hat seinen Zufalls-Impuls schon VOR diesem
+// Aufruf ausgewürfelt — die Zufälligkeit ist längst aufgelöst, spawnDrop
+// bekommt nur noch konkrete Zahlen. Darum genügt EIN Broadcast-Punkt hier
+// für alle Aufrufer, genau wie setBlock() das für Blockänderungen schon tut:
+// eine frische, global eindeutige dropId minten und — sofern verbunden — an
+// alle ANDEREN Clients melden (Empfänger s. on('drop-spawn',...) unten).
+function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35,potT=0){
+  const dropId=`${getPid()??'off'}-${++dropSeq}`;
+  const d=_mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT);
+  if(d&&isConnected()) send({t:'drop-spawn',dropId,id,n,x,y,z,vx,vy,vz});
+  return d;
+}
+// Für eine ankommende drop-spawn-Nachricht: baut denselben Würfel, aber mit
+// der schon vom Absender vergebenen dropId und OHNE erneut zu broadcasten —
+// sonst prallte dieselbe Nachricht endlos zwischen den Clients hin und her.
+function spawnDropRemote(dropId,id,n,x,y,z,vx,vy,vz,pickT=.35,potT=0){
+  return _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT);
 }
 // Passt es nicht mehr in den Rucksack, liegt es eben vor den Füßen —
 // besser als die alte Meldung, dass etwas verlorengegangen sei.
@@ -1155,10 +867,24 @@ function updateDrops(dt){
       if(fillsAt(bx,by,bz)){
         ny=by+1; d.vy=0;
         // Landet es auf einem Kochtopf, wandert es hinein statt obendrauf.
+        // Verbunden: nicht sofort potAdd() aufrufen — zwei Clients, deren
+        // Physik dasselbe Landen fast zeitgleich erkennt, würden sonst beide
+        // füttern (Vervielfältigung). Stattdessen beim Server anmelden (s.
+        // Kommentar bei den anderen beiden Claim-Stellen unten) und erst auf
+        // die Freigabe (on('drop-claimed',...)) hin wirklich füttern. Position
+        // hier merken, weil der Server sie zur Schiedsrichter-Rolle gar nicht
+        // braucht und darum nicht zurückschickt.
         if(!d.rest&&d.potT<=0&&blockAt(bx,by,bz)==='pot'){
-          const took=potAdd(bx,by,bz,d.id,d.n);
-          if(took>=d.n){ removeDrop(d); continue; }
-          if(took>0) d.n-=took;
+          if(isConnected()){
+            if(!d._claiming){
+              d._claiming=true; d._claimReason='pot'; d._potPos={x:bx,y:by,z:bz};
+              send({t:'drop-claim',dropId:d.dropId,reason:'pot'});
+            }
+          }else{
+            const took=potAdd(bx,by,bz,d.id,d.n);
+            if(took>=d.n){ removeDrop(d); continue; }
+            if(took>0) d.n-=took;
+          }
         }
         d.rest=true;
       } else d.rest=false;
@@ -1169,21 +895,37 @@ function updateDrops(dt){
 
     // Was vor Mannis Tresen liegen bleibt und auf seiner Preisliste steht,
     // kauft er auf der Stelle. Alles andere lässt er liegen.
+    // Verbunden: wie beim Topf oben — nicht sofort verkaufen, sonst könnten
+    // zwei Clients, die dasselbe Ruhen fast zeitgleich erkennen, denselben
+    // Drop beide verkaufen (Geld aus dem Nichts). Erst beim Server anmelden,
+    // dann auf die Freigabe warten (drop._claiming verhindert erneutes
+    // Anmelden, solange die Antwort noch aussteht — rein lokal, s. p._claiming
+    // beim Topf-Claim).
     if(d.rest&&PRICES[d.id]&&marketChar&&
        Math.hypot(d.x-marketChar.x,d.z-marketChar.z)<MARKET_R&&
        Math.abs(d.y-marketChar.y)<2.5){
+      if(isConnected()){
+        if(!d._claiming){ d._claiming=true; d._claimReason='sell'; send({t:'drop-claim',dropId:d.dropId,reason:'sell'}); }
+        continue;
+      }
       const id=d.id, n=d.n;
       removeDrop(d);
       sellTo(id,n);
       continue;
     }
+    // Gleiches Muster fürs Aufheben — verbunden erst anmelden, das eigentliche
+    // give() läuft erst im on('drop-claimed',...)-Gewinnfall.
     if(d.pickT<=0&&Math.hypot(d.x-player.x,d.z-player.z)<PICK_R&&
        Math.abs(d.y-player.y)<2.2&&!state.paused){
-      const rest=give(d.id,d.n);
-      if(rest<d.n){
-        SND.pop(); updateHUD();
-        if(rest<=0){ removeDrop(d); continue; }
-        d.n=rest;                        // nur ein Teil passte hinein
+      if(isConnected()){
+        if(!d._claiming){ d._claiming=true; d._claimReason='pickup'; send({t:'drop-claim',dropId:d.dropId,reason:'pickup'}); }
+      }else{
+        const rest=give(d.id,d.n);
+        if(rest<d.n){
+          playSample('pop',.8)||SND.pop(); updateHUD();
+          if(rest<=0){ removeDrop(d); continue; }
+          d.n=rest;                        // nur ein Teil passte hinein
+        }
       }
     }
     // Gleiches, das nebeneinander liegt, fasst sich zusammen — sonst pflastert
@@ -1213,13 +955,20 @@ const potCount=p=>p.items.reduce((a,b)=>a+b.n,0);
 function potAdd(x,y,z,id,n){             // gibt zurück, wieviel hineinging
   const k=K(x,y,z);
   let p=pots.get(k);
-  if(!p){ p={items:[],cook:0}; pots.set(k,p); }
+  if(!p){ p={items:[],cook:0,readyAt:0}; pots.set(k,p); }
   if(p.cook>0) return 0;                 // während des Kochens bleibt der Deckel zu
   const t=Math.min(POT_CAP-potCount(p),n);
   if(t<=0) return 0;
   const e=p.items.find(i=>i.id===id);
   if(e) e.n+=t; else p.items.push({id,n:t});
   SND.tap();
+  // Phase 3b: den vollen Inhalt broadcasten (nicht nur das Delta) — dasselbe
+  // "ganzer Zustand" Prinzip wie bei Block/Fackel-Sync, unempfindlich gegen
+  // Drift. Das auslösende Ereignis (ein Wurf-Würfel, der im Topf landet)
+  // bleibt unsynchronisiert (Phase 6), nur das Ergebnis geht raus — hier statt
+  // nur am einen bekannten Aufrufer (Wurf-Physik in updateDrops), damit auch
+  // ein direkter potAdd()-Aufruf (z.B. über das Debug-API) korrekt synct.
+  if(isConnected()) send({t:'pot-add',x,y,z,items:p.items});
   return t;
 }
 // Im Topf liegt alles durcheinander — es zählt nur, was drin ist und wieviel.
@@ -1271,7 +1020,13 @@ function usePot(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
   if(!p||!p.items.length){ toast('🍲 Der Topf ist leer — wirf Zutaten hinein (Q).','warn',2600); return; }
   if(p.cook>0){ toast('🍲 Es kocht schon.','',1400); return; }
-  p.cook=COOK_TIME;
+  // p.cook ist nur noch ein 0/1-Kochflag, nicht mehr der Countdown selbst —
+  // die eigentliche Zielzeit ist p.readyAt, eine absolute Wanduhrzeit, damit
+  // alle verbundenen Clients (die zu unterschiedlichen echten Zeiten
+  // beigetreten sind) auf denselben Moment hinlaufen.
+  p.cook=1;
+  p.readyAt=Date.now()+COOK_TIME*1000;
+  if(isConnected()) send({t:'pot-start',x:cell.x,y:cell.y,z:cell.z,readyAt:p.readyAt});
   SND.craft();
   toast('🍲 Der Topf kocht …','good',2000);
 }
@@ -1298,15 +1053,30 @@ function finishCook(k,p){
   toast(r?'🤢 Du weißt nicht, was daraus werden soll. Frag einen Jannes.'
          :'🤢 Angebrannt. Daraus wird kein Gericht.','bad',3200);
 }
+// Phase 3b: fertig ist ein Topf für ALLE Clients zur selben Wanduhrzeit
+// (p.readyAt) — aber `finishCook` spawnt einen echten, aufhebbaren Würfel
+// (Phase 6 synct Drops noch nicht), darum darf ihn nicht jeder Client für
+// sich selbst aufrufen: stünden zwei Spieler am selben Topf, würde jeder
+// sein eigenes Gericht spawnen und einsacken — echte Vervielfältigung, kein
+// Rand­fall. Also: statt direkt zu kochen, wird beim Server ein "claim"
+// angemeldet; der Server bestimmt EINMAL den Gewinner (pot-grant), und nur
+// der ruft finishCook tatsächlich auf (siehe on('pot-grant',...) weiter
+// unten). p._claiming verhindert, dass jedes Bild erneut angemeldet wird,
+// während die Antwort noch aussteht — rein lokal, nie mitgeschickt.
 function updatePots(dt){
   for(const [k,p] of pots){
     if(p.cook<=0) continue;
-    p.cook-=dt;
-    if(p.cook>0) continue;
-    p.cook=0;
+    if(Date.now()<p.readyAt) continue;
     const [x,y,z]=k.split(',').map(Number);
     if(blockAt(x,y,z)!=='pot'){ pots.delete(k); continue; }  // abgebaut, während es kochte
-    finishCook(k,p);
+    if(!isConnected()){                    // offline/Einzelspieler: wie bisher, kein Claim-Tanz nötig
+      p.cook=0;
+      finishCook(k,p);
+      continue;
+    }
+    if(p._claiming) continue;
+    p._claiming=true;
+    send({t:'pot-claim',x,y,z,readyAt:p.readyAt});
   }
 }
 
@@ -1325,21 +1095,13 @@ const CHARS=[
 // einer aushängen hat, bietet der nächste nicht an. Nach einem Handel
 // überlegt er sich eine Weile etwas Neues — und wird dabei jedes Mal ein
 // bisschen gieriger.
-const REFRESH=40;                        // Sekunden bis zum nächsten Angebot
+// REFRESH/RAW/offerWant kommen aus shared/economy.js — offerWant nimmt den
+// Zufallsgenerator als Parameter, damit Client und Server je ihre eigene
+// Instanz behalten (siehe OFFER_RND unten, nur noch für den Offline-Fall
+// gebraucht, sobald der Server die Angebote vorgibt).
 const OFFER_RND=mulberry(20260101);      // eigene Formel: Angebote bleiben reproduzierbar
-const RAW=['dominik','mushroom','pepper'];
-function offerWant(r,round){
-  if(r.id==='soup') return [['compote',1+round],['panfry',1+round]];
-  const grow=1+round*.7;
-  const base=r.rank>=10?7:r.rank>=6?5:3;
-  // Pfeffer verlangt nur, wer schon Werkzeug hergibt — vorher war man kaum
-  // hinter dem Fluss.
-  const pool=r.rank>=6?RAW:RAW.slice(0,2);
-  const id=pool[Math.floor(OFFER_RND()*pool.length)];
-  return [[id,Math.max(1,Math.round(base*grow))]];
-}
 function setOffer(c,r,round){
-  c.trade=r?{give:r.id,want:offerWant(r,round),done:false,round,readyAt:0}
+  c.trade=r?{give:r.id,want:offerWant(r,round,OFFER_RND),done:false,round,readyAt:0}
            :{give:null,want:[],done:false,round,readyAt:0};
 }
 function makeOffer(c,round){
@@ -1445,28 +1207,38 @@ const MARKET_R=2.6;
 // Die Preise sind Stationen auf dem Weg zum Ziel: das Brett ist früh drin,
 // der Schirm bleibt eine Weile ein Wunsch. Alle drei bringen dich schneller
 // zur nächsten Ernte — sie zahlen sich also selbst zurück.
-const SHOP=[
-  {id:'board', price:250,  txt:'Auf festem Boden fast doppelt so flott.'},
-  {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
-  {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
-];
+// SHOP kommt aus shared/economy.js.
 let marketChar=null;
 function earn(n){
   state.money+=n; state.earned+=n;
   updateHUD();
   if(state.earned>=GOAL) winGame();
 }
+// Verkaufen ist nie umkämpft — niemand kann verhindern, dass man das eigene,
+// schon in der Hand befindliche Gut verkauft, anders als bei einer Truhe gibt
+// es keinen gemeinsamen Vorrat, um den man wettrennen könnte. Darum dürfen
+// Sound/Spruch/Toast sofort (optimistisch) laufen; die tatsächlichen
+// gemeinsamen Zahlen (state.money/earned/sold) kommen NUR noch über die
+// 'econ'-Antwort des Servers zurück (s.u.) — offline bleibt der alte, direkt
+// mutierende Weg über earn() bestehen.
 function sellTo(id,n){
   const sum=PRICES[id]*n;
-  state.sold+=n;
   SND.chest();
   say(marketChar,n+'× '+ITEMS[id].nm+' — macht '+sum+' Euro.',3200);
   toast('💶 +'+sum+' € für '+n+'× '+ITEMS[id].ic+' '+ITEMS[id].nm,'good',2600);
-  earn(sum);
+  if(isConnected()) send({t:'sell',id,n});
+  else{ state.sold+=n; earn(sum); }
 }
+// Kaufen dagegen ist ein echtes Wettrennen um die gemeinsame Kasse — zwei
+// Mitspieler dürfen niemals beide den letzten knapp leistbaren Artikel
+// bekommen. Also NICHT optimistisch: der Server entscheidet allein, ob es
+// reicht, und erst seine 'econ'-Antwort (buyResult) löst Drop/Spruch/Toast
+// aus (s. on('econ',...) unten). Offline bleibt der alte, direkt mutierende
+// Weg bestehen.
 function buyFrom(id){
   const w=SHOP.find(s=>s.id===id);
   if(!w||!marketChar) return;
+  if(isConnected()){ send({t:'buy',id}); return; }
   if(state.money<w.price){ SND.fail(); toast('💶 Dafür reicht es nicht.','warn',1800); return; }
   state.money-=w.price; state.bought++;
   // Er reicht es über den Tresen, in die Richtung, in der man steht.
@@ -1527,19 +1299,47 @@ function wander(c,dt){
   c.y=Math.abs(y-c.y)>2?y:lerp(c.y,y,Math.min(1,dt*9));
   c.group.position.set(c.x,c.y,c.z);
 }
+// Phase 5a: online ist der Server die alleinige Autorität über die
+// Umherlauf-Position jedes Jannes/Manni (siehe wander() im Server-Kommentar
+// von party/server.js) — derselbe "wilde", nicht geseedete Random-Walk ergäbe
+// pro Client sonst binnen Sekunden auseinanderlaufende Positionen, exakt wie
+// beim Phase-2-Spieler-Lerp. Offline bleibt wander() lokal maßgeblich wie
+// bisher; online lerpt jeder Client nur noch Richtung des zuletzt per
+// 'char-pos'/'welcome' empfangenen Ziels (c._netX/_netY/_netZ).
+const CHAR_LERP=9;
 function updateChars(dt){
+  const f=Math.min(1,dt*CHAR_LERP);
   for(const c of CHARS){
     if(!c.group) continue;
-    wander(c,dt);
+    if(!isConnected()){
+      wander(c,dt);
+    }else if(c._netX!=null){
+      c.x=lerp(c.x,c._netX,f);
+      c.y=lerp(c.y,c._netY,f);
+      c.z=lerp(c.z,c._netZ,f);
+      c.group.position.set(c.x,c.y,c.z);
+    }
     // Das Ladenschild hängt vor der Landschaft — quer über die Welt sichtbar
     // wäre es zu viel, in Rufweite ist es die Wegmarke zum Markt.
     if(c.tag) c.tag.visible=Math.hypot(player.x-c.x,player.z-c.z)<26;
     // Nach einem Handel überlegt er eine Weile und hat dann etwas Neues.
+    // Phase 4b: online ist NICHT der Client, der das nächste Angebot
+    // auswürfelt (das würde bei vier Clients vier verschiedene Rezepte
+    // ergeben) — er meldet nur einmalig einen Anspruch an (t._claiming
+    // verhindert erneutes Senden, während die Antwort noch aussteht, genau
+    // wie p._claiming beim Topf-Claim) und wartet auf 'trader-offer'.
     const t=c.trade;
-    if(t&&t.done&&state.t>=t.readyAt){
-      makeOffer(c,t.round+1);
-      if(c.trade.give&&Math.hypot(player.x-c.x,player.z-c.z)<20)
-        say(c,'Mir ist was Neues eingefallen!',3600);
+    if(t&&t.done&&Date.now()>=t.readyAt){
+      if(isConnected()){
+        if(!t._claiming){
+          t._claiming=true;
+          send({t:'trader-refresh',idx:traders.indexOf(c),round:t.round});
+        }
+      }else{
+        makeOffer(c,t.round+1);
+        if(c.trade.give&&Math.hypot(player.x-c.x,player.z-c.z)<20)
+          say(c,'Mir ist was Neues eingefallen!',3600);
+      }
     }
     c.sayT-=dt;
     if(c.sayT<=0){ c.sayT=rnd(22,45);
@@ -1574,8 +1374,29 @@ function updateBillboards(){
 }
 
 // ------------------------------------------------------------------ Bennis (Gegner)
+// Phase 5b: online, the server owns every Benni's position/hp/AI — this
+// array holds BOTH kinds of entry (never mixed within one session, since
+// spawning itself is gated on isConnected(), see updateNight): offline
+// entries built by spawnMob() below (full local simulation, `id` absent),
+// and online entries built by ensureMob() further down (pure render/lerp,
+// `id` present, a number). Kept as one shared array rather than two
+// separate collections because attack()'s targeting loop and
+// updateBillboards()'s rotation loop both already iterate `mobs` uniformly
+// by `.x`/`.z`/`.mesh` — splitting the collection would mean splitting (and
+// keeping in sync) those two loops too, for no real benefit.
 const mobs=[];
-const MOB_HP=10, MOB_SPEED=2.35, MOB_DMG=3, MOB_ATK_CD=1.4;
+// h/asp/mesh construction shared by the offline spawnMob() and the online
+// ensureMob() below — same Benni sprite plane either way, just built from
+// local physics vs. a server snapshot.
+function makeMobMesh(x,y,z){
+  const h=1.95, asp=benniTex.image.width/benniTex.image.height;
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp,h),
+    new THREE.MeshLambertMaterial({map:benniTex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
+  mesh.position.set(x,y+h/2,z); mesh.castShadow=true;
+  scene.add(mesh);
+  return mesh;
+}
+// ---- Offline (Einzelspieler/kein Server) — volle lokale Simulation, wie bisher.
 const mobCap=()=>Math.min(12,3+Math.floor(state.day*1.1));
 function spawnMob(){
   if(!benniTex) return;
@@ -1588,12 +1409,8 @@ function spawnMob(){
   if(litAt(x,z)) return;
   const y=surfaceAt(x,z);
   if(y<SEA-1) return;
-  const h=1.95, asp=benniTex.image.width/benniTex.image.height;
-  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp,h),
-    new THREE.MeshLambertMaterial({map:benniTex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
-  mesh.position.set(x,y+h/2,z); mesh.castShadow=true;
-  scene.add(mesh);
-  mobs.push({x,z,y,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6)});
+  const mesh=makeMobMesh(x,y,z);
+  mobs.push({x,z,y,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6),screamCd:rnd(3,7)});
 }
 function dropMob(m,i){
   scene.remove(m.mesh); m.mesh.geometry.dispose(); m.mesh.material.dispose();
@@ -1601,16 +1418,14 @@ function dropMob(m,i){
 }
 function damageMob(m,dmg){
   m.hp-=dmg; m.hurtT=.22;
+  playSample('punch',.6);
   if(m.hp<=0){
     dropMob(m,-1);
     state.killed++;
     SND.mobDie();
   } else SND.hit();
 }
-function mobBlocked(x,z,fromY){
-  const s=surfaceAt(x,z);
-  return s-fromY>1.001||s<SEA-1;
-}
+// mobBlocked kommt aus shared/world.js (auch vom Server gebraucht).
 // surfaceAt() rastet auf ganze Blöcke ein: ungebremst springt ein Benni bei
 // jedem Zellwechsel und flackert an Kanten hin und her. Also nachziehen statt
 // setzen — nur bei großen Sprüngen (Respawn) sofort.
@@ -1636,6 +1451,11 @@ function updateMobs(dt){
       m.mesh.position.set(m.x,mobY(m,dt)+.98,m.z);
       continue;
     }
+    m.screamCd-=dt;
+    if(d<14&&m.screamCd<=0){
+      playSample(pick(['benni1','benni2','benni3']),.7);
+      m.screamCd=rnd(8,14);
+    }
     if(d>1.9){
       const my=surfaceAt(m.x,m.z);
       let nx=m.x+dx/d*MOB_SPEED*dt, nz=m.z+dz/d*MOB_SPEED*dt;
@@ -1656,6 +1476,36 @@ function updateMobs(dt){
     m.mesh.position.set(m.x,mobY(m,dt)+.98+Math.abs(Math.sin(m.bob))*.06,m.z);
   }
 }
+// ---- Online (Server verbunden) — reines Rendern/Lerpen, exakt das Muster
+// von ensureRemotePlayer/removeRemotePlayer/updateRemotePlayers (Phase 2),
+// nur nach Benni-`id` statt Spieler-`pid` einsortiert. Der Server schickt
+// keinen `bob`-Hüpfwert mit (siehe mob-state weiter unten) — anders als
+// offline hüpfen vernetzte Bennis darum nicht beim Laufen, eine akzeptierte
+// kosmetische Vereinfachung.
+function ensureMob(id,x,y,z){
+  let m=mobs.find(mm=>mm.id===id);
+  if(m) return m;
+  const mesh=makeMobMesh(x,y,z);
+  m={id,x,y,z,hp:MOB_HP,hurtT:false,mesh,target:{x,y,z}};
+  mobs.push(m);
+  return m;
+}
+function removeMob(id){
+  const i=mobs.findIndex(m=>m.id===id);
+  if(i<0) return;                        // schon weg — sicherer No-op (siehe mob-dead-Handler)
+  dropMob(mobs[i],i);
+}
+function updateMobsOnline(dt){
+  const f=Math.min(1,dt*10);
+  for(const m of mobs){
+    if(m.id==null) continue;             // eine (im selben Lauf eigentlich nie gemischte) Offline-Leiche
+    m.x=lerp(m.x,m.target.x,f);
+    m.y=lerp(m.y,m.target.y,f);
+    m.z=lerp(m.z,m.target.z,f);
+    m.mesh.position.set(m.x,m.y+.98,m.z);
+    m.mesh.material.color.setRGB(1,m.hurtT?.4:1,m.hurtT?.4:1);
+  }
+}
 function hurtPlayer(dmg){
   if(state.paused||player.invT>0) return;
   player.hp=clamp(player.hp-dmg,0,player.maxhp);
@@ -1672,8 +1522,13 @@ function respawn(){
   player.x=s.x; player.z=s.z; player.vy=0; player.onGround=true;
   player.y=player.viewY=player.fallFrom=s.y;
   player.invT=2.5;                       // Gnadenfrist, sonst campen Bennis den Punkt
-  for(let i=mobs.length-1;i>=0;i--)      // und die Umstehenden verziehen sich
-    if(Math.hypot(mobs[i].x-s.x,mobs[i].z-s.z)<10) dropMob(mobs[i],i);
+  // Nur offline: die Umstehenden lokal wegräumen. Online gehören Bennis dem
+  // Server (andere Spieler sehen sie ja weiter) — hier lokal entfernen würde
+  // nur eine unnötige Mesh-Neuerstellung beim nächsten mob-state auslösen,
+  // ohne den Server je etwas davon wissen zu lassen.
+  if(!isConnected())
+    for(let i=mobs.length-1;i>=0;i--)
+      if(Math.hypot(mobs[i].x-s.x,mobs[i].z-s.z)<10) dropMob(mobs[i],i);
   toast('💀 Du bist gestorben. Dein Kram bleibt bei dir.','bad',3600);
   updateHUD();
 }
@@ -1800,7 +1655,8 @@ function breakBlock(x,y,z,t){
   }
   setBlock(x,y,z,null);
   state.mined++;
-  SND.pop();
+  if(b.drop==='dominik') playSample('dominik_break',.7)||SND.pop();
+  else SND.pop();
   let drop=b.drop;
   if(t==='leaf'){                            // Laub gibt manchmal einen Stock
     if(Math.random()<.22) drop='stick';
@@ -1870,6 +1726,7 @@ function useRight(){
     if(!canPlaceAt(p.x,p.y,p.z)||!blockAt(p.x,p.y-1,p.z)) return;
     torches.push({x:p.x,y:p.y,z:p.z});
     emitTorches(); consumeHeld(); SND.place(); updateHUD();
+    if(isConnected()) send({t:'torch',x:p.x,y:p.y,z:p.z});
     return;
   }
   // 6. Block setzen
@@ -1896,7 +1753,15 @@ function attack(){
     if(dot<.4) continue;
     if(d<bestD){ bestD=d; best=m; }
   }
-  if(best){ damageMob(best,heldDmg()); return true; }
+  if(best){
+    // Online: nur die Trefferabsicht melden, hp NICHT lokal anfassen — die
+    // tatsächliche Änderung kommt einen Tick später über mob-state/mob-dead
+    // zurück (siehe die Handler weiter unten). Eine bewusste, kleine
+    // Latenz, kein Bug.
+    if(isConnected()){ send({t:'mob-hit',id:best.id,dmg:heldDmg()}); return true; }
+    damageMob(best,heldDmg());
+    return true;
+  }
   return false;
 }
 
@@ -1925,10 +1790,23 @@ function renderChest(){
   showModal(h,true);
   updateItemTip();
 }
+// Truhen-Entnahme fasst zwei gekoppelte Wirkungen an: den gemeinsamen
+// Truhenbestand UND das eigene (lokale, unsynchronisierte) Inventar. Würden
+// zwei Spieler fast gleichzeitig denselben Stapel anklicken und jeder
+// optimistisch lokal anwenden, könnten beide sich den vollen Bestand
+// gutschreiben, obwohl er nur einmal da war — echte Vervielfältigung.
+// Darum entscheidet ausschließlich der SERVER, wieviel eine Anfrage wirklich
+// bekommt (chest-take → chest-sync), und der anfragende Client rührt sein
+// Inventar erst an, wenn die Antwort da ist (siehe on('chest-sync',...)).
+// Offline/Einzelspieler fällt auf das alte Direkt-Verhalten zurück.
 function takeFromChest(i,one){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
   const it=c.items[i]; if(!it) return;
   const want=one?1:it.n;                     // rechts nimmt einzeln aus der Truhe
+  if(isConnected()){
+    send({t:'chest-take',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,id:it.id,n:want});
+    return;
+  }
   const rest=give(it.id,want);
   if(rest===want){ toast('🎒 Inventar voll.','warn',1400); return; }
   it.n-=want-rest;
@@ -2019,14 +1897,26 @@ function openTrade(c){
       <button class="primary" data-act="trade"${ok?'':' disabled'}>${ok?'Tauschen':'Das hast du noch nicht'}</button>
     </div>`);
 }
+// Phase 4b: online ist das Abschließen eines Handels genau wie ein
+// Truhen-Take server-arbitriert — der Server entscheidet, WER genau diesen
+// einen Handel für sich verbucht (siehe on('trade-result',...) oben), damit
+// zwei gleichzeitige "Tauschen"-Klicks auf denselben Jannes nicht beide
+// erfolgreich sind und die Angebots-Buchführung (done/round/readyAt)
+// doppelt weiterzählt. Zutaten werden darum NICHT hier abgezogen, sondern
+// erst bei der Serverantwort (die auch dem Verlierer eine Antwort gibt,
+// statt sein UI hängen zu lassen).
 function doTrade(){
   const c=tradePartner;
   if(!c||c.trade.done||!c.trade.give) return;
   const t=c.trade;
   if(!tradeOK(t)){ SND.fail(); return; }
+  if(isConnected()){
+    send({t:'trade-complete',idx:traders.indexOf(c)});
+    return;
+  }
   for(const [id,n] of t.want) take(id,n);
   // Er braucht danach eine Weile, bis ihm das nächste Rezept einfällt.
-  t.done=true; t.readyAt=state.t+REFRESH; state.trades++;
+  t.done=true; t.readyAt=Date.now()+REFRESH*1000; state.trades++;
   SND.chest();
   say(c,'Danke. Schau her — so geht das.',5000);
   learnRecipe(t.give,c.name);
@@ -2128,7 +2018,10 @@ function craftFromGrid(){
   state.crafted++;
   SND.craft();
   const fresh=!known.has(r.id);
-  known.add(r.id);                       // selbst herausgefunden zählt auch
+  // Phase 4b: known ist team-weit — nur beim ECHTEN Erstfund gibt es etwas zu
+  // verbreiten (sonst würde jedes weitere Craften desselben Rezepts unnötig
+  // Netzwerkverkehr erzeugen).
+  if(fresh){ known.add(r.id); if(isConnected()) send({t:'learn',id:r.id}); }
   updateHUD();
   if(r.id==='soup'&&!state.won){ winGame(); return true; }
   toast(fresh?'📜 Rezept entdeckt: '+ITEMS[r.out[0]].nm
@@ -2357,11 +2250,448 @@ mbox.addEventListener('click',e=>{
   if(act==='close') hideModal();
   else if(act==='takeall'){
     const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
-    for(let i=c.items.length-1;i>=0;i--) takeFromChest(i);
+    if(isConnected()){
+      // Erst eine Momentaufnahme, dann pro Stapel eine eigene chest-take-
+      // Anfrage — c.items ändert sich sonst unter der Schleife weg, sobald
+      // die erste chest-sync-Antwort hereinkommt.
+      const items=c.items.slice();
+      for(const it of items)
+        send({t:'chest-take',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,id:it.id,n:it.n});
+    }else{
+      for(let i=c.items.length-1;i>=0;i--) takeFromChest(i);
+    }
   }
   else if(act==='help') openIntro();
   else if(act==='start'){ localStorage.setItem('edf_seen','1'); hideModal(); state.started=true; }
+  else if(act==='pwsubmit') submitPassword();
 });
+
+// ------------------------------------------------------------------ Mitspieler (Phase 2)
+// Andere verbundene Spieler bekommen einen simplen Avatar (Kapsel + Namensschild),
+// der zur zuletzt empfangenen Position/Blickrichtung hin lerpt — keine Vorhersage,
+// keine Extrapolation, nur Glätten des letzten bekannten Werts. Die eigene Bewegung
+// bleibt komplett lokal maßgeblich (kein serverseitiges Zurückkorrigieren).
+const PLAYER_COLORS=['#e0555f','#4fa8e0','#e0c04f','#7bcf6a'];
+const remotePlayers=new Map();              // pid -> {group, target:{x,y,z,yaw}}
+function ensureRemotePlayer(pid){
+  let rp=remotePlayers.get(pid);
+  if(rp) return rp;
+  const color=PLAYER_COLORS[(pid-1)%4];
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CapsuleGeometry(.28,1.1,4,8),
+    new THREE.MeshLambertMaterial({color}));
+  body.position.y=.83; body.castShadow=true; g.add(body);
+  const label=makeLabel(['Spieler '+pid],color,.35);
+  label.position.y=2; g.add(label);
+  scene.add(g);
+  rp={group:g,body,label,target:{x:0,y:0,z:0,yaw:0}};
+  remotePlayers.set(pid,rp);
+  return rp;
+}
+function removeRemotePlayer(pid){
+  const rp=remotePlayers.get(pid);
+  if(!rp) return;
+  scene.remove(rp.group);
+  rp.body.geometry.dispose(); rp.body.material.dispose();
+  rp.label.material.map?.dispose(); rp.label.material.dispose();
+  remotePlayers.delete(pid);
+}
+function updateRemotePlayers(dt){
+  const f=Math.min(1,dt*10);
+  for(const rp of remotePlayers.values()){
+    const g=rp.group, t=rp.target;
+    g.position.set(lerp(g.position.x,t.x,f),lerp(g.position.y,t.y,f),lerp(g.position.z,t.z,f));
+    let dy=t.yaw-g.rotation.y;
+    dy=((dy+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;   // kürzester Weg, kein Sprung über die ±π-Naht
+    g.rotation.y+=dy*f;
+  }
+}
+let netSendT=0;
+// Phase 5a: die Server-Epoche für Tag/Nacht — "wann begann Tag 1 / dayT=0",
+// siehe update(dt). null bis die erste 'welcome' da ist (oder dauerhaft null
+// offline), so lange läuft der alte Tick-Rückfall weiter.
+let dayEpoch0=null;
+
+// ------------------------------------------------------------------ Netzwerk / Passwort
+// Phase 1: nur Verbindung + Passwortabfrage — noch keine Spielnachrichten.
+// awaitingPassword hält fest, ob gerade eine Passwortabfrage den Boot-
+// Übergang blockiert; ohne diese Fahne könnte der normale Boot-Abschluss
+// (edf_seen/openIntro) das Passwortfenster überschreiben oder das Spiel
+// entpausieren, während der Server noch auf ein Passwort wartet.
+let awaitingPassword=false;
+// Was nach erfolgreicher Anmeldung (oder wenn gar kein Passwort nötig war)
+// passiert — genau das, was der Boot-Abschluss ohnehin tut.
+function afterAuth(){
+  if(localStorage.getItem('edf_seen')){ state.paused=false; state.started=true; }
+  else openIntro();
+}
+function openPasswordModal(msg){
+  awaitingPassword=true;
+  showModal(`<h2>🔒 Serverzugang</h2>
+    <p>Dieses Spiel läuft auf einem privaten Server. Passwort eingeben, um mit anderen zu spielen.</p>
+    ${msg?`<p style="color:#ff9a86">${msg}</p>`:''}
+    <p><input id="pwInput" type="password" placeholder="Passwort" autocomplete="off" style="
+      width:100%;box-sizing:border-box;padding:10px;border-radius:8px;
+      border:1px solid #4a774a;background:#0f1c0f;color:#eaf3ea;font-size:15px"></p>
+    <div class="btnrow"><button class="primary" data-act="pwsubmit">Verbinden</button></div>`);
+  const inp=el('pwInput');
+  if(inp){
+    inp.focus();
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); submitPassword(); } });
+  }
+}
+function submitPassword(){
+  const inp=el('pwInput');
+  const pw=inp?inp.value:'';
+  if(!pw) return;
+  attemptConnect(pw,true);
+}
+// fromPrompt: true, wenn der Versuch aus dem Passwortfenster kam (dann
+// entscheidet der Ausgang auch über dessen Schließen), false beim stillen
+// Versuch mit gespeichertem Passwort beim Boot.
+function attemptConnect(pw,fromPrompt){
+  return connect(pw).then(()=>{
+    try{ localStorage.setItem('edf_pw',pw); }catch(e){}
+    if(awaitingPassword){ awaitingPassword=false; hideModal(); afterAuth(); }
+  }).catch(err=>{
+    if(err.reason==='bad-password'){
+      try{ localStorage.removeItem('edf_pw'); }catch(e){}
+      // Leeres pw heißt: stiller Erstversuch ohne gespeichertes Passwort —
+      // dafür "falsches Passwort" zu melden wäre irreführend.
+      openPasswordModal(pw?'❌ Falsches Passwort — bitte erneut versuchen.':null);
+    }else if(err.reason==='full'){
+      openPasswordModal('🚪 Server ist gerade voll (maximal 4 Spieler) — später erneut versuchen.');
+    }else{
+      // offline/unerreichbar: nie blockieren, das Spiel läuft ohne Server weiter.
+      toast('📡 Kein Server erreichbar — offline gespielt.','warn',3400);
+      if(awaitingPassword){ awaitingPassword=false; hideModal(); afterAuth(); }
+    }
+  });
+}
+// Kleine Statusmeldungen für Mitspieler und Verbindungsabbrüche — die
+// eigentliche Roster-Verwaltung/Spiel-Synchronisation kommt erst in
+// späteren Phasen, hier nur die Verkabelung.
+on('join',()=>toast('👋 Ein Mitspieler ist beigetreten.','',1800));
+// 'join' selbst trägt keine Position — die kommt erst mit der ersten 'pos'-
+// Nachricht des Beigetretenen, also gibt es hier noch nichts zu zeichnen.
+on('leave',msg=>{ toast('👋 Ein Mitspieler hat verlassen.','',1800); removeRemotePlayer(msg.pid); });
+on('disconnected',info=>{
+  if(info.reason==='bad-password'||info.reason==='full') return;  // eigene Meldung übernimmt das
+  toast('📡 Verbindung verloren — versuche erneut zu verbinden …','warn',2600);
+});
+on('reconnected',info=>{
+  toast('✅ Wieder verbunden.','good',2000);
+  // Während der Trennung kann sich das Roster geändert haben — Geister-Avatare
+  // von Mitspielern, die inzwischen weg sind, hier aufräumen. Wer noch da ist,
+  // bekommt über die frische 'welcome'-Nachricht (dieselbe Handler-Kette,
+  // siehe unten) ohnehin gleich seine echte Position zugewiesen.
+  for(const pid of [...remotePlayers.keys()])
+    if(!info.roster.includes(pid)) removeRemotePlayer(pid);
+});
+// welcome kommt bei jeder (Wieder-)Verbindung an: initial und nach einem
+// Reconnect (net.js leitet die rohe Server-Nachricht unverändert weiter).
+// Direktes Setzen von position/rotation zusätzlich zum target lässt bereits
+// anwesende Mitspieler sofort an ihrer echten Stelle erscheinen, statt sichtbar
+// vom Ursprung heranzulerpen.
+// Phase 3a: welcome trägt zusätzlich den bisherigen Weltzustand (Block-Edits
+// und Fackeln) — direkt über setBlockData/markDirty angewendet, NICHT über
+// das sendende setBlock(), sonst würde der gerade empfangene Weltzustand
+// gleich wieder an den Server zurückgeschickt. edits ist eine Map über
+// Positionsschlüssel, ein erneutes .set() beim Reconnect überschreibt den
+// alten Wert einfach — von selbst idempotent. torches dagegen ist eine
+// Liste ohne Schlüssel, darum hier ersetzen statt anhängen (sonst gäbe es
+// bei jedem Reconnect doppelte Fackeln).
+// Phase 3b: welcome trägt zusätzlich Truhen, wachsende Saat und Kochtöpfe.
+// chests ist wie edits über Positionsschlüssel indiziert — .set() pro
+// Eintrag überschreibt einfach die beim Weltaufbau schon deterministisch
+// angelegte Truhe mit dem serverseitig echten (evtl. schon geplünderten)
+// Inhalt. growing/pots ebenso: von selbst idempotent, ein erneutes .set()
+// beim Reconnect ersetzt den alten Eintrag. Für growing gilt zusätzlich:
+// selbst ein inzwischen serverseitig gelöschter (weil längst abgebauter)
+// Eintrag, der hier lokal übrig bliebe, wäre harmlos — s. updateGrow().
+on('welcome',msg=>{
+  // Phase 5a: die Server-Epoche für Tag/Nacht — ab jetzt rechnet update(dt)
+  // day/dayT rein aus Date.now()-dayEpoch0 statt lokal zu ticken (siehe dort).
+  if(typeof msg.dayEpoch0==='number') dayEpoch0=msg.dayEpoch0;
+  for(const [key,type] of msg.edits||[]){
+    const [x,y,z]=key.split(',').map(Number);
+    setBlockData(x,y,z,type);
+    markDirty(x,z);
+  }
+  torches.length=0;
+  for(const t of msg.torches||[]) torches.push(t);
+  emitTorches();
+  for(const [key,c] of msg.chests||[]){
+    const cc=chests.get(key);
+    if(cc) cc.items=c.items;
+    else chests.set(key,{items:c.items,opened:!!c.opened});
+  }
+  for(const [key,g] of msg.growing||[]) growing.set(key,g);
+  for(const [key,p] of msg.pots||[])
+    pots.set(key,{items:p.items,cook:p.cook,readyAt:p.readyAt,_claiming:false});
+  // Phase 4a: die gemeinsame Kasse kommt beim (Wieder-)Verbinden ebenfalls im
+  // Ganzen mit. Kein winGame() hier, auch wenn schon gewonnen — ein spät
+  // Beitretender soll nicht ungefragt das Sieg-Fenster aufgerissen bekommen,
+  // aber state.won MUSS trotzdem stimmen, sonst bliebe die HUD-Kennzeichnung
+  // (siehe updateHUD/'.rich') inkonsistent mit dem tatsächlichen Spielstand.
+  if(msg.econ){
+    state.money=msg.econ.money; state.earned=msg.econ.earned;
+    state.sold=msg.econ.sold; state.bought=msg.econ.bought;
+    state.won=msg.econ.won;
+    updateHUD();
+  }
+  for(const p of msg.positions||[]){
+    const rp=ensureRemotePlayer(p.pid);
+    Object.assign(rp.target,{x:p.x,y:p.y,z:p.z,yaw:p.yaw});
+    rp.group.position.set(p.x,p.y,p.z);
+    rp.group.rotation.y=p.yaw;
+  }
+  // Phase 5a: der volle Jannes/Manni-Bestand kommt bei jeder (Wieder-)
+  // Verbindung mit — anders als die laufenden 'char-pos'-Ticks (die nur noch
+  // das Lerp-Ziel setzen) hier direkt snappen, sonst würde ein frisch
+  // beigetretener Spieler jeden NPC sichtbar aus dem Nichts heranlaufen
+  // sehen (genau wie bei msg.positions oben).
+  for(const cp of msg.chars||[]){
+    const c=CHARS[cp.idx];
+    if(!c) continue;
+    c.x=cp.x; c.y=cp.y; c.z=cp.z;
+    c._netX=cp.x; c._netY=cp.y; c._netZ=cp.z;
+    c.tx=null;
+    if(c.group) c.group.position.set(cp.x,cp.y,cp.z);
+  }
+  // Phase 4b: bekannte Rezepte sind team-weit — zusammenführen, nicht
+  // ersetzen (known startet auf beiden Seiten ohnehin mit {'plank','stick'},
+  // die Überschneidung ist harmlos).
+  for(const id of msg.known||[]) known.add(id);
+  // Phase 4b: die Jannes-Angebote sind ausschließlich Server-Wahrheit — der
+  // lokale Boot-Wurf (setOffer/makeOffer, siehe oben) ist nur ein
+  // Platzhalter für den Offline-Fall und wird hier vom echten Zustand
+  // überschrieben, sobald er eintrifft.
+  for(const tr of msg.trades||[]){
+    const c=traders[tr.idx]; if(!c) continue;
+    c.trade={give:tr.give,want:tr.want,done:tr.done,round:tr.round,readyAt:tr.readyAt,_claiming:false};
+  }
+});
+on('pos',msg=>{
+  const rp=ensureRemotePlayer(msg.pid);
+  Object.assign(rp.target,{x:msg.x,y:msg.y,z:msg.z,yaw:msg.yaw});
+});
+// Phase 5a: laufende Positions-Ticks der Jannessen/Manni vom Server — nur das
+// Lerp-Ziel setzen (siehe updateChars), nicht snappen, exakt wie 'pos' oben
+// für Mitspieler.
+on('char-pos',msg=>{
+  for(const cp of msg.list||[]){
+    const c=CHARS[cp.idx];
+    if(!c) continue;
+    c._netX=cp.x; c._netY=cp.y; c._netZ=cp.z;
+  }
+});
+// Phase 5b: server-authoritative Bennis — full snapshot every MOB_TICK_MS
+// (see party/server.js). ensureMob() snaps a freshly-seen id straight to its
+// first position (no lerp-in, exactly like a joining remote player); any id
+// currently tracked locally but absent from this list quietly wandered out
+// of range at dawn (no death sound — see mob-dead below for the other case).
+on('mob-state',msg=>{
+  // Der Netzwerk-Connect (bootNet) läuft unabhängig vom Textur-Preload —
+  // eine erste mob-state-Momentaufnahme kann eintreffen, bevor benniTex
+  // geladen ist. ensureMob() baut das Mesh sofort aus benniTex.image; ohne
+  // diese Wache crasht das beim allerersten Tick. Einfach überspringen: der
+  // Server sendet ohnehin alle 100ms erneut, der nächste Tick (meist längst
+  // nach dem Laden) holt es problemlos nach.
+  if(!benniTex) return;
+  const seen=new Set();
+  for(const e of msg.list||[]){
+    seen.add(e.id);
+    const m=ensureMob(e.id,e.x,e.y,e.z);
+    m.target.x=e.x; m.target.y=e.y; m.target.z=e.z;
+    m.hp=e.hp;
+    m.hurtT=!!e.hurtT;
+  }
+  for(let i=mobs.length-1;i>=0;i--){
+    const m=mobs[i];
+    if(m.id!=null&&!seen.has(m.id)) removeMob(m.id);
+  }
+});
+// A dedicated event for an actual kill (unlike the day-flee despawn above,
+// which relies on snapshot-absence) — this is the ONLY place the death
+// sound/kill-count fires online. removeMob() is a safe no-op if the next
+// mob-state (which also won't list this id) tries to remove it again.
+on('mob-dead',msg=>{
+  SND.mobDie(); state.killed++;
+  removeMob(msg.id);
+});
+// A Benni's attack only ever reaches the one player it actually hit (see the
+// server's class-level comment) — reuses the existing, entirely local
+// hurtPlayer() untouched.
+on('mob-attack',msg=>{ hurtPlayer(msg.dmg); });
+// Phase 3a: von anderen Spielern gesetzte/abgebaute Blöcke und Fackeln.
+// setBlockData direkt statt setBlock() — s.o., kein Zurücksenden.
+on('block',msg=>{
+  setBlockData(msg.x,msg.y,msg.z,msg.type);
+  markDirty(msg.x,msg.z);
+});
+on('torch',msg=>{
+  torches.push({x:msg.x,y:msg.y,z:msg.z});
+  emitTorches();
+});
+// ---------------------------------------------------------------- Phase 3b
+// Wachsende Saat: nur die Wachstums-Uhr übernehmen, NICHT setBlock/setBlockData
+// aufrufen — der Setzling-BLOCK selbst kommt schon über die normale
+// 'block'-Nachricht an (plantSeed ruft dafür bereits das broadcastende
+// setBlock() auf), hier nur die dazugehörige Reifezeit nachtragen.
+on('plant',msg=>{
+  growing.set(K(msg.x,msg.y,msg.z),{to:msg.to,at:msg.at});
+});
+// Truhen: Server ist alleinige Autorität, wer wieviel bekommt (siehe
+// takeFromChest oben). items ist der vollständige, schon aktualisierte
+// Truheninhalt — einfach übernehmen. grant sagt, ob (und was) DIESER Client
+// für seine eigene Anfrage bekommen hat; giveOrDrop übernimmt das restliche
+// Verhalten (Inventar voll → vor die Füße legen) genau wie beim Handeln/
+// Kochen schon heute.
+on('chest-sync',msg=>{
+  const key=K(msg.x,msg.y,msg.z);
+  let c=chests.get(key);
+  if(!c){ c={items:[],opened:true}; chests.set(key,c); }
+  c.items=msg.items;
+  if(msg.grant&&msg.grant.pid===getPid()&&msg.grant.n>0) giveOrDrop(msg.grant.id,msg.grant.n);
+  if(openChestCell&&openChestCell.x===msg.x&&openChestCell.y===msg.y&&openChestCell.z===msg.z) renderChest();
+  updateHUD();
+});
+// Kochtöpfe: drei getrennt synchronisierte Teile (s. potAdd/usePot/updatePots
+// oben) — Zutaten und Kochstart dürfen optimistisch/broadcastend laufen (rein
+// additive Zustandsänderung, keine Vervielfältigungsgefahr), nur das fertige
+// Ergebnis (pot-grant) braucht die Schiedsrichter-Rolle des Servers.
+on('pot-add',msg=>{
+  const k=K(msg.x,msg.y,msg.z);
+  let p=pots.get(k);
+  if(!p){ p={items:[],cook:0,readyAt:0}; pots.set(k,p); }
+  p.items=msg.items;
+});
+on('pot-start',msg=>{
+  const k=K(msg.x,msg.y,msg.z);
+  let p=pots.get(k);
+  if(!p){ p={items:[],cook:0,readyAt:0}; pots.set(k,p); }
+  p.cook=1;
+  p.readyAt=msg.readyAt;
+});
+// Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs (siehe
+// updatePots) — alle Clients räumen den Topf gleichermaßen leer/untätig,
+// aber nur der Gewinner ruft finishCook tatsächlich auf und bekommt damit
+// den echten (aufhebbaren) Drop.
+on('pot-grant',msg=>{
+  const k=K(msg.x,msg.y,msg.z);
+  const p=pots.get(k);
+  if(!p) return;
+  const itemsSnapshot=p.items;
+  p.cook=0; p.readyAt=0; p._claiming=false; p.items=[];
+  if(msg.pid===getPid()) finishCook(k,{items:itemsSnapshot});
+});
+// ---------------------------------------------------------------- Phase 6
+// Ein von einem anderen Client gespawnter Boden-Drop — einfach nachbauen
+// (gleiche dropId, s. spawnDropRemote) und mitfallen lassen. Die Physik läuft
+// ab hier rein lokal weiter (jeder Client simuliert Fallen/Rollen/Verschmelzen
+// für sich, s. Klassenkommentar in party/server.js) — nur der Startzustand
+// ist geteilt, kein Cent Netzwerkkosten für einen kosmetischen Fall.
+on('drop-spawn',msg=>{
+  spawnDropRemote(msg.dropId,msg.id,msg.n,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz);
+});
+// Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs um einen
+// Boden-Drop (s. updateDrops: sell/pickup/pot melden sich dort per
+// 'drop-claim' an) — exakt dasselbe Muster wie Truhen-/Topf-Claim. Nur der
+// Gewinner wendet den zu seiner eigenen Anfrage passenden Effekt an (welchen,
+// steht lokal in d._claimReason); alle anderen Clients räumen den Drop
+// trotzdem weg, sobald irgendwer gewonnen hat — er ist für alle weg.
+on('drop-claimed',msg=>{
+  const d=drops.find(o=>o.dropId===msg.dropId);
+  if(!d) return;                      // längst lokal zusammengeführt/entfernt — sicher zu ignorieren
+  if(msg.pid===getPid()){
+    if(d._claimReason==='sell') sellTo(d.id,d.n);
+    else if(d._claimReason==='pot') potAdd(d._potPos.x,d._potPos.y,d._potPos.z,d.id,d.n);
+    else{                              // 'pickup' (und Fallback)
+      const rest=give(d.id,d.n);
+      if(rest<d.n){ playSample('pop',.8)||SND.pop(); updateHUD(); }
+      if(rest>0) spawnDrop(d.id,rest,d.x,d.y,d.z,0,0,0,.5);  // passte nicht (mehr) rein — bleibt liegen
+    }
+  }
+  removeDrop(d);
+});
+// ---------------------------------------------------------------- Phase 4a
+// Die gemeinsame Kasse: der Client wendet HIER nie selbst etwas an, er
+// wartet auf genau diese Nachricht — sowohl für den eigenen Verkauf/Einkauf
+// als auch für den von Mitspielern (state.money/earned/sold/bought kommen
+// ausschließlich aus 'econ'). buyResult ist nur gesetzt, wenn diese
+// Nachricht die Antwort auf EINE eigene 'buy'-Anfrage ist (pid-Vergleich) —
+// erst dann darf der Drop/Spruch/Toast (Erfolg) bzw. der "reicht nicht"-Toast
+// (Ablehnung) ausgelöst werden, s. buyFrom oben, das selbst nichts davon mehr
+// direkt tut.
+on('econ',msg=>{
+  state.money=msg.money; state.earned=msg.earned; state.sold=msg.sold; state.bought=msg.bought;
+  updateHUD();
+  if(msg.won&&!state.won) winGame();
+  if(msg.buyResult&&msg.buyResult.pid===getPid()){
+    if(msg.buyResult.ok){
+      const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
+      spawnDrop(msg.buyResult.id,1,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.2,2.4,dz/l*2.2,.4);
+      SND.craft();
+      say(marketChar,ITEMS[msg.buyResult.id].nm+', bitte sehr!',3200);
+      toast('🛒 '+ITEMS[msg.buyResult.id].ic+' '+ITEMS[msg.buyResult.id].nm+' gekauft.','good',2600);
+      if(modalOpen()) openMarket(marketChar);      // Preise/Kasse im offenen Fenster auffrischen
+    }else{
+      SND.fail();
+      toast('💶 Dafür reicht es nicht.','warn',1800);
+    }
+  }
+});
+// ---------------------------------------------------------------- Phase 4b
+// Rezeptwissen ist team-weit (siehe Kommentar bei craftFromGrid): einfach,
+// weil known.add idempotent ist und es hier — anders als bei Truhen/Töpfen —
+// keine Mengenknappheit gibt, um die es einen Wettlauf geben könnte. Kein
+// Ton/Toast für ein von JEMAND ANDEREM gelerntes Rezept, das wäre nur laut.
+on('learn',msg=>{
+  known.add(msg.id);
+  updateHUD();
+});
+// Ein Jannes hat (nach Ablauf des Cooldowns) ein neues Angebot — ausschließlich
+// vom Server bestimmt (trader-refresh oben), damit alle Clients auf demselben
+// Rezept landen statt jeder für sich zu würfeln. msg.round>0 filtert das
+// allererste Angebot beim Boot/Beitritt heraus, dafür gibt es keinen Spruch.
+on('trader-offer',msg=>{
+  const c=traders[msg.idx]; if(!c) return;
+  c.trade={give:msg.give,want:msg.want,done:false,round:msg.round,readyAt:0,_claiming:false};
+  if(c.trade.give&&msg.round>0&&Math.hypot(player.x-c.x,player.z-c.z)<20)
+    say(c,'Mir ist was Neues eingefallen!',3600);
+});
+// Antwort auf eine eigene 'trade-complete'-Anfrage (oder die eines anderen
+// Spielers, der um denselben Handel gewettet hat) — give/want kommen als
+// Echo mit, damit hier NICHT auf c.trade.want zurückgegriffen wird (das
+// könnte durch einen inzwischen eingetroffenen trader-offer schon wieder
+// etwas anderes sein). Wie beim Truhen-/Topf-Muster gewinnt genau eine
+// Anfrage; alle anderen Clients übernehmen nur den done/round/readyAt-Stand.
+on('trade-result',msg=>{
+  const c=traders[msg.idx]; if(!c) return;
+  c.trade.done=true; c.trade.readyAt=msg.readyAt; c.trade.round=msg.round; c.trade._claiming=false;
+  if(msg.pid===getPid()){
+    if(msg.ok){
+      for(const [id,n] of msg.want) take(id,n);
+      state.trades++;
+      SND.chest();
+      say(c,'Danke. Schau her — so geht das.',5000);
+      learnRecipe(msg.give,c.name);
+    }else{
+      SND.fail();          // verlorener Wettlauf — es wurde nichts abgezogen, nichts rückgängig zu machen
+    }
+  }
+});
+// Läuft parallel zum Laden der Bilder/Welt weiter unten und blockiert den
+// Boot-Vorgang nicht: mit gespeichertem Passwort still verbinden, sonst mit
+// leerem Passwort "anklopfen" — das genügt, um zu erkennen, ob überhaupt ein
+// Server antwortet, ohne einem Erstbesucher grundlos "falsches Passwort" zu
+// melden.
+(function bootNet(){
+  let stored=null;
+  try{ stored=localStorage.getItem('edf_pw'); }catch(e){}
+  attemptConnect(stored||'',false);
+})();
 
 // ------------------------------------------------------------------ Bewegung
 const PR=.32, GRAV=26, JUMP=8.4, EYE=1.62, PH=1.8, EPS=1e-4;
@@ -2533,7 +2863,7 @@ function updateVitals(dt){
 }
 
 // ------------------------------------------------------------------ Tag & Nacht
-let mobTimer=0;
+let mobTimer=0, birdTimer=rnd(8,20);
 function updateNight(dt){
   const wasNight=state.night;
   state.night=state.dayT>=NIGHT_START&&state.dayT<NIGHT_END;
@@ -2543,7 +2873,17 @@ function updateNight(dt){
     mobTimer-=dt;
     if(mobTimer<=0){
       mobTimer=rnd(2.5,5);
-      if(mobs.length<mobCap()) spawnMob();
+      // Online, spawning is entirely the server's job (see party/server.js
+      // _startMobTimer) — this local trigger would otherwise fight it (and
+      // every connected client would spawn its OWN extra Bennis on top of
+      // the server's).
+      if(!isConnected()&&mobs.length<mobCap()) spawnMob();
+    }
+  } else {
+    birdTimer-=dt;
+    if(birdTimer<=0){
+      playSample('bird'+Math.ceil(Math.random()*11),.35);
+      birdTimer=rnd(20,50);
     }
   }
 }
@@ -2714,13 +3054,30 @@ el('btnBag').addEventListener('click',e=>{ e.stopPropagation(); ac(); modalOpen(
 
 // ------------------------------------------------------------------ Schleife
 function update(dt){
-  if(!state.paused){
-    state.t+=dt;
+  // Phase 5a: Tag/Nacht ist jetzt eine reine Funktion der Server-Wanduhrzeit
+  // (dayEpoch0), nicht mehr lokal aufaddierter dt — das läuft absichtlich
+  // UNABHÄNGIG von state.paused weiter: sonst friert die geteilte Welt ein
+  // (bzw. läuft aus dem Takt), nur weil DIESER Client gerade sein Inventar
+  // offen hat. updateNight läuft mit, weil es genau die Werte liest, die
+  // hier gerade gesetzt wurden (Nacht-Toast/Sound/Vogelgezwitscher sollen
+  // beim online Spielen ebenfalls nicht an einem geöffneten Menü hängen
+  // bleiben). Offline (oder solange nach dem Verbinden noch keine 'welcome'
+  // da ist) bleibt exakt der alte, pausierbare Tick-Rückfall.
+  const dayOnline=isConnected()&&dayEpoch0!=null;
+  if(dayOnline){
+    const elapsed=(Date.now()-dayEpoch0)/1000;
+    state.day=1+Math.floor(elapsed/DAYLEN);
+    state.dayT=(elapsed%DAYLEN)/DAYLEN;
+    updateNight(dt);
+  }else if(!state.paused){
     state.dayT+=dt/DAYLEN;
     if(state.dayT>=1){ state.dayT=0; state.day++; }
     updateNight(dt);
+  }
+  if(!state.paused){
+    state.t+=dt;
     updateVitals(dt);
-    updateMobs(dt);
+    if(isConnected()) updateMobsOnline(dt); else updateMobs(dt);
     updateDrops(dt);
     updatePots(dt);
     updateGrow();
@@ -2732,9 +3089,21 @@ function update(dt){
   cullChunks();
   updateChars(dt);
   updateBillboards();
+  updateRemotePlayers(dt);
   updateSky();
+  // Eigene Position senden — unabhängig von state.paused: wer nur sein eigenes
+  // Inventar geöffnet hat, ist für andere trotzdem noch "da" und bewegt sich
+  // bei ihnen ja auch nicht plötzlich nicht mehr.
+  netSendT+=dt;
+  if(netSendT>=.1){
+    netSendT=0;
+    if(isConnected()) send({t:'pos',x:player.x,y:player.y,z:player.z,yaw:player.yaw,pitch:player.pitch,hp:player.hp,food:player.food,sel:player.sel});
+  }
   state.checkT+=dt;
-  if(state.checkT>=.5){ state.checkT=0; updateHUD(); }
+  if(state.checkT>=.5){
+    state.checkT=0; updateHUD();
+    if(++state.saveTick>=6){ state.saveTick=0; savePersist(); }
+  }
 }
 let last=performance.now(), frameErrs=0;
 function frame(now){
@@ -2756,6 +3125,7 @@ function resize(){
   camera.aspect=w/h; camera.updateProjectionMatrix();
 }
 addEventListener('resize',resize);
+addEventListener('beforeunload',savePersist);
 
 // ------------------------------------------------------------------ Start
 // Sprites vorladen, damit die Leiste nicht erst leer ist und dann aufploppt.
@@ -2790,13 +3160,15 @@ Promise.all([
   buildHotbar();
   buildWorld();
   emitTorches();
+  loadPersist();
   player.y=player.viewY=surfaceAt(player.x,player.z);
   el('hRecMax').textContent=RECIPES.length;
   el('hGoal').textContent=GOAL;
   resize(); updateHUD();
   el('boot').remove();
-  if(localStorage.getItem('edf_seen')){ state.paused=false; state.started=true; }
-  else openIntro();
+  // Steht gerade eine Passwortabfrage aus (siehe bootNet() weiter oben),
+  // entscheidet die über den Übergang — sonst wie gehabt.
+  if(!awaitingPassword) afterAuth();
   requestAnimationFrame(frame);
 }).catch(e=>{
   el('boot').innerHTML='😢 '+e.message;
@@ -2811,8 +3183,10 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   openMarket,sellTo,buyFrom,earn,growing,updateGrow,GROW,SEED_OF,till,plantSeed,
   makeOffer,offerAsk,offerHint,updateChars,wander,REFRESH,
   get marketChar(){return marketChar;},
+  get dayEpoch0(){return dayEpoch0;},
+  get tradePartner(){return tradePartner;}, set tradePartner(c){tradePartner=c;},
   get aimed(){return aimed;},
-  blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,
+  blockAt,setBlock,surfaceAt,terrainH,rayPick,chunks,scene,renderer,remotePlayers,
   give:(id,n)=>give(id,n), take,countOf,
   get target(){return target;},
   get sel(){return heldId();},
@@ -2833,4 +3207,9 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   place(){ useRight(); },
   setDayT(v){ state.dayT=v; updateNight(0); },
   tick(sec,s=.05){ for(let t=0;t<sec;t+=s) update(s); },
+  // Phase 3b Netzwerk-Debug-Hooks: erlauben Tests, rohe Nachrichten zu
+  // schicken/den eigenen Verbindungsstatus abzufragen, ohne echte
+  // Spielhandlungen (Wurf-Physik, echtes Warten auf COOK_TIME) nachstellen
+  // zu müssen.
+  send, getPid, isConnected, finishCook, potCount,
 };

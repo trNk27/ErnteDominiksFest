@@ -1,0 +1,14 @@
+{
+  "name": "erntedominiksfest-party",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Multiplayer relay server (PartyKit) for the Erntedominiksfest voxel game. One fixed room named 'world', password-gated, capped at 4 players.",
+  "scripts": {
+    "dev": "partykit dev",
+    "deploy": "partykit deploy"
+  },
+  "devDependencies": {
+    "partykit": "^0.0.115",
+    "ws": "^8.21.1"
+  }
+}
