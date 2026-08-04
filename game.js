@@ -1964,10 +1964,16 @@ function renderChest(){
 // bekommt (chest-take/chest-put → chest-sync), und der anfragende Client
 // rührt sein Inventar/carry erst an, wenn die Antwort da ist (siehe
 // on('chest-sync',...)). Offline/Einzelspieler fällt auf das alte
-// Direkt-Verhalten zurück. Bewusst OHNE Tausch mit einem andersartigen
-// Gegenstand (anders als clickCell) — ein serverseitig arbitrierter Swap
-// wäre eine echte Race-Falle für wenig Nutzen; wer tauschen will, nimmt
-// erst heraus und legt dann in zwei Klicks hinein.
+// Direkt-Verhalten zurück. Ein Klick auf ein Fach mit einem ANDEREN
+// Gegenstand tauscht — genau wie im Rucksackraster (clickCell) und aus
+// demselben Grund: die Fächer 0-3 der Weltlruhen sind ab Werk belegt, und
+// wer dort mit vollem Zeiger hinklickte, sah bisher gar nichts passieren
+// ("man kann nichts in Truhen legen"). Race-sicher bleibt das, weil auch
+// der Tausch online eine EINZELNE servergeprüfte Anfrage ist (chest-put mit
+// swap) und nicht etwa ein ungeschütztes Nehmen-dann-Legen: verlieren zwei
+// gleichzeitige Tauscher, trägt der Zweite den Stapel des Ersten davon,
+// vervielfältigt wird nichts. Rechtsklick (one) tauscht nicht — dort gilt
+// wie im Rucksack "getauscht wird nur mit voller Hand".
 function clickChestCell(i,one){
   const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
   if(!c) return;
@@ -1983,16 +1989,24 @@ function clickChestCell(i,one){
     cur.n-=want; if(cur.n<=0) c.items[i]=null;
     SND.tap(); renderChest();
   }else{
-    if(cur&&cur.id!==carry.id) return;      // keine Tausch-Unterstützung, s.o.
-    const spaceLeft=cur?STACK-cur.n:STACK;
+    const swap=!!cur&&cur.id!==carry.id;
+    if(swap&&one){ SND.fail(); return; }   // Tausch nur mit vollem Stapel, s.o.
+    const spaceLeft=cur&&!swap?STACK-cur.n:STACK;
     const want=Math.min(one?1:carry.n,spaceLeft);
-    if(want<=0) return;
+    // Ein Teiltausch ginge nicht auf: der zurückkommende Stapel bräuchte die
+    // Hand, die dann noch den Rest hält. Volles Fach: auch nichts zu machen.
+    if(want<=0||(swap&&want<carry.n)){ SND.fail(); return; }
     if(isConnected()){
-      send({t:'chest-put',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,slot:i,id:carry.id,n:want});
+      send({t:'chest-put',x:openChestCell.x,y:openChestCell.y,z:openChestCell.z,slot:i,id:carry.id,n:want,swap});
       return;
     }
-    if(cur) cur.n+=want; else c.items[i]={id:carry.id,n:want};
-    carry.n-=want; if(carry.n<=0) carry=null;
+    if(swap){
+      c.items[i]={id:carry.id,n:want};
+      carry=cur;
+    }else{
+      if(cur) cur.n+=want; else c.items[i]={id:carry.id,n:want};
+      carry.n-=want; if(carry.n<=0) carry=null;
+    }
     SND.tap(); renderChest();
   }
 }
@@ -2873,6 +2887,15 @@ on('chest-sync',msg=>{
       else giveOrDrop(g.id,g.n);                // Zeiger schon anderweitig belegt — nicht überschreiben
     }else if(g.kind==='put'&&carry&&carry.id===g.id){
       carry.n-=g.n; if(carry.n<=0) carry=null;
+      // Tausch: das Fach war mit etwas anderem belegt und gibt dessen Stapel
+      // zurück (siehe clickChestCell/chest-put mit swap). Der Server tauscht
+      // nur ganze Stapel, der Zeiger ist also gerade frei geworden — sollte
+      // doch noch ein Rest hängen (fremde Antwort, alte Server-Version),
+      // wandert das Zurückgegebene in den Rucksack statt ihn zu überschreiben.
+      if(g.back&&g.back.id){
+        if(!carry) carry={id:g.back.id,n:g.back.n};
+        else giveOrDrop(g.back.id,g.back.n);
+      }
     }
     drawCarry();
   }

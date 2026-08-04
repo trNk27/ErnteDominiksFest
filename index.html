@@ -237,14 +237,23 @@
   }
   #modal.hidden{display:none}
   /* Fenster und Rezeptleiste stehen nebeneinander; wird es zu schmal,
-     rutscht die Leiste unter das Fenster statt zu verschwinden. */
+     rutscht die Leiste unter das Fenster statt zu verschwinden.
+     width:100% ist hier wichtig: ohne das misst sich #mwrap an seinem INHALT
+     (shrink-to-fit im umgebenden Flexbereich), und #mbox' eigenes width:100%
+     zeigt dann auf genau diese Inhaltsbreite. Das Fenster wäre damit so
+     breit wie das, was gerade darin steht — ein leerer Rucksack machte es
+     schmal genug, dass die Rezeptleiste daneben nicht mehr passte und
+     umbrach, und jeder Klick, der eine Stapelzahl verschwinden lässt, ließ
+     es ein Stück schrumpfen. Mit fester Wrapper-Breite ist #mbox immer
+     560px (bzw. so viel Platz wie da ist), egal was darin liegt. */
   #mwrap{
     display:flex;gap:10px;align-items:flex-start;justify-content:center;
-    flex-wrap:wrap;max-width:100%;max-height:100%
+    flex-wrap:wrap;width:100%;max-width:100%;max-height:100%
   }
   #mbox{
     background:#1a2e1a;border:2px solid #4a774a;border-radius:16px;padding:14px;
-    width:100%;max-width:560px;max-height:94vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.6)
+    width:560px;max-width:100%;flex:0 1 560px;min-width:0;
+    max-height:94vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.6)
   }
   #mside{
     width:250px;flex:none;max-height:94vh;overflow-y:auto;

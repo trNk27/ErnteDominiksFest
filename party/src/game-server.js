@@ -939,7 +939,12 @@ export class GameServer extends DurableObject {
    *     and always answers with a `chest-sync` broadcast (to everyone,
    *     including the sender) carrying the chest's authoritative resulting
    *     24-slot `items` array and a `grant:{pid,kind:'take'|'put',id,n}`
-   *     telling the requester what it actually won/landed.
+   *     telling the requester what it actually won/landed. A `chest-put`
+   *     carrying `swap:true` additionally allows landing on a slot that
+   *     holds a DIFFERENT item — the displaced stack comes back in the
+   *     grant's `back` field (null for every ordinary put), so trading one
+   *     stack for another stays a single arbitrated step instead of an
+   *     un-atomic take-then-put.
    *   - `pot-add` / `pot-start` (Phase 3b): optimistic apply/persist/
    *     broadcast, same shape as `block`/`torch` — purely additive state
    *     (ingredients added, cook timer started), no duplication risk.
@@ -1177,7 +1182,7 @@ export class GameServer extends DurableObject {
       // items into one slot, or overwrite one player's contribution while
       // discarding it from their own carry). The server is the sole arbiter
       // of whether — and how much of — a put actually lands.
-      const { x, y, z, slot, id, n } = msg;
+      const { x, y, z, slot, id, n, swap } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
       if (x < BOUND.x0 || x > BOUND.x1 || z < BOUND.z0 || z > BOUND.z1) return;
       if (typeof slot !== "number" || !Number.isInteger(slot) || slot < 0 || slot > 23) return;
@@ -1190,16 +1195,38 @@ export class GameServer extends DurableObject {
       if (!chest) return; // no chest here — nothing to arbitrate
       const cur = chest.items[slot];
       let accepted = 0;
+      // `back` carries the stack the sender gets in exchange for a swap (see
+      // below) — null for an ordinary put.
+      let back = null;
       if (!cur) {
         accepted = Math.min(n, 64);
         chest.items[slot] = { id, n: accepted };
       } else if (cur.id === id) {
         accepted = Math.min(n, 64 - cur.n);
         cur.n += accepted;
+      } else if (swap === true) {
+        // Occupied by a DIFFERENT item and the sender asked to swap: the
+        // slot's old stack goes back to the sender, the sent one takes its
+        // place. Still exactly as race-safe as a plain put — it happens
+        // atomically HERE, so of two players swapping the same slot at the
+        // same moment each gets precisely what the slot held when their own
+        // request was processed, and the loser of the race simply carries
+        // the other's stack away instead of duplicating anything.
+        accepted = Math.min(n, 64);
+        // A partial swap would have to split the carried stack AND hand back
+        // a full one — that has no sane resting place in the sender's hand,
+        // so an over-long stack is a plain reject rather than a half-swap.
+        if (accepted === n) {
+          back = cur;
+          chest.items[slot] = { id, n: accepted };
+        } else {
+          accepted = 0;
+        }
       }
-      // else: occupied by a DIFFERENT item — reject the whole put (accepted
-      // stays 0). The sender's own client already guards against sending
-      // this (see clickChestCell), but never trust the client alone.
+      // else: occupied by a DIFFERENT item and no swap requested — reject the
+      // whole put (accepted stays 0). The sender's own client already guards
+      // against sending this (see clickChestCell), but never trust the client
+      // alone.
       if (accepted <= 0) {
         // Still answer so the sender's carry isn't left hanging — mirrors
         // chest-take's "nothing to grant, still respond" case above.
@@ -1207,7 +1234,7 @@ export class GameServer extends DurableObject {
         return;
       }
       this._scheduleFlush();
-      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "put", id, n: accepted } });
+      this._broadcast({ t: "chest-sync", x, y, z, items: chest.items, grant: { pid, kind: "put", id, n: accepted, back } });
     } else if (msg.t === "pot-add") {
       const { x, y, z, items } = msg;
       if (![x, y, z].every((v) => typeof v === "number" && Number.isInteger(v))) return;
