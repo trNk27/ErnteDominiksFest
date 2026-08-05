@@ -119,6 +119,15 @@ const FLUSH_DEBOUNCE_MS = 2000;
 // defense-in-depth character cap the client's own <input maxlength> already
 // enforces — never trust the client alone.
 const SIGN_TEXT_MAX = 80;
+// Vehicles: the three market goods that are now placed and ridden instead of
+// held (see the `vehicle-*` handlers and this.vehicles). The kind list
+// mirrors the client's own VEHICLES table — kept as a literal here for the
+// same reason SIGN_TEXT_MAX is: it is an inventory-shape constant, not world
+// or economy data, and the server must not trust the client's word for it.
+const VEHICLE_KINDS = new Set(["boat", "board", "glider"]);
+// A cap so a room full of forgotten boats can't grow the persisted blob
+// without bound; placing past it retires the oldest one (see `vehicle-place`).
+const MAX_VEHICLES = 64;
 
 // WebSocket close codes in the 4000-4999 range are reserved for application use
 // (RFC 6455 7.4.2). We define our own small protocol here.
@@ -355,6 +364,18 @@ export class GameServer extends DurableObject {
     // last-write-wins is fine for a cosmetic text field.
     /** @type {Map<string, {text:string}>} "x,y,z" -> sign text */
     this.signs = new Map();
+    // Vehicles (boat/board/glider): placeable, mountable, driveable objects
+    // that live outside the block grid like signs — but unlike a sign they
+    // MOVE and can be occupied, so they are keyed by their own id rather than
+    // by a position. Placing and moving are apply-and-broadcast (a vehicle
+    // only ever moves under its own rider, so there is nothing to race over);
+    // mounting and picking up are arbitrated here, because both can only go
+    // to ONE player: two riders would drive one boat to two places, and two
+    // pickers would turn one boat into two items. `rider` is a live pid, so
+    // it is deliberately dropped when persisting/loading — nobody is riding
+    // anything across a restart.
+    /** @type {Map<string, {id:string,kind:string,x:number,y:number,z:number,yaw:number,rider:number|null}>} */
+    this.vehicles = new Map();
     // Ephemeral pot-cook claim arbitration only — never persisted, starts
     // empty on every restart. A cook already granted before a restart has
     // already gone idle/empty everywhere (see the `pot-claim` handler, which
@@ -684,6 +705,10 @@ export class GameServer extends DurableObject {
     for (const [key, s] of stored.signs || []) {
       this.signs.set(key, s);
     }
+    for (const v of stored.vehicles || []) {
+      if (!v || typeof v.id !== "string" || !VEHICLE_KINDS.has(v.kind)) continue;
+      this.vehicles.set(v.id, { ...v, rider: null });
+    }
     // Phase 4a: the persisted shared wallet, if any (absent on the very
     // first room start, or on a blob written before this phase existed).
     if (stored.econ && typeof stored.econ === "object") {
@@ -748,6 +773,9 @@ export class GameServer extends DurableObject {
       growing: [...this.growing.entries()],
       pots: [...this.pots.entries()],
       signs: [...this.signs.entries()],
+      // Vehicles: stored WITHOUT their rider (see this.vehicles) — a boat
+      // outlives the session, the person sitting in it does not.
+      vehicles: [...this.vehicles.values()].map((v) => ({ ...v, rider: null })),
       // Phase 4a: the shared wallet, small and flat enough to store wholesale
       // alongside everything else in this one debounced blob.
       econ: { ...this.econ },
@@ -873,6 +901,10 @@ export class GameServer extends DurableObject {
       growing: [...this.growing.entries()],
       pots: [...this.pots.entries()],
       signs: [...this.signs.entries()],
+      // Vehicles WITH their current rider — a joiner needs to see which boat
+      // is already occupied (and, after a reconnect mid-ride, that the one
+      // it is sitting in is still its own; see the client's on('welcome')).
+      vehicles: [...this.vehicles.values()],
       // Phase 4a: the shared wallet, same "whole persisted state up front"
       // shape as everything else above.
       econ: { ...this.econ },
@@ -945,6 +977,17 @@ export class GameServer extends DurableObject {
    *     grant's `back` field (null for every ordinary put), so trading one
    *     stack for another stays a single arbitrated step instead of an
    *     un-atomic take-then-put.
+   *   - `vehicle-place` / `vehicle-move` / `vehicle-enter` / `vehicle-leave` /
+   *     `vehicle-remove`: boat/board/glider are placed in the world and
+   *     ridden now instead of taking effect in the hand. Placing and moving
+   *     are apply-and-broadcast (a vehicle only ever moves under its one
+   *     rider — nothing to race over, and `vehicle-move` deliberately does
+   *     not persist per tick, only the resting place does). Mounting and
+   *     picking up ARE arbitrated, because each can only go to one player:
+   *     `vehicle-enter` answers with a `vehicle-rider` broadcast naming the
+   *     winner (an occupied seat answers the asker alone so its UI doesn't
+   *     hang), and `vehicle-remove` broadcasts `by` so exactly one client
+   *     grants itself the item — same reasoning as `chest-take`.
    *   - `pot-add` / `pot-start` (Phase 3b): optimistic apply/persist/
    *     broadcast, same shape as `block`/`torch` — purely additive state
    *     (ingredients added, cook timer started), no duplication risk.
@@ -1131,6 +1174,86 @@ export class GameServer extends DurableObject {
       this.signs.delete(key);
       this._scheduleFlush();
       this._broadcast({ t: "sign-remove", x, y, z }, [connId]);
+    } else if (msg.t === "vehicle-place") {
+      // Apply-and-broadcast like `sign-place`: a freshly placed vehicle is
+      // nobody's yet and belongs to no scarce pool — the placer already
+      // spent the item on its own client.
+      const { id, kind, x, y, z, yaw } = msg;
+      if (typeof id !== "string" || !id || id.length > 64) return;
+      if (!VEHICLE_KINDS.has(kind)) return;
+      if (![x, y, z, yaw].every((n) => typeof n === "number" && Number.isFinite(n))) return;
+      if (x < BOUND.x0 - 2 || x > BOUND.x1 + 2 || z < BOUND.z0 - 2 || z > BOUND.z1 + 2) return;
+      if (y < -20 || y > 70) return;
+      if (this.vehicles.has(id)) return; // duplicate/replay — the first one stands
+      // A room full of forgotten boats would grow the persisted blob without
+      // bound; the oldest one gives way (Map keeps insertion order).
+      if (this.vehicles.size >= MAX_VEHICLES) {
+        const oldest = this.vehicles.keys().next().value;
+        this.vehicles.delete(oldest);
+        this._broadcast({ t: "vehicle-remove", id: oldest, by: null });
+      }
+      this.vehicles.set(id, { id, kind, x, y, z, yaw, rider: null });
+      this._scheduleFlush();
+      this._broadcast({ t: "vehicle-place", id, kind, x, y, z, yaw, rider: null }, [connId]);
+    } else if (msg.t === "vehicle-move") {
+      // Only the rider may move a vehicle — otherwise anyone could drag
+      // someone else's boat around. No arbitration beyond that check: a
+      // vehicle moves under exactly one rider, so there is no race.
+      const { id, x, y, z, yaw } = msg;
+      if (typeof id !== "string") return;
+      if (![x, y, z, yaw].every((n) => typeof n === "number" && Number.isFinite(n))) return;
+      const v = this.vehicles.get(id);
+      if (!v || v.rider !== pid) return;
+      if (x < BOUND.x0 - 2 || x > BOUND.x1 + 2 || z < BOUND.z0 - 2 || z > BOUND.z1 + 2) return;
+      if (y < -20 || y > 70) return;
+      v.x = x; v.y = y; v.z = z; v.yaw = yaw;
+      // Deliberately NO _scheduleFlush per move tick (10/s per rider): the
+      // resting place gets persisted when the ride ends (`vehicle-leave`),
+      // which is the only position that outlives the session anyway.
+      this._broadcast({ t: "vehicle-move", id, x, y, z, yaw }, [connId]);
+    } else if (msg.t === "vehicle-enter") {
+      // Arbitrated: the first request wins the seat, everyone (including the
+      // asker) learns the outcome from the same broadcast. A loser gets the
+      // message too and stays out (see the client's on('vehicle-rider')).
+      const { id } = msg;
+      if (typeof id !== "string") return;
+      const v = this.vehicles.get(id);
+      if (!v) return;
+      if (v.rider !== null && v.rider !== pid) {
+        // Occupied — answer the asker alone so its UI doesn't hang waiting.
+        send(this.conns.get(connId), { t: "vehicle-rider", id, rider: v.rider });
+        return;
+      }
+      // Nobody rides two things at once: leave whatever else this player sat
+      // in, or a hastily abandoned boat would stay "occupied" forever.
+      for (const other of this.vehicles.values()) {
+        if (other !== v && other.rider === pid) {
+          other.rider = null;
+          this._broadcast({ t: "vehicle-rider", id: other.id, rider: null });
+        }
+      }
+      v.rider = pid;
+      this._broadcast({ t: "vehicle-rider", id, rider: pid });
+    } else if (msg.t === "vehicle-leave") {
+      const { id } = msg;
+      if (typeof id !== "string") return;
+      const v = this.vehicles.get(id);
+      if (!v || v.rider !== pid) return;
+      v.rider = null;
+      this._scheduleFlush();               // hier steht es jetzt, das gehört gesichert
+      this._broadcast({ t: "vehicle-rider", id, rider: null });
+    } else if (msg.t === "vehicle-remove") {
+      // Picking one up is arbitrated exactly like a chest take: the server
+      // decides WHO gets the item, and says so in `by` — without that, two
+      // simultaneous pickups would each grant themselves one.
+      const { id } = msg;
+      if (typeof id !== "string") return;
+      const v = this.vehicles.get(id);
+      if (!v) return;                      // already gone — the other picker won
+      if (v.rider !== null) return;        // somebody is sitting in it
+      this.vehicles.delete(id);
+      this._scheduleFlush();
+      this._broadcast({ t: "vehicle-remove", id, by: pid });
     } else if (msg.t === "plant") {
       const { x, y, z, to, at } = msg;
       if (![x, y, z].every((n) => typeof n === "number" && Number.isInteger(n))) {
@@ -1428,6 +1551,14 @@ export class GameServer extends DurableObject {
     this.usedPids.delete(pid);
     this.lastPos.delete(pid);
     this.conns.delete(connId);
+    // Whatever this player was riding is free again — otherwise a boat
+    // someone left in mid-ride would stay occupied until the room restarts.
+    for (const v of this.vehicles.values()) {
+      if (v.rider !== pid) continue;
+      v.rider = null;
+      this._scheduleFlush();               // its resting place is now permanent
+      this._broadcast({ t: "vehicle-rider", id: v.id, rider: null });
+    }
     this._broadcast({ t: "leave", pid });
     // Phase 5a: stop the ambient wander tick once nobody's left to see it —
     // this.conns has already had connId removed by this point (just above),

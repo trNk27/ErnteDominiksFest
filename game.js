@@ -469,9 +469,9 @@ function itemNote(id){
   if(it.sign) p.push('🪧 beschreibbar');
   if(it.hoe) p.push('🧑‍🌾 macht Gras und Erde zu Acker');
   if(it.seed) p.push('🌱 auf Acker säen — wird zu '+ITEMS[BLOCKS[it.seed.ripe].drop].nm);
-  if(it.boat) p.push('🛶 trägt dich übers Wasser');
-  if(it.board) p.push('🛹 doppelt so flott an Land');
-  if(it.glide) p.push('🪂 lässt dich sanft herabsegeln');
+  if(it.boat) p.push('🛶 abstellen und einsteigen — trägt dich übers Wasser');
+  if(it.board) p.push('🛹 abstellen und einsteigen — doppelt so flott an Land');
+  if(it.glide) p.push('🪂 abstellen und einsteigen — lässt dich sanft herabsegeln');
   if(PRICES[id]) p.push('💶 '+PRICES[id]+' € bei Manni');
   if(it.block) p.push('setzbar');
   const used=RECIPES.filter(r=>patRows(r).some(row=>row.includes(id)))
@@ -904,7 +904,7 @@ function dropHeld(all){
   const id=s.id, n=all?s.n:1;
   s.n-=n;
   if(s.n<=0) slots[player.sel]=null;
-  camera.getWorldDirection(_rd);
+  updateEyeRay(); _rd.copy(eyeDir);
   const l=Math.hypot(_rd.x,_rd.z)||1, fx=_rd.x/l, fz=_rd.z/l;
   // Gut einen Block weit: etwas Schwung nach vorn, den die Reibung in
   // dreiviertel Blöcken aufzehrt. Und eine Schonfrist, sonst hebt man es
@@ -1429,7 +1429,7 @@ function updateChars(dt){
 // Wer steht vor mir? Wie beim Zuschlagen: in Blickrichtung und nah genug.
 // Die Sichtweite kommt von außen, damit ein Block davor Vorrang behält.
 function aimChar(maxD=4.2){
-  camera.getWorldDirection(_rd);
+  updateEyeRay(); _rd.copy(eyeDir);
   let best=null, bd=1e9;
   for(const c of CHARS){
     if(!c.group) continue;
@@ -1445,7 +1445,7 @@ function aimChar(maxD=4.2){
 // (siehe Design-Kommentar bei signs weiter oben), brauchen also dieselbe
 // eigene Zielerfassung wie ein Bewohner statt über rayPick/target zu laufen.
 function aimSign(maxD=4.2){
-  camera.getWorldDirection(_rd);
+  updateEyeRay(); _rd.copy(eyeDir);
   let best=null, bd=1e9;
   for(const [key,s] of signs){
     const [x,y,z]=key.split(',').map(Number);
@@ -1620,6 +1620,14 @@ function hurtPlayer(dmg){
 }
 function respawn(){
   state.deaths++;
+  // Wer im Boot stirbt, lässt es zurück, statt es an den Wiedereinstiegspunkt
+  // mitzuschleifen (das gefahrene Fahrzeug folgt sonst jedem Schritt, siehe
+  // updateVehicles) — es bleibt dort liegen, wo es zuletzt war.
+  if(riding){
+    const v=riding;
+    riding=null; v.rider=null;
+    if(isConnected()) send({t:'vehicle-leave',id:v.id});
+  }
   player.hp=player.maxhp; player.food=Math.max(6,player.food);
   const s=safeSpot();
   player.x=s.x; player.z=s.z; player.vy=0; player.onGround=true;
@@ -1639,9 +1647,21 @@ function respawn(){
 // ------------------------------------------------------------------ Zielerfassung
 // Marsch durchs Blockraster statt Raycast gegen zehntausende Flächen.
 const _rd=new THREE.Vector3();
+// Gezielt wird IMMER aus den Augen der Figur, nie aus der Kamera. Seit es die
+// dritte Person gibt, sind das zwei verschiedene Orte: die Kamera steht vier
+// Blöcke weiter hinten (in der Frontsicht schaut sie sogar in die
+// Gegenrichtung), man würde also anderswo hinschlagen und hinbauen, als das
+// Fadenkreuz zeigt. Die Blickrichtung ist dieselbe Rechnung, die auch die
+// Kamera dreht (rotateY(yaw) dann rotateX(pitch), Blick nach -Z).
+const eyePos=new THREE.Vector3(), eyeDir=new THREE.Vector3();
+function updateEyeRay(){
+  eyePos.set(player.x,player.viewY+EYE,player.z);
+  const cp=Math.cos(player.pitch);
+  eyeDir.set(-Math.sin(player.yaw)*cp,Math.sin(player.pitch),-Math.cos(player.yaw)*cp);
+}
 function rayPick(){
-  camera.getWorldDirection(_rd);
-  const o=camera.position;
+  updateEyeRay(); _rd.copy(eyeDir);
+  const o=eyePos;
   const px=o.x+.5, py=o.y, pz=o.z+.5;
   let cx=Math.floor(px), cy=Math.floor(py), cz=Math.floor(pz);
   if(blockAt(cx,cy,cz)) return null;
@@ -1663,7 +1683,7 @@ function rayPick(){
   }
   return null;
 }
-let target=null, aimed=null, aimedSign=null;
+let target=null, aimed=null, aimedSign=null, aimedVehicle=null;
 function updateTarget(){
   target=rayPick();
   // Ein Bewohner zählt nur, wenn kein Block näher steht — sonst redet man
@@ -1673,17 +1693,24 @@ function updateTarget(){
   // Bewohner im Blick ist, aber mit derselben Block-Vorrang-Regel wie bei
   // aimed (ein näherer Block verdeckt das Schild dahinter).
   aimedSign=!aimed?aimSign(target?Math.min(4.2,target.dist+.5):4.2):null;
+  // Fahrzeuge stehen in der Welt herum wie Schilder — dieselbe Vorrangregel,
+  // eine Stufe dahinter. Wer selbst fährt, visiert nichts an (er säße sonst
+  // im Boot und bekäme dauernd "einsteigen" angeboten).
+  aimedVehicle=!aimed&&!aimedSign&&!riding
+    ?aimVehicle(target?Math.min(3.6,target.dist+.6):3.6):null;
   // Nur Bedienbares bekommt eine Beschriftung — der Rest spricht für sich.
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
-  const atPot=!aimed&&!aimedSign&&b&&b.use==='pot'?target.cell:null;
+  const atPot=!aimed&&!aimedSign&&!aimedVehicle&&b&&b.use==='pot'?target.cell:null;
   updatePotPanel(atPot);
   const txt=aimed?aimed.name+(aimed.trade&&!aimed.trade.done?' — Rechtsklick zum Tauschen':' — Rechtsklick')
            :aimedSign?'🪧 '+(aimedSign.sign.text||'(leer)')+' — Rechtsklick zum Beschriften'
+           :aimedVehicle?ITEMS[VEHICLES[aimedVehicle.kind].item].ic+' '+VEHICLES[aimedVehicle.kind].nm+
+             (aimedVehicle.rider!=null?' — besetzt':' — Rechtsklick zum Einsteigen, Schlag hebt auf')
            :atPot?potTip(atPot)
            :b&&b.use?b.nm+' — Rechtsklick':'';
   if(tip.textContent!==txt) tip.textContent=txt;
-  el('cross').classList.toggle('hot',!!aimed||!!aimedSign||(!!target&&!!BLOCKS[target.type].use));
+  el('cross').classList.toggle('hot',!!aimed||!!aimedSign||!!aimedVehicle||(!!target&&!!BLOCKS[target.type].use));
 }
 
 // ------------------------------------------------------------------ Abbauen & Setzen
@@ -1815,6 +1842,9 @@ function useRight(){
     say(aimed,pick(aimed.lines),4200);
     return;
   }
+  // 1a2. Einsteigen geht vor allem, was man in der Hand hat — wer vor seinem
+  // Boot steht und dabei ein zweites hält, will einsteigen, nicht stapeln.
+  if(aimedVehicle){ enterVehicle(aimedVehicle); return; }
   // 1b. Ein Schild lesen/beschriften — wie das Ansprechen eines Bewohners
   // (Schilder leben ja außerhalb des Block-Rasters, siehe Design-Kommentar
   // bei signs), darum direkt danach und noch vor der Kisten/Werkbank/Topf-
@@ -1840,6 +1870,13 @@ function useRight(){
     player.food=clamp(player.food+it.food,0,player.maxfood);
     if(id==='soup') player.hp=player.maxhp;
     consumeHeld(); SND.eat(); updateHUD();
+    return;
+  }
+  // 4b. Fahrzeug abstellen. Vor dem Blocksetzen, weil Boot/Brett/Schirm keine
+  // Blöcke sind und sonst nie an die Reihe kämen.
+  if(it&&VEH_OF_ITEM[id]){
+    if(placeVehicleFromHand(VEH_OF_ITEM[id])){ consumeHeld(); updateHUD(); }
+    else SND.fail();
     return;
   }
   // 5. Fackel setzen
@@ -1886,11 +1923,15 @@ function useRight(){
 }
 function attack(){
   if(player.atkCd>0||state.paused) return;
+  // Ein Schlag auf ein abgestelltes Fahrzeug hebt es auf — dasselbe Gefühl
+  // wie einen Block abbauen, nur ohne Grabezeit (es liegt ja nur herum).
+  if(aimedVehicle){ player.atkCd=.35; SND.swing(); pickUpVehicle(aimedVehicle); return true; }
   player.atkCd=.45;
   el('cross').classList.add('swing');
   setTimeout(()=>el('cross').classList.remove('swing'),110);
   SND.swing();
-  const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
+  updateEyeRay();
+  const dir=eyeDir;
   let best=null,bestD=1e9;
   for(const m of mobs){
     const dx=m.x-player.x, dz=m.z-player.z, d=Math.hypot(dx,dz);
@@ -2501,9 +2542,10 @@ function openIntro(){
   selbst etwas heraus. So wird auch gekocht: Zutaten in den <b>🍲 Kochtopf</b> werfen,
   Rechtsklick, warten. Passt es zusammen, kommt ein Gericht heraus; sonst Pampe.</p>
   <p>Am <b>🛒 Manni-Markt</b> gibt es auch, was sich nicht bauen lässt: <b>🛹 Skateboard</b>,
-  <b>🛶 Boot</b>, <b>🪂 Gleitschirm</b> — in der Hand gehalten, bringen sie dich schneller
-  ans Ziel. Im <b>Wasser</b> schwimmst du — <b>␣</b> hoch, <b>⇧</b> runter;
-  hineinspringen tut nicht weh.</p>
+  <b>🛶 Boot</b>, <b>🪂 Gleitschirm</b>. Die <b>stellst du hin</b> (Rechtsklick), <b>steigst ein</b>
+  (nochmal Rechtsklick) und fährst los — <b>F</b> steigt aus, ein <b>Schlag</b> hebt sie wieder auf.
+  Beim Fahren siehst du dich selbst von hinten. Im <b>Wasser</b> schwimmst du — <b>␣</b> hoch,
+  <b>⇧</b> runter; hineinspringen tut nicht weh.</p>
   <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der
   Welt. Sie wollen Essen und zeigen dir dafür, wie das nächste geht; nach einer Weile fällt
   ihnen etwas Neues ein. Der erste im Tal zeigt dir die <b>🧑‍🌾 Hacke</b>.</p>
@@ -2514,6 +2556,7 @@ function openIntro(){
     <b>WASD</b> laufen &nbsp; <b>⇧</b> rennen &nbsp; <b>␣</b> springen<br>
     <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / lesen / essen<br>
     <b>Q</b> wegwerfen &nbsp; <b>⇧Q</b> ganzen Stapel &nbsp; <b>E</b> Inventar<br>
+    <b>V</b> Sicht wechseln &nbsp; <b>F</b> aussteigen &nbsp;
     <b>1-9</b> Leiste &nbsp; <b>Rad</b> wechseln &nbsp; <b>P</b> Pause
   </div>
   <div class="btnrow"><button class="primary" data-act="start">Los geht's</button></div>`);
@@ -2561,11 +2604,353 @@ mbox.addEventListener('click',e=>{
   else if(act==='signremove') removeSignEditor();
 });
 
+// ------------------------------------------------------------------ Fahrzeuge
+// Boot, Brett und Schirm wirkten früher, solange man sie in der HAND hielt —
+// man fuhr also mit einem Gegenstand im Rucksack, den niemand sah, und wer
+// segelte, konnte nebenbei nichts anderes greifen. Jetzt sind es Dinge in der
+// Welt: hinstellen, einsteigen, fahren, aussteigen, wieder aufheben. Sie
+// leben (wie Schilder und Fackeln) außerhalb des Block-Rasters, weil sie
+// zwischen den Feldern stehen und sich bewegen.
+//
+// `seat` ist die Höhe, auf der die Figur über dem Fahrzeugpunkt sitzt/steht,
+// `pose` ihre Haltung dabei (siehe posePlayerModel).
+const VEHICLES={
+  // Der Sitzplatz im Boot liegt UNTER dem Fahrzeugpunkt: die Figur klappt
+  // die Beine nach vorn (pose 'sit'), ihre Hüfte sitzt 0,74 über dem eigenen
+  // Nullpunkt — ohne diesen Versatz schwebte sie über der Bordwand, statt
+  // im Rumpf zu sitzen.
+  boat  :{item:'boat',  nm:'Boot',        pose:'sit', seat:-.45, water:8.0, land:1.6, float:true},
+  board :{item:'board', nm:'Skateboard',  pose:'ride',seat:.19, water:1.4, land:8.6},
+  glider:{item:'glider',nm:'Gleitschirm', pose:'hang',seat:.25, water:2.2, land:5.0, glide:true},
+};
+const VEH_OF_ITEM={boat:'boat',board:'board',glider:'glider'};
+const vehicles=new Map();                 // id -> {id,kind,x,y,z,yaw,rider,group,canopy}
+let riding=null;                          // das Fahrzeug, auf dem man selbst sitzt
+let vehSeq=0, vehSendT=0;
+function vehicleOfRider(pid){
+  if(pid==null) return null;
+  for(const v of vehicles.values()) if(v.rider===pid) return v;
+  return null;
+}
+// Die Modelle sind bewusst aus denselben Kästen gebaut wie die Spielerfigur —
+// gedreht wird nach -Z, also zeigt der Bug dorthin, wohin auch die Figur sieht.
+function makeVehicleModel(kind){
+  const g=new THREE.Group();
+  if(kind==='boat'){
+    const base=box(.86,.14,1.6,'#8a5a2b'); base.position.y=.07; g.add(base);
+    for(const x of [-.43,.43]){ const s=box(.1,.3,1.6,'#a06a33'); s.position.set(x,.24,0); g.add(s); }
+    for(const z of [-.8,.8]){ const w=box(.86,.3,.1,'#a06a33'); w.position.set(0,.24,z); g.add(w); }
+    const seat=box(.7,.08,.36,'#6d4520'); seat.position.set(0,.2,.15); g.add(seat);
+  }else if(kind==='board'){
+    const deck=box(.42,.07,1.1,'#2f3140'); deck.position.y=.16; g.add(deck);
+    // Die Nase steht hoch, sonst sieht ein Brett aus wie ein Brett.
+    const nose=box(.42,.07,.26,'#2f3140'); nose.position.set(0,.21,-.62); nose.rotation.x=.45; g.add(nose);
+    const tail=box(.42,.07,.26,'#2f3140'); tail.position.set(0,.21,.62); tail.rotation.x=-.45; g.add(tail);
+    for(const x of [-.19,.19]) for(const z of [-.36,.36]){
+      const w=box(.08,.11,.11,'#e8dfc4'); w.position.set(x,.07,z); g.add(w);
+    }
+  }else{
+    // Am Boden ein zusammengelegtes Bündel, in der Luft die aufgespannte
+    // Kappe darüber — dasselbe Fahrzeug, zwei Zustände (siehe updateVehicles).
+    const pack=box(.5,.3,.4,'#d2503f'); pack.position.y=.15; g.add(pack);
+    const canopy=new THREE.Group();
+    const COL=['#d2503f','#e8a13a','#d2503f','#e8a13a','#d2503f'];
+    for(let i=0;i<5;i++){
+      const seg=box(.52,.12,1.5,COL[i]);
+      const a=(i-2)*.34;
+      seg.position.set(Math.sin(a)*1.25,2.2+Math.cos(a)*.28,0);
+      seg.rotation.z=-a;
+      canopy.add(seg);
+    }
+    for(const x of [-.9,.9]){
+      const line=box(.03,1.5,.03,'#3a3a3a'); line.position.set(x*.75,1.35,0); line.rotation.z=x>0?-.35:.35;
+      canopy.add(line);
+    }
+    canopy.visible=false;
+    g.add(canopy);
+    g.userData.canopy=canopy; g.userData.pack=pack;
+  }
+  return g;
+}
+function addVehicle(v){
+  const g=makeVehicleModel(v.kind);
+  g.position.set(v.x,v.y,v.z); g.rotation.y=v.yaw||0;
+  scene.add(g);
+  v.group=g;
+  v.rx=v.x; v.ry=v.y; v.rz=v.z; v.ryaw=v.yaw||0;   // geglättete Anzeigelage
+  vehicles.set(v.id,v);
+  return v;
+}
+function dropVehicle(id){
+  const v=vehicles.get(id);
+  if(!v) return;
+  if(riding===v) riding=null;
+  scene.remove(v.group);
+  disposeModel(v.group);
+  vehicles.delete(id);
+}
+// Abstellen: auf den anvisierten Platz, und wenn man aufs Wasser zielt (dort
+// gibt es keinen Block, an dem der Strahl hängenbliebe) knapp vor die eigenen
+// Füße auf die Wasserlinie — sonst könnte man ein Boot nie zu Wasser lassen.
+function placeVehicleFromHand(kind){
+  let x,y,z;
+  if(target){
+    const p=target.place;
+    // Bewusst NICHT canPlaceAt: das verbietet auch das Feld, in dem man
+    // selbst steht — bei einem Block richtig, hier hinderlich. Ein Fahrzeug
+    // ist kein Klotz, man steht ja gleich selbst darauf, und wer nach unten
+    // schaut, will es vor die eigenen Füße stellen.
+    if(p.x<BOUND.x0||p.x>BOUND.x1||p.z<BOUND.z0||p.z>BOUND.z1) return false;
+    if(p.y<-8||p.y>60||blockAt(p.x,p.y,p.z)) return false;
+    x=p.x; y=p.y; z=p.z;
+  }else{
+    updateEyeRay();
+    const l=Math.hypot(eyeDir.x,eyeDir.z)||1;
+    x=player.x+eyeDir.x/l*1.8; z=player.z+eyeDir.z/l*1.8;
+    if(!waterAt(x,WATER_Y-.2,z)) return false;      // ins Leere stellen geht nicht
+    y=WATER_Y;
+  }
+  if(kind==='boat'&&waterAt(x,y+.2,z)) y=WATER_Y;   // ein Boot schwimmt oben
+  const id=`${getPid()??'off'}-v${++vehSeq}`;
+  const v=addVehicle({id,kind,x,y,z,yaw:player.yaw,rider:null});
+  if(isConnected()) send({t:'vehicle-place',id,kind,x,y,z,yaw:player.yaw});
+  SND.place();
+  return !!v;
+}
+// Anvisieren wie bei Bewohnern/Schildern: das nächste Fahrzeug in Reichweite,
+// das ungefähr in Blickrichtung liegt.
+function aimVehicle(maxDist){
+  updateEyeRay(); _rd.copy(eyeDir);
+  let best=null,bestD=1e9;
+  for(const v of vehicles.values()){
+    if(v===riding) continue;
+    const dx=v.x-player.x, dy=v.y+.4-(player.viewY+EYE), dz=v.z-player.z;
+    const d=Math.hypot(dx,dy,dz);
+    if(d>maxDist||d>bestD) continue;
+    // Aus der Nähe darf der Blick grob danebenliegen: wer direkt daneben
+    // steht, sieht schon über das Boot hinweg, meint aber offensichtlich es.
+    if((dx*_rd.x+dy*_rd.y+dz*_rd.z)/(d||1)<(d<1.8?.1:.86)) continue;
+    best=v; bestD=d;
+  }
+  return best;
+}
+// Einsteigen ist online server-arbitriert (wie ein Truhen-Griff): säßen zwei
+// Spieler nach zwei fast gleichzeitigen Klicks beide in demselben Boot, führe
+// es an zwei Orte gleichzeitig. Der Server bestimmt den einen Fahrer und
+// schickt das Ergebnis an alle (siehe on('vehicle-rider')).
+function enterVehicle(v){
+  if(!v||v.rider!=null) { SND.fail(); return; }
+  if(isConnected()){ send({t:'vehicle-enter',id:v.id}); return; }
+  v.rider=getPid()??0;
+  riding=v;
+  onMounted();
+}
+function onMounted(){
+  view=view||1;                            // Fahren zeigt man in dritter Person
+  player.x=riding.x; player.z=riding.z; player.y=riding.y; player.vy=0;
+  SND.chest();
+  toast('🚗 Eingestiegen — F steigt wieder aus.','',2200);
+}
+function leaveVehicle(){
+  if(!riding) return;
+  const v=riding;
+  // Neben dem Fahrzeug absetzen, nicht hinein: ein Ausstieg mitten im Rumpf
+  // schöbe einen beim nächsten Bild irgendwohin.
+  const sin=Math.sin(player.yaw), cos=Math.cos(player.yaw);
+  for(const [ox,oz] of [[cos,-sin],[-cos,sin],[sin,cos],[-sin,-cos],[0,0]]){
+    const nx=v.x+ox*1.1, nz=v.z+oz*1.1;
+    const ny=surfaceAt(nx,nz);
+    if(!collides(nx,ny,nz)){ player.x=nx; player.z=nz; player.y=player.fallFrom=ny; break; }
+  }
+  player.vy=0;
+  riding=null;
+  v.rider=null;
+  if(isConnected()) send({t:'vehicle-leave',id:v.id});
+  SND.tap();
+}
+// Aufheben: online entscheidet der Server, WER das Fahrzeug bekommt (sonst
+// bekämen zwei gleichzeitig Zuschlagende je einen Gegenstand aus einem).
+function pickUpVehicle(v){
+  if(!v||v.rider!=null){ SND.fail(); return false; }
+  if(isConnected()){ send({t:'vehicle-remove',id:v.id}); return true; }
+  dropVehicle(v.id);
+  giveOrDrop(VEHICLES[v.kind].item,1);
+  SND.pop(); updateHUD();
+  return true;
+}
+function updateVehicles(dt){
+  const f=Math.min(1,dt*10);
+  for(const v of vehicles.values()){
+    // Das eigene Fahrzeug folgt dem Spieler ohne Umweg — er ist der, der es
+    // bewegt. Fremde ziehen wie Mitspieler zum zuletzt gemeldeten Stand
+    // nach, statt bei jeder Nachricht zu springen. Die geglättete Lage steht
+    // getrennt (rx/ry/rz/ryaw), damit das Schaukeln unten nicht in den
+    // nächsten Glättungsschritt zurückläuft.
+    if(v===riding){
+      v.x=player.x; v.y=player.y; v.z=player.z; v.yaw=player.yaw;
+      v.rx=v.x; v.ry=v.y; v.rz=v.z; v.ryaw=v.yaw;
+    }else{
+      v.rx=lerp(v.rx,v.x,f); v.ry=lerp(v.ry,v.y,f); v.rz=lerp(v.rz,v.z,f);
+      let dy=v.yaw-v.ryaw;
+      dy=((dy+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;
+      v.ryaw+=dy*f;
+    }
+    const g=v.group;
+    g.position.set(v.rx,v.ry,v.rz);
+    g.rotation.y=v.ryaw;
+    // Schwimmendes schaukelt ein wenig, damit ein Boot nicht wie angenagelt
+    // im Fluss steht.
+    if(VEHICLES[v.kind].float&&waterAt(v.rx,v.ry+.2,v.rz)){
+      g.position.y+=Math.sin(state.t*1.8+v.x)*.045;
+      g.rotation.z=Math.sin(state.t*1.3+v.z)*.04;
+    }else g.rotation.z=0;
+    if(v.kind==='glider'){
+      const flying=v.rider!=null;
+      g.userData.canopy.visible=flying;
+      g.userData.pack.visible=!flying;
+    }
+  }
+  if(riding&&isConnected()){
+    vehSendT+=dt;
+    if(vehSendT>=.1){
+      vehSendT=0;
+      send({t:'vehicle-move',id:riding.id,x:riding.x,y:riding.y,z:riding.z,yaw:riding.yaw});
+    }
+  }
+}
+
+// ------------------------------------------------------------------ Spielerfigur
+// Eine Klötzchen-Figur aus sechs Kästen (Kopf, Rumpf, zwei Arme, zwei Beine),
+// passend zur würfeligen Welt. Eine kamerafeste Bildfläche wie bei den
+// Bewohnern (setupChars) wäre hier gerade falsch: seit es die dritte Person
+// gibt, sieht man sich selbst von hinten, und eine Fläche, die sich immer zur
+// Kamera dreht, hat keine Rückseite.
+//
+// Die Figur baut nach -Z ("nach vorn" ist die Richtung, in die die Kamera bei
+// yaw=0 schaut, siehe updatePlayer) — damit genügt group.rotation.y=yaw, für
+// die eigene wie für fremde Figuren.
+const SKIN='#e8b78d', PANTS='#3f4a66';
+// Gesichter aus den Bildern, die ohnehin im Spiel stecken: dominik.png ist
+// schon ein freigestellter Kopf, aus den Ganzkörperbildern von Manni und
+// Jannes schneidet headTex den Kopf heraus (Werte von Hand an den Bildern
+// abgelesen, als Anteil der Bildbreite/-höhe — nicht geraten, sondern gegen
+// die Bilder geprüft). Fehlt ein Bild, bleibt der Kopf einfach ohne Gesicht.
+const FACES=[
+  {tex:()=>FACE_TEX.dominik,        crop:null},
+  {tex:()=>CHAR_TEX.manni,          crop:{x:.44,y:.06,w:.24}},
+  {tex:()=>CHAR_TEX.jannes,         crop:{x:.40,y:.06,w:.21}},
+  {tex:()=>FACE_TEX.dominik,        crop:null},
+];
+const FACE_TEX={};
+const faceCache=new Map();                // Index → THREE.Texture (jedes Gesicht nur einmal)
+// Schneidet ein Quadrat aus einem geladenen Bild und macht daraus eine
+// Textur für die Kopfvorderseite. Quadratisch deshalb, weil der Kopf ein
+// Würfel ist — ein schiefes Rechteck würde das Gesicht verzerren.
+function headTex(i){
+  if(faceCache.has(i)) return faceCache.get(i);
+  const spec=FACES[i%FACES.length];
+  const src=spec.tex();
+  const img=src&&src.image;
+  if(!img||!img.width) return null;
+  const S=96;
+  const cv=document.createElement('canvas'); cv.width=cv.height=S;
+  const ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  if(spec.crop){
+    const w=img.width*spec.crop.w;
+    ctx.drawImage(img,img.width*spec.crop.x,img.height*spec.crop.y,w,w,0,0,S,S);
+  }else{
+    // Ganzes Bild, aber mittig quadratisch beschnitten — dominik.png ist
+    // hochkant, ohne Beschnitt säße das Gesicht gequetscht auf dem Würfel.
+    const s=Math.min(img.width,img.height);
+    ctx.drawImage(img,(img.width-s)/2,0,s,s,0,0,S,S);
+  }
+  const tex=new THREE.CanvasTexture(cv);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.magFilter=THREE.NearestFilter; tex.minFilter=THREE.LinearMipmapLinearFilter;
+  faceCache.set(i,tex);
+  return tex;
+}
+const box=(w,h,d,color)=>{
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color}));
+  m.castShadow=true;
+  return m;
+};
+// Arme und Beine hängen in einer eigenen Gruppe an Schulter bzw. Hüfte, der
+// Kasten selbst sitzt um seine halbe Länge tiefer darin — nur so dreht sich
+// ein Bein beim Laufen um die Hüfte und nicht um seine eigene Mitte.
+function limb(x,y,w,h,d,color){
+  const pivot=new THREE.Group();
+  pivot.position.set(x,y,0);
+  const m=box(w,h,d,color);
+  m.position.y=-h/2;
+  pivot.add(m);
+  return pivot;
+}
+function makePlayerModel(pid){
+  const color=PLAYER_COLORS[((pid||1)-1)%PLAYER_COLORS.length];
+  const g=new THREE.Group();
+  const legL=limb(-.15,.74,.19,.74,.22,PANTS), legR=limb(.15,.74,.19,.74,.22,PANTS);
+  const armL=limb(-.36,1.28,.16,.58,.16,SKIN), armR=limb(.36,1.28,.16,.58,.16,SKIN);
+  const torso=box(.54,.58,.28,color); torso.position.y=1.03;
+  const head=box(.5,.5,.5,SKIN); head.position.y=1.57;
+  const face=headTex((pid||1)-1);
+  if(face){
+    // Das Gesicht liegt als eigene Fläche hauchdünn vor dem Kopf statt als
+    // Textur auf dessen Vorderseite: durchsichtige Ränder (die Bilder sind
+    // freigestellt) würden sonst ein Loch in den Kopf schneiden.
+    // Ein wenig Eigenleuchten, damit das Gesicht auch dann lesbar bleibt,
+    // wenn die Sonne von hinten kommt — es ist das einzige Erkennungsmerkmal
+    // der Figur, und ein schwarzer Fleck wäre eines weniger.
+    const fp=new THREE.Mesh(new THREE.PlaneGeometry(.5,.5),
+      new THREE.MeshLambertMaterial({map:face,transparent:true,alphaTest:.35,
+                                     emissive:0x555555,emissiveMap:face}));
+    fp.position.set(0,0,-.252); fp.rotation.y=Math.PI;
+    head.add(fp);
+  }
+  g.add(legL,legR,armL,armR,torso,head);
+  return Object.assign(g,{parts:{legL,legR,armL,armR,torso,head},gait:0});
+}
+// Haltung: 'walk' schwingt Arme und Beine gegengleich, 'sit' klappt die Beine
+// nach vorn (Boot), 'hang' hängt die Arme nach oben (Gleitschirm). Der Kopf
+// nickt mit der Blickrichtung, damit man Mitspielern ansieht, wohin sie sehen.
+function posePlayerModel(m,{gait=0,moving=0,pitch=0,mode='walk'}={}){
+  const p=m.parts;
+  const sw=Math.sin(gait)*Math.min(.9,moving);
+  p.head.rotation.x=clamp(-pitch,-.9,.9);
+  if(mode==='sit'){
+    p.legL.rotation.x=p.legR.rotation.x=-1.4;
+    p.armL.rotation.x=p.armR.rotation.x=-.55;
+    p.armL.rotation.z=p.armR.rotation.z=0;
+  }else if(mode==='hang'){
+    p.legL.rotation.x=-.25; p.legR.rotation.x=.25;
+    p.armL.rotation.x=p.armR.rotation.x=-2.5;
+    p.armL.rotation.z=.25; p.armR.rotation.z=-.25;
+  }else{
+    p.legL.rotation.x=sw; p.legR.rotation.x=-sw;
+    p.armL.rotation.x=-sw*.85; p.armR.rotation.x=sw*.85;
+    p.armL.rotation.z=p.armR.rotation.z=0;
+    if(mode==='ride'){                     // auf dem Brett: leicht in die Knie
+      p.legL.rotation.x-=.25; p.legR.rotation.x-=.25;
+    }
+  }
+}
+function disposeModel(g){
+  g.traverse(o=>{
+    if(!o.isMesh) return;
+    o.geometry.dispose();
+    // Gesichtstexturen leben im faceCache weiter (nur je einmal gebaut) —
+    // hier bewusst NICHT die map mit wegwerfen.
+    o.material.dispose();
+  });
+}
+
 // ------------------------------------------------------------------ Mitspieler (Phase 2)
-// Andere verbundene Spieler bekommen einen simplen Avatar (Kapsel + Namensschild),
-// der zur zuletzt empfangenen Position/Blickrichtung hin lerpt — keine Vorhersage,
-// keine Extrapolation, nur Glätten des letzten bekannten Werts. Die eigene Bewegung
-// bleibt komplett lokal maßgeblich (kein serverseitiges Zurückkorrigieren).
+// Andere verbundene Spieler bekommen die Klötzchen-Figur von oben und ein
+// Namensschild; beides lerpt zur zuletzt empfangenen Position/Blickrichtung
+// — keine Vorhersage, keine Extrapolation, nur Glätten des letzten bekannten
+// Werts. Die eigene Bewegung bleibt komplett lokal maßgeblich (kein
+// serverseitiges Zurückkorrigieren).
 const PLAYER_COLORS=['#e0555f','#4fa8e0','#e0c04f','#7bcf6a'];
 const remotePlayers=new Map();              // pid -> {group, target:{x,y,z,yaw}}
 function ensureRemotePlayer(pid){
@@ -2573,13 +2958,12 @@ function ensureRemotePlayer(pid){
   if(rp) return rp;
   const color=PLAYER_COLORS[(pid-1)%4];
   const g=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.CapsuleGeometry(.28,1.1,4,8),
-    new THREE.MeshLambertMaterial({color}));
-  body.position.y=.83; body.castShadow=true; g.add(body);
+  const body=makePlayerModel(pid);
+  g.add(body);
   const label=makeLabel(['Spieler '+pid],color,.35);
-  label.position.y=2; g.add(label);
+  label.position.y=2.1; g.add(label);
   scene.add(g);
-  rp={group:g,body,label,target:{x:0,y:0,z:0,yaw:0}};
+  rp={group:g,body,label,target:{x:0,y:0,z:0,yaw:0},gait:0,moving:0};
   remotePlayers.set(pid,rp);
   return rp;
 }
@@ -2587,18 +2971,35 @@ function removeRemotePlayer(pid){
   const rp=remotePlayers.get(pid);
   if(!rp) return;
   scene.remove(rp.group);
-  rp.body.geometry.dispose(); rp.body.material.dispose();
+  disposeModel(rp.body);
   rp.label.material.map?.dispose(); rp.label.material.dispose();
   remotePlayers.delete(pid);
 }
 function updateRemotePlayers(dt){
   const f=Math.min(1,dt*10);
-  for(const rp of remotePlayers.values()){
+  for(const [pid,rp] of remotePlayers){
     const g=rp.group, t=rp.target;
+    const px=g.position.x, pz=g.position.z;
     g.position.set(lerp(g.position.x,t.x,f),lerp(g.position.y,t.y,f),lerp(g.position.z,t.z,f));
     let dy=t.yaw-g.rotation.y;
     dy=((dy+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;   // kürzester Weg, kein Sprung über die ±π-Naht
     g.rotation.y+=dy*f;
+    // Die Schrittgeschwindigkeit kommt aus der tatsächlich zurückgelegten
+    // Strecke — 'pos' trägt kein Bewegungsfeld, und ein zusätzliches wäre
+    // Ballast für etwas, das hier ohnehin abzulesen ist.
+    const sp=Math.hypot(g.position.x-px,g.position.z-pz)/Math.max(dt,1e-4);
+    rp.moving=lerp(rp.moving,Math.min(1,sp/3.4),Math.min(1,dt*8));
+    rp.gait+=dt*sp*1.9;
+    const v=vehicleOfRider(pid);
+    posePlayerModel(rp.body,{gait:rp.gait,moving:v?0:rp.moving,mode:v?VEHICLES[v.kind].pose:'walk'});
+    // Wer fährt, klebt am Fahrzeug: dessen bereits geglättete Anzeigelage
+    // zählt, nicht die eigenen 'pos'-Nachrichten. Sonst rutschten Figur und
+    // Boot bei jedem Ruckler gegeneinander, weil beide für sich glätten.
+    if(v){
+      g.position.copy(v.group.position);
+      g.position.y+=VEHICLES[v.kind].seat;
+      g.rotation.y=v.group.rotation.y;
+    }
   }
 }
 let netSendT=0;
@@ -2669,7 +3070,15 @@ function attemptConnect(pw,fromPrompt){
 on('join',()=>toast('👋 Ein Mitspieler ist beigetreten.','',1800));
 // 'join' selbst trägt keine Position — die kommt erst mit der ersten 'pos'-
 // Nachricht des Beigetretenen, also gibt es hier noch nichts zu zeichnen.
-on('leave',msg=>{ toast('👋 Ein Mitspieler hat verlassen.','',1800); removeRemotePlayer(msg.pid); });
+on('leave',msg=>{
+  toast('👋 Ein Mitspieler hat verlassen.','',1800);
+  removeRemotePlayer(msg.pid);
+  // Sein Fahrzeug wird wieder frei. Der Server räumt den Platz ebenfalls
+  // (siehe _onClose dort) — hier zusätzlich, damit das Boot nicht bis zur
+  // nächsten Nachricht "besetzt" aussieht.
+  const v=vehicleOfRider(msg.pid);
+  if(v) v.rider=null;
+});
 on('disconnected',info=>{
   if(info.reason==='bad-password'||info.reason==='full') return;  // eigene Meldung übernimmt das
   toast('📡 Verbindung verloren — versuche erneut zu verbinden …','warn',2600);
@@ -2731,6 +3140,21 @@ on('welcome',msg=>{
     signs.set(key,{text:typeof s.text==='string'?s.text:''});
     const [x,y,z]=key.split(',').map(Number);
     ensureSignLabel(x,y,z);
+  }
+  // Fahrzeuge kommen als vollständiger Bestand — beim Wiederverbinden also
+  // erst den eigenen (womöglich veralteten) Stand räumen, statt Karteileichen
+  // von vor dem Abriss stehenzulassen. Ein Fahrer war man dabei nur bis zum
+  // Verbindungsabbruch: der Server setzt rider beim Trennen zurück (siehe
+  // dort), hier entsprechend absteigen.
+  if(msg.vehicles){
+    riding=null;
+    for(const id of [...vehicles.keys()]) dropVehicle(id);
+    for(const v of msg.vehicles){
+      if(!VEHICLES[v.kind]) continue;
+      addVehicle({id:v.id,kind:v.kind,x:v.x,y:v.y,z:v.z,yaw:v.yaw||0,rider:v.rider??null});
+    }
+    const mine=vehicleOfRider(getPid());
+    if(mine){ riding=mine; onMounted(); }   // Wiederverbinden mitten in der Fahrt
   }
   // Phase 4a: die gemeinsame Kasse kommt beim (Wieder-)Verbinden ebenfalls im
   // Ganzen mit. Kein winGame() hier, auch wenn schon gewonnen — ein spät
@@ -2855,6 +3279,41 @@ on('sign-write',msg=>{
 on('sign-remove',msg=>{
   signs.delete(K(msg.x,msg.y,msg.z));
   removeSignLabel(msg.x,msg.y,msg.z);
+});
+// Fahrzeuge: Abstellen und Fahren laufen optimistisch (wer sein Boot bewegt,
+// bewegt nur sein eigenes — nichts Knappes, kein Wettlauf). Einsteigen und
+// Aufheben dagegen entscheidet der Server, weil beides nur EINEM zustehen
+// kann: zwei Fahrer führen ein Boot an zwei Orte, zwei Aufheber machten aus
+// einem Boot zwei Gegenstände.
+on('vehicle-place',msg=>{
+  if(vehicles.has(msg.id)) return;
+  if(!VEHICLES[msg.kind]) return;
+  addVehicle({id:msg.id,kind:msg.kind,x:msg.x,y:msg.y,z:msg.z,yaw:msg.yaw||0,rider:msg.rider??null});
+});
+on('vehicle-move',msg=>{
+  const v=vehicles.get(msg.id);
+  if(!v||v===riding) return;               // die eigene Fahrt gibt hier den Ton an
+  v.x=msg.x; v.y=msg.y; v.z=msg.z; v.yaw=msg.yaw||0;
+});
+on('vehicle-rider',msg=>{
+  const v=vehicles.get(msg.id);
+  if(!v) return;
+  v.rider=msg.rider??null;
+  const me=getPid();
+  if(v.rider===me&&riding!==v){ riding=v; onMounted(); }
+  // Ein anderer hat den Platz bekommen (oder der Server hat ihn geräumt):
+  // dann steigt man hier eben wieder aus, statt unsichtbar mitzufahren.
+  else if(v.rider!==me&&riding===v){ riding=null; toast('🚗 Jemand war schneller.','warn',1800); }
+});
+on('vehicle-remove',msg=>{
+  const v=vehicles.get(msg.id);
+  if(!v) return;
+  dropVehicle(msg.id);
+  // Nur der, dem der Server das Aufheben zugesprochen hat, bekommt es auch.
+  if(msg.by!=null&&msg.by===getPid()){
+    giveOrDrop(VEHICLES[v.kind].item,1);
+    SND.pop(); updateHUD();
+  }
 });
 // ---------------------------------------------------------------- Phase 3b
 // Wachsende Saat: nur die Wachstums-Uhr übernehmen, NICHT setBlock/setBlockData
@@ -3064,6 +3523,52 @@ function collides(px,py,pz){
   return false;
 }
 const keys={};
+
+// ------------------------------------------------------------------ Sicht
+// 0 = aus den eigenen Augen, 1 = über die Schulter, 2 = von vorn (wie beim
+// Vorbild dieselbe Taste im Kreis). Die dritte Person braucht einen eigenen
+// Körper — den baut updateSelfModel beim ersten Umschalten.
+let view=0;
+const VIEW_DIST=4.2;
+const VIEW_NAMES=['👁️ Ich-Sicht','🎥 Schulterblick','🙂 Frontsicht'];
+// Wie weit die Kamera in eine Richtung kann, bevor sie in einem Block steckt.
+// In kleinen Schritten abtasten genügt: ein halber Block Auflösung reicht bei
+// vier Blöcken Abstand, und ein Strahl gegen alle Würfel wäre hier deutlich
+// teurer als 28 Nachschlagversuche.
+function camFree(ox,oy,oz,dx,dy,dz,want){
+  const step=.15;
+  for(let d=step;d<=want;d+=step){
+    const x=ox+dx*d, y=oy+dy*d, z=oz+dz*d;
+    if(fillsAt(Math.round(x),Math.floor(y),Math.round(z))) return Math.max(.4,d-step*2);
+  }
+  return want;
+}
+let selfModel=null, selfPid=null, selfGait=0, selfMove=0;
+function updateSelfModel(dt,speed){
+  const pid=getPid()??1;
+  // Das eigene Gesicht hängt an der Spielernummer — die kommt erst mit der
+  // Anmeldung, also den Körper neu bauen, wenn sie sich ändert.
+  if(selfModel&&selfPid!==pid){ scene.remove(selfModel); disposeModel(selfModel); selfModel=null; }
+  if(!selfModel){
+    if(!view) return;                      // in der Ich-Sicht gar nicht erst bauen
+    selfModel=makePlayerModel(pid); selfPid=pid; scene.add(selfModel);
+  }
+  selfModel.visible=!!view;
+  if(!view) return;
+  selfGait+=dt*speed*1.9;
+  selfMove=lerp(selfMove,Math.min(1,speed/3.4),Math.min(1,dt*8));
+  const cfg=riding?VEHICLES[riding.kind]:null;
+  selfModel.position.set(player.x,cfg?riding.y+cfg.seat:player.viewY,player.z);
+  selfModel.rotation.y=player.yaw;
+  posePlayerModel(selfModel,{gait:selfGait,moving:cfg?0:selfMove,
+                             pitch:player.pitch,mode:cfg?cfg.pose:'walk'});
+}
+function toggleView(){
+  view=(view+1)%3;
+  toast(VIEW_NAMES[view],'',1200);
+  SND.tap();
+}
+
 function updatePlayer(dt){
   let mx=0, mz=0;
   if(!state.paused){
@@ -3083,18 +3588,16 @@ function updatePlayer(dt){
             waterAt(player.x,player.y-.1,player.z);
   player.wet=wet;
   state.underwater=waterAt(player.x,player.viewY+EYE,player.z);
-  // Was vom Markt kommt, wirkt in der Hand: Brett an Land, Boot im Wasser,
-  // Schirm in der Luft. Alles drei kostet den Platz in der Hand — wer segelt,
-  // haut in dem Moment nichts ab.
-  const hit=heldId(), hi=hit?ITEMS[hit]:null;
-  const onBoat=!!hi?.boat&&wet;
-  const onBoard=!!hi?.board&&!wet&&player.onGround;
-  const gliding=!!hi?.glide&&!wet&&!player.onGround;
+  // Was vom Markt kommt, wirkt nicht mehr in der Hand, sondern unter einem:
+  // Brett an Land, Boot im Wasser, Schirm in der Luft — aber nur, wenn man
+  // wirklich draufsitzt (siehe enterVehicle). Wer fährt, hat die Hände frei.
+  const rv=riding?VEHICLES[riding.kind]:null;
+  const onBoat=!!rv?.float&&wet;
+  const gliding=!!rv?.glide&&!wet&&!player.onGround;
   player.gliding=gliding;
   const sprint=(keys.ShiftLeft||keys.ShiftRight)?1.42:1;
-  const sp=wet?(onBoat?7.2:3.0)              // Wasser bremst, das Boot nicht
-          :onBoard?8.4                       // das Brett rollt
-          :gliding?6.2                       // im Gleitflug trägt der Fahrtwind
+  const sp=rv?(wet?rv.water:rv.land)         // das Fahrzeug gibt das Tempo vor
+          :wet?3.0                           // Wasser bremst
           :4.8*sprint;
   const sin=Math.sin(player.yaw), cos=Math.cos(player.yaw);
   const dx=(mx*cos+mz*sin)*sp*dt;
@@ -3177,12 +3680,28 @@ function updatePlayer(dt){
     if(player.stepT>3.1){ player.stepT=0; SND.step(); }
   } else player.bob+=dt*.6;
   const bobY=Math.sin(player.bob)*(speed>.4?.045:.012);
-  camera.position.set(player.x,player.viewY+EYE+bobY,player.z);
+  // In der dritten Person wackelt die Kamera nicht mit jedem Schritt — was
+  // aus den eigenen Augen lebendig wirkt, sieht von außen nur unruhig aus.
+  const eyeY=player.viewY+EYE+(view?0:bobY);
+  camera.position.set(player.x,eyeY,player.z);
   camera.rotation.set(0,0,0);
-  camera.rotateY(player.yaw);
-  camera.rotateX(player.pitch);
+  camera.rotateY(view===2?player.yaw+Math.PI:player.yaw);
+  camera.rotateX(view===2?-player.pitch:player.pitch);
+  if(view){
+    // Nach hinten (bzw. bei der Frontsicht nach vorn) herausfahren, aber nur
+    // so weit, wie freie Sicht ist — sonst steckt die Kamera in der Wand und
+    // man sieht das Innere der Welt.
+    camera.getWorldDirection(_rd);
+    const d=camFree(player.x,eyeY,player.z,-_rd.x,-_rd.y,-_rd.z,VIEW_DIST);
+    camera.position.set(player.x-_rd.x*d,eyeY-_rd.y*d,player.z-_rd.z*d);
+  }
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  // Der eigene Körper wird NICHT hier gesetzt, sondern erst nach
+  // updateVehicles (siehe update): beim Fahren hängt er am Fahrzeug, und das
+  // übernimmt die frische Position erst dort — sonst liefe die Figur dem
+  // Fahrzeug ein Bild hinterher.
+  player.spd=speed;
   if(player.atkCd>0) player.atkCd-=dt;
   if(player.invT>0) player.invT-=dt;
   if(player.hurtT>0){ player.hurtT-=dt; el('hurt').style.opacity=Math.max(0,player.hurtT); }
@@ -3385,6 +3904,19 @@ addEventListener('keydown',e=>{
     return;
   }
   if(e.code==='KeyP'){ e.preventDefault(); ac(); togglePause(); return; }
+  // Sicht umschalten: V wie "view", F5 zusätzlich für alle, die es aus dem
+  // Vorbild so kennen (preventDefault, sonst lädt der Browser die Seite neu).
+  if(e.code==='KeyV'||e.code==='F5'){
+    e.preventDefault(); ac();
+    if(!modalOpen()) toggleView();
+    return;
+  }
+  // F steigt aus — nicht ⇧ wie im Vorbild, das ist hier schon Rennen/Tauchen.
+  if(e.code==='KeyF'){
+    e.preventDefault(); ac();
+    if(!modalOpen()&&riding) leaveVehicle();
+    return;
+  }
   // Q wirft weg: einzeln, mit Shift den ganzen Stapel.
   if(e.code==='KeyQ'){
     e.preventDefault(); ac();
@@ -3399,6 +3931,7 @@ addEventListener('keydown',e=>{
   if(e.code==='Space') e.preventDefault();
 });
 addEventListener('keyup',e=>{ keys[e.code]=false; });
+el('btnView').addEventListener('click',e=>{ e.stopPropagation(); ac(); toggleView(); });
 el('btnPause').addEventListener('click',e=>{ e.stopPropagation(); ac(); togglePause(); });
 el('btnBag').addEventListener('click',e=>{ e.stopPropagation(); ac(); modalOpen()?hideModal():openCraft(null); });
 
@@ -3433,6 +3966,8 @@ function update(dt){
     updateGrow();
   }
   updatePlayer(dt);
+  updateVehicles(dt);
+  updateSelfModel(dt,player.spd||0);
   updateTarget();
   updateMining(dt);
   flushChunks();
@@ -3499,6 +4034,9 @@ Promise.all([
   ...UISPRITES.map(n=>preload('./sprites/ui/'+n+'.png')),
   ...[...new Set(CHARS.map(c=>c.key))].map(k=>loadTex(k+'.png').then(t=>{CHAR_TEX[k]=t;})),
   loadTex('benni.png').then(t=>{benniTex=t;}),
+  // Der freigestellte Kopf aus dominik.png wird zum Gesicht auf der
+  // Spielerfigur (siehe FACES/headTex) — bisher lag das Bild ungenutzt herum.
+  loadTex('dominik.png').then(t=>{FACE_TEX.dominik=t;}),
   // Die Frucht trägt sein Gesicht: fertig zusammengesetzt in
   // sprites/items/dominik_face.png, durchsichtig rundherum.
   loadTex('./sprites/items/dominik_face.png').then(t=>{
@@ -3547,6 +4085,14 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   signs,signSprites,aimSign,ensureSignLabel,openSignEditor,saveSignEditor,removeSignEditor,SIGN_MAX,
   get aimedSign(){return aimedSign;},
   carried(){return carry;},
+  // Sicht und Fahrzeuge — dieselben Einstiegspunkte, die Tasten und
+  // Rechtsklick benutzen, damit Tests nicht die Eingabe nachstellen müssen.
+  VEHICLES,vehicles,placeVehicleFromHand,enterVehicle,leaveVehicle,pickUpVehicle,
+  aimVehicle,vehicleOfRider,toggleView,makePlayerModel,
+  get view(){return view;}, set view(v){view=v;},
+  get riding(){return riding;},
+  get aimedVehicle(){return aimedVehicle;},
+  get selfModel(){return selfModel;},
   tp(x,z,yaw){
     player.x=clamp(x,BOUND.x0,BOUND.x1); player.z=clamp(z,BOUND.z0,BOUND.z1);
     player.y=player.viewY=player.fallFrom=surfaceAt(player.x,player.z);
