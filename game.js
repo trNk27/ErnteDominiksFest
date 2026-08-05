@@ -142,6 +142,20 @@ function toast(msg,type='',ms=3000){
   setTimeout(()=>{d.classList.add('out');setTimeout(()=>d.remove(),400);},ms);
 }
 
+// VIEW ist die Sichtweite fürs Ausblenden ganzer Chunks, FOG_FAR die des
+// Nebels — sie gehören zusammen: was im Nebel verschwindet, muss nicht mehr
+// gezeichnet werden. Beide sind mit der vervierfachten Weltfläche etwas
+// gesunken (vorher 145/140): früher war die ganze Welt 145 Blöcke breit,
+// "alles sehen" hieß also 49 Chunks, jetzt wären es bei gleicher Sichtweite
+// rund 150 — dreimal so viel Geometrie je Bild, das meiste davon Land, das
+// ohnehin im Dunst liegt. Gemessen (Chromium, Startpunkt): 534 Zeichenaufrufe
+// bei 145, 413 bei 125, vorher 187. Wer eine kräftige Grafikkarte hat, kann
+// hier bedenkenlos wieder hochdrehen — es sind nur diese zwei Zahlen.
+const CHUNK=24, VIEW=125, FOG_FAR=120;
+// Zum Start wird nur der engere Kreis vernetzt; der Rest wächst in den ersten
+// Sekunden nach (cullChunks) statt den Ladebildschirm zu verlängern.
+const BOOT_VIEW=72;
+
 // ------------------------------------------------------------------ Renderer
 let renderer,scene,camera;
 try{
@@ -156,7 +170,7 @@ renderer.shadowMap.type=THREE.PCFShadowMap;
 document.body.insertBefore(renderer.domElement,document.body.firstChild);
 
 scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0x9fd0e8,46,140);
+scene.fog=new THREE.Fog(0x9fd0e8,46,FOG_FAR);
 camera=new THREE.PerspectiveCamera(74,1,.1,400);
 
 const hemi=new THREE.HemisphereLight(0xcfe8ff,0x5a8a45,1.25); scene.add(hemi);
@@ -526,7 +540,6 @@ const haveAll=rows=>{ const n=needList(rows); for(const id in n) if(countOf(id)<
 // ------------------------------------------------------------------ Chunk-Vernetzung
 // Es werden ausschließlich freiliegende Flächen gebaut, chunkweise, damit die
 // Kamera den Rest wegkulisst und ein Abbau nur seinen Chunk neu vernetzt.
-const CHUNK=24, VIEW=145;
 const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
 const FACE_N={py:[0,1,0],ny:[0,-1,0],px:[1,0,0],nx:[-1,0,0],pz:[0,0,1],nz:[0,0,-1]};
 const UVQ=[0,0, 1,0, 1,1, 0,1];
@@ -629,8 +642,20 @@ function buildChunk(ci,cj){
     scene.add(mesh); c.meshes.push(mesh);
   }
 }
+// Seit die Welt viermal so groß ist, werden nicht mehr alle Chunks beim Start
+// vernetzt: das wären gut dreieinhalb mal so viele wie früher, größtenteils
+// für Gegenden, die man in dieser Runde vielleicht nie betritt — sichtbarer
+// Ladebildschirm und Geometrie ohne Gegenwert. Zum Start kommt, was in
+// Sichtweite liegt, der Rest wächst nach, während man hinläuft (cullChunks).
+function chunkCenter(ci,cj){
+  return [BOUND.x0+ci*CHUNK+CHUNK/2, BOUND.z0+cj*CHUNK+CHUNK/2];
+}
 function buildWorld(){
-  for(let i=0;i<NCH;i++) for(let j=0;j<NCH;j++) buildChunk(i,j);
+  const r=(BOOT_VIEW+CHUNK)**2;
+  for(let i=0;i<NCH;i++) for(let j=0;j<NCH;j++){
+    const [cx,cz]=chunkCenter(i,j);
+    if((cx-player.x)**2+(cz-player.z)**2<r) buildChunk(i,j);
+  }
 }
 // Nach einer Änderung nur den betroffenen Chunk (und ggf. den Nachbarn) neu bauen.
 const _dirtyChunks=new Set();
@@ -3772,7 +3797,7 @@ function updateSky(){
   const sub=state.underwater;
   scene.fog.color.copy(sub?C.water:bot);
   scene.fog.near=sub?.4:46;
-  scene.fog.far=sub?lerp(26,9,night):140;
+  scene.fog.far=sub?lerp(26,9,night):FOG_FAR;
   renderer.setClearColor(sub?C.water:bot);
   if(sub!==_wasSub){ _wasSub=sub; el('water').style.opacity=sub?1:0; }
   sun.intensity=lerp(2.0,.35,night);
@@ -3784,8 +3809,22 @@ function updateSky(){
 }
 function cullChunks(){
   const r=(VIEW+CHUNK)**2;
-  for(const c of chunks.values()){
-    const vis=(c.cx-player.x)**2+(c.cz-player.z)**2<r;
+  // Höchstens zwei neue Chunks je Bild: das Vernetzen eines Chunks dauert
+  // ein paar Millisekunden, alle auf einmal wären ein sichtbarer Ruckler,
+  // sobald man eine Gegend zum ersten Mal betritt. Zwei je Bild reichen
+  // bequem, weil der Sichtrand weit vor dem Spieler liegt.
+  let budget=3;
+  for(let i=0;i<NCH;i++) for(let j=0;j<NCH;j++){
+    const k=i+','+j;
+    let c=chunks.get(k);
+    const [ccx,ccz]=c?[c.cx,c.cz]:chunkCenter(i,j);
+    const vis=(ccx-player.x)**2+(ccz-player.z)**2<r;
+    if(!c){
+      if(!vis||budget<=0) continue;
+      buildChunk(i,j); budget--;
+      c=chunks.get(k);
+      if(!c) continue;
+    }
     if(vis!==c.visible){ c.visible=vis; for(const m of c.meshes) m.visible=vis; }
   }
 }

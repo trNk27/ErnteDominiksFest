@@ -17,7 +17,12 @@ export function mulberry(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.i
 export const DAYLEN=200;                       // Sekunden pro Tag/Nacht-Zyklus
 export const NIGHT_START=.60, NIGHT_END=.94;   // Nachtfenster
 export const REACH=4.6;
-export const BOUND={x0:-72,x1:72,z0:-72,z1:72};
+// Die Welt ist doppelt so breit und doppelt so tief wie ursprünglich, also
+// viermal so groß in der Fläche. Alles, was sich an ihrer Größe bemisst, hängt
+// an BOUND (Baumzahl, Truhen, Fluss- und Dorfplätze weiter unten) — die alte
+// Landschaft innerhalb von ±72 bleibt dabei Block für Block dieselbe, das Neue
+// legt sich nur außen herum.
+export const BOUND={x0:-144,x1:144,z0:-144,z1:144};
 export const HOME={x:0,z:5,r:26,fade:13};      // flaches Starttal
 export const SEA=0;                            // Wasserspiegel der Flüsse
 // Die Rinne ist tief genug zum Schwimmen; die flachen Stellen bleiben Furten.
@@ -48,19 +53,36 @@ export function vnoise(x,z,scale,seed){
   return lerp(lerp(hash2(x0,z0,seed),  hash2(x0+1,z0,seed),  sx),
               lerp(hash2(x0,z0+1,seed),hash2(x0+1,z0+1,seed),sx),sz);
 }
-// Zwei Flüsse: einer von Nord nach Süd im Westen, einer quer im Norden.
+// Vier Flüsse: die beiden alten im Westen und Norden, dazu seit der
+// Vergrößerung zwei weitere im Osten und Süden, damit auch das neue Land
+// Wasser hat (und das Boot dort etwas zu tun). Die neuen liegen weit genug
+// außerhalb der alten Weltgrenze (±72), dass ihre Uferausformung — sie
+// reicht 26 Blöcke weit, siehe terrainH — die alte Landschaft nicht mehr
+// berührt: bei x=72 sind es noch mindestens 36 Blöcke bis zum nächsten.
 const riverAX=z=>-46+(vnoise(0,z,26,7)-.5)*20;
 const riverBZ=x=>-47+(vnoise(x,0,24,8)-.5)*18;
+const riverCX=z=>118+(vnoise(0,z,25,12)-.5)*20;
+const riverDZ=x=>120+(vnoise(x,0,23,13)-.5)*18;
+// Ohne Zwischenobjekte, weil das hier pro Geländesäule läuft: erst den
+// nächstgelegenen Lauf suchen, dann nur für den das Flussbett auswürfeln.
 export function riverAt(x,z){
-  const ax=riverAX(z), bz=riverBZ(x);
-  const da=Math.abs(x-ax), db=Math.abs(z-bz);
-  return da<db
-    ? {d:da,bed:vnoise(0,z, 19, 9)>.52?SEA-1:RIVER_BED}
-    : {d:db,bed:vnoise(x,0,19,10)>.52?SEA-1:RIVER_BED};
+  let d=Math.abs(x-riverAX(z)), which=0;
+  const db=Math.abs(z-riverBZ(x)); if(db<d){ d=db; which=1; }
+  const dc=Math.abs(x-riverCX(z)); if(dc<d){ d=dc; which=2; }
+  const dd=Math.abs(z-riverDZ(x)); if(dd<d){ d=dd; which=3; }
+  const deep=which===0?vnoise(0,z,19, 9)>.52
+            :which===1?vnoise(x,0,19,10)>.52
+            :which===2?vnoise(0,z,19,14)>.52
+            :          vnoise(x,0,19,15)>.52;
+  return {d,bed:deep?SEA-1:RIVER_BED};
 }
 // Das Land hinter den Flüssen — nur über eine Furt zu erreichen. Dort und
-// nur dort wächst der 🌶️ Pfeffer.
-export const beyondRiver=(x,z)=>x<riverAX(z)-RIVER_W-1||z<riverBZ(x)-RIVER_W-1;
+// nur dort wächst der 🌶️ Pfeffer. Jetzt sind es vier Ufer statt zwei: das
+// alte Land hinter dem West- und dem Nordfluss und ebenso die Streifen
+// jenseits der beiden neuen im Osten und Süden — sonst hinge das Gewürz der
+// ganzen, viermal so großen Welt an einer einzigen Ecke.
+export const beyondRiver=(x,z)=>x<riverAX(z)-RIVER_W-1||z<riverBZ(x)-RIVER_W-1
+                              ||x>riverCX(z)+RIVER_W+1||z>riverDZ(x)+RIVER_W+1;
 export function rawHeight(x,z){
   let h=vnoise(x,z,38,1)*7-2.2;                 // weite Hügel
   h+=vnoise(x,z,14,2)*2.6;                      // feine Wellen
@@ -68,7 +90,14 @@ export function rawHeight(x,z){
   if(m>.56) h+=((m-.56)/.44)**2.2*27;
   return h;
 }
-export const VILLAGES=[{x:21,z:52},{x:44,z:-26},{x:50,z:24}]
+// Die drei alten Dörfer im Kern, dazu drei im neuen Land — eines im Westen
+// hinter dem Fluss, eines weit im Süden, eines im Nordosten. Jedes bringt
+// einen Jannes mit (siehe traderSpots), damit die vierfache Fläche nicht
+// bedeutet, dass man für ein Rezept eine Viertelstunde läuft. Alle liegen
+// mit Abstand zu den Flussläufen: ein Dorf ebnet sein Gelände ein (VILL_R
+// unten), und ein Fluss, der in eine Plateaukante läuft, sähe falsch aus.
+export const VILLAGES=[{x:21,z:52},{x:44,z:-26},{x:50,z:24},
+                       {x:-95,z:20},{x:20,z:86},{x:70,z:-85}]
   .map(v=>({...v,y:clamp(Math.round(rawHeight(v.x,v.z)),1,6)}));
 export const VILL_R=14, VILL_FADE=11;
 const _hCache=new Map();
@@ -314,9 +343,14 @@ export function createWorld(){
     }
     // --- Wälder: Rauschen gibt die Dichte, Dörfer und Starttal bleiben frei
     const r=mulberry(4711);
+    // Die Obergrenze ist nur eine Notbremse, keine Zielzahl — sie muss aber
+    // mit der Fläche mitwachsen: die Schleife läuft von West nach Ost und
+    // hört auf, sobald sie erreicht ist, ein zu kleiner Deckel ließe also den
+    // halben Osten kahl.
+    const TREE_CAP=4800;
     let n=0, trees=[];
-    for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<1200;x++)
-      for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<1200;z++){
+    for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<TREE_CAP;x++)
+      for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<TREE_CAP;z++){
         if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
         if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
         const dens=vnoise(x,z,44,11);
@@ -361,16 +395,31 @@ export function createWorld(){
     // --- Truhen: eine je Dorf, dazu ein paar verstreute. Sie sind selten und
     // halten nur Vorräte bereit — Zutaten holt man sich draußen selbst.
     const rr=(a,b)=>a+r()*(b-a);
-    for(let k=0;k<6000&&chestSpots.length<8;k++){
-      const x=Math.round(rr(BOUND.x0+6,BOUND.x1-6));
-      const z=Math.round(rr(BOUND.z0+6,BOUND.z1-6));
-      if(Math.hypot(x-HOME.x,z-HOME.z)<12) continue;
-      const h=treeSpot(x,z);
-      if(h<0) continue;
-      if(scenery.has(K(x,h,z))) continue;
-      if(chestSpots.some(c=>Math.hypot(c.x-x,c.z-z)<30)) continue;
-      chestSpots.push({x,y:h,z});
-    }
+    // Sechs davon stehen schon in den Dörfern (oben), der Rest verstreut sich.
+    // Mit der Fläche gewachsen: acht Truhen auf der vierfachen Welt wären
+    // seltener als je eine pro Tagesmarsch.
+    //
+    // In ZWEI Durchgängen, und das ist Absicht: der erste würfelt mit
+    // derselben Formel aus demselben Samen wie vor der Vergrößerung und
+    // innerhalb der alten Weltgrenzen — die verstreuten Truhen der alten Welt
+    // bleiben damit an Ort und Stelle, samt allem, was Mitspieler schon
+    // hineingelegt haben (der Inhalt hängt am Fundort, siehe chests). Erst
+    // der zweite Durchgang verteilt die neuen über das gewachsene Land.
+    const OLD_BOUND={x0:-72,x1:72,z0:-72,z1:72};
+    const place=(b,upto,tries)=>{
+      for(let k=0;k<tries&&chestSpots.length<upto;k++){
+        const x=Math.round(rr(b.x0+6,b.x1-6));
+        const z=Math.round(rr(b.z0+6,b.z1-6));
+        if(Math.hypot(x-HOME.x,z-HOME.z)<12) continue;
+        const h=treeSpot(x,z);
+        if(h<0) continue;
+        if(scenery.has(K(x,h,z))) continue;
+        if(chestSpots.some(c=>Math.hypot(c.x-x,c.z-z)<30)) continue;
+        chestSpots.push({x,y:h,z});
+      }
+    };
+    place(OLD_BOUND,VILLAGES.length+5,6000);
+    place(BOUND,18,12000);
     // --- Truhen füllen: Werkzeug und Baustoff, keine Zutaten.
     const LOOT=[['plank',3,8],['stick',2,6],['torch',2,5],['bowl',1,1],
                 ['stone',3,8],['dirt',2,6],['brick',2,6],['sword',1,1]];
