@@ -36,22 +36,25 @@ Spielerdaten auf dem Server.
 
 ### Server aufsetzen (einmalig)
 
-Der Mehrspieler-Teil läuft als kleiner [PartyKit](https://www.partykit.io/)-Server
-unter `party/`, getrennt vom eigentlichen Spiel:
+Der Mehrspieler-Teil läuft als kleiner
+[Cloudflare-Worker](https://developers.cloudflare.com/workers/) mit einem
+Durable Object unter `party/`, getrennt vom eigentlichen Spiel:
 
 ```bash
 cd party
 npm install
-npx partykit login                       # einmalig, öffnet den Browser
-npx partykit deploy                       # baut & deployt party/server.js
-npx partykit env add ROOM_PASSWORD        # das Passwort für den Beitritt festlegen
+npx wrangler login                        # einmalig, öffnet den Browser
+npx wrangler deploy                       # baut & deployt party/src/index.js
+npx wrangler secret put ROOM_PASSWORD     # das Passwort für den Beitritt festlegen
 ```
 
-`partykit deploy` gibt eine Adresse wie `erntedominiksfest.<dein-name>.partykit.dev`
-aus. Die trägst du in [`net.js`](net.js) ein:
+`wrangler deploy` gibt die Adresse aus, unter der der Worker erreichbar ist
+(hier `erntedominik.manigames.xyz`, siehe die Custom Domain in
+[`party/wrangler.jsonc`](party/wrangler.jsonc)). Die trägst du in
+[`net.js`](net.js) ein:
 
 ```js
-export const PARTY_URL = 'wss://erntedominiksfest.<dein-name>.partykit.dev';
+export const PARTY_URL = 'wss://erntedominik.manigames.xyz';
 ```
 
 Danach `net.js` committen und pushen — die statische Seite (GitHub Pages/Vercel/…)
@@ -59,9 +62,15 @@ zieht die neue Adresse beim nächsten Deploy automatisch mit. Das Passwort teils
 du deinen Mitspielern auf einem anderen Weg mit (Chat, nicht im Repo).
 
 **Zwei getrennte Deploy-Wege**: Änderungen unter `party/` oder `shared/` brauchen
-`npx partykit deploy`; alles andere (`game.js`, `index.html`, …) braucht nur den
+einen Server-Deploy; alles andere (`game.js`, `index.html`, …) braucht nur den
 normalen Git-Push. Leicht zu vergessen, wenn man nur an einer der beiden Seiten
-gearbeitet hat.
+gearbeitet hat — darum erledigt
+[`.github/workflows/deploy-party.yml`](.github/workflows/deploy-party.yml) den
+Server-Teil bei jedem Push auf `main` automatisch mit (und ist unter Actions
+auch von Hand auslösbar). Dafür muss einmalig ein Repository-Secret
+`CLOUDFLARE_API_TOKEN` hinterlegt sein — ein Cloudflare-Token mit der
+Berechtigung *Workers Scripts: Edit*. Von Hand geht es weiterhin mit
+`cd party && npx wrangler deploy`.
 
 ### Lokal entwickeln/testen
 

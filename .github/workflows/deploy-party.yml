@@ -1,0 +1,78 @@
+# Deployt den Truhen-/Multiplayer-Server (party/) nach Cloudflare Workers.
+#
+# Warum überhaupt ein eigener Weg: die statische Seite (index.html, game.js,
+# sprites/ …) liegt auf GitHub Pages und wird direkt aus `main` ausgeliefert —
+# dafür braucht es nichts. Der Server dagegen ist ein Cloudflare Worker mit
+# Durable Object und muss separat deployt werden (siehe README, "Zwei getrennte
+# Deploy-Wege"). Genau das erledigt dieser Workflow, damit ein Push auf `main`
+# beide Hälften gleichzeitig aktuell macht.
+#
+# Einmalige Einrichtung: unter Settings → Secrets and variables → Actions ein
+# Repository-Secret CLOUDFLARE_API_TOKEN anlegen (Cloudflare-Token mit der
+# Berechtigung "Workers Scripts: Edit" für das Konto, auf dem
+# erntedominik.manigames.xyz läuft). Wer mehrere Cloudflare-Konten hat, legt
+# zusätzlich CLOUDFLARE_ACCOUNT_ID an; bei genau einem Konto ist das unnötig.
+name: Truhen-Server deployen
+
+on:
+  push:
+    branches: [main]
+    # Nur wenn sich am Server wirklich etwas ändert. shared/ gehört dazu:
+    # game-server.js importiert von dort (../../shared/economy.js und
+    # shared/world.js), das Zeug wird also in den Worker mitgebündelt.
+    paths:
+      - "party/**"
+      - "shared/**"
+      - ".github/workflows/deploy-party.yml"
+  # Von Hand auslösbar — praktisch für den allerersten Lauf und um einen
+  # Deploy zu wiederholen, ohne einen Leer-Commit zu bauen.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Zwei gleichzeitige Deploys auf denselben Worker wären ein Wettlauf um die
+# zuletzt hochgeladene Fassung. Lieber nacheinander — und laufende NICHT
+# abbrechen, ein halb hochgeladener Worker ist schlimmer als ein später fertiger.
+concurrency:
+  group: deploy-party
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ohne Token bricht `wrangler deploy` mit einer Meldung ab, die nicht
+      # verrät, was zu tun ist. Diese Vorabprüfung sagt es klar.
+      - name: Auf hinterlegtes Cloudflare-Token prüfen
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Secret CLOUDFLARE_API_TOKEN fehlt. Settings -> Secrets and variables -> Actions -> New repository secret (Cloudflare-Token mit 'Workers Scripts: Edit')."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: party/package-lock.json
+
+      # npm ci statt npm install: nimmt exakt die Fassungen aus
+      # party/package-lock.json, damit ein Deploy nicht an einer über Nacht
+      # frisch veröffentlichten wrangler-Version hängt.
+      - name: Abhängigkeiten installieren
+        working-directory: party
+        run: npm ci
+
+      - name: Worker deployen
+        working-directory: party
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Leer lassen ist in Ordnung, solange das Token zu genau einem Konto
+          # gehört — dann findet wrangler es selbst.
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
