@@ -88,17 +88,38 @@ genau wie bisher (ein Toast weist kurz darauf hin). Für einen echten
 Mehrspieler-Test lokal:
 
 ```bash
-cd party && npx partykit dev              # Server auf ws://127.0.0.1:1999
+cd party && npx wrangler dev              # Server auf ws://127.0.0.1:8787
 python3 -m http.server 8000               # Spiel wie gewohnt, zweiter Terminal
 ```
 
-`party/.env.local` (nicht eingecheckt, siehe `party/.gitignore`) mit
+`party/.dev.vars` (nicht eingecheckt, siehe `party/.gitignore`) mit
 `ROOM_PASSWORD=<irgendein-testpasswort>` legt für den lokalen Server ein Passwort
 fest; ohne diese Datei lehnt er jede Verbindung ab (kein Passwort konfiguriert
 heißt zu, nicht offen).
 
 Ein falsches Passwort öffnet erneut die Passwortabfrage, ein volles Zimmer
 (schon vier Spieler drin) ebenso mit entsprechendem Hinweis.
+
+`node test/smoke-test.mjs` (im zweiten Terminal, gegen den laufenden
+`wrangler dev`) prüft Passwort, Zimmergröße, Kasse und die angehaltene Uhr
+durch.
+
+### Entwicklerhilfen in der Konsole
+
+Zum Ausprobieren muss niemand erst stundenlang Dominiks pflücken. In der
+Browser-Konsole (F12) gibt es:
+
+```js
+game.dev.money()        // 2500 € in die Kasse — genau Brett + Boot + Schirm
+game.dev.money(500)     // oder ein eigener Betrag; negativ nimmt wieder weg
+game.dev.vehicles()     // alle drei direkt in den Rucksack, ohne Umweg über Manni
+```
+
+Das Geld landet **nur** in der Kasse, nicht bei 💶 verdient — die 🎯
+Siegesmeldung löst ein Test damit also nicht aus. Online entscheidet wie immer
+der Server über die gemeinsame Kasse; der Betrag gilt darum für alle im Zimmer.
+Es gibt bewusst keine Taste und keinen Knopf dafür: wer nicht in der Konsole
+danach sucht, stolpert auch nicht hinein.
 
 ## Steuerung
 

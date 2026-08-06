@@ -4149,4 +4149,39 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   // Spielhandlungen (Wurf-Physik, echtes Warten auf COOK_TIME) nachstellen
   // zu müssen.
   send, getPid, isConnected, finishCook, potCount,
+  // ---------------------------------------------------------- Entwickler
+  // Nur über die Konsole erreichbar: keine Taste, kein Knopf, kein Eintrag
+  // im Menü — wer nicht danach sucht, stolpert auch nicht hinein.
+  dev:{
+    // Geld in die Kasse, ohne dafür ernten zu müssen. Voreinstellung ist
+    // genau die Summe für alle drei Waren bei Manni (Brett 250 + Boot 750 +
+    // Schirm 1500, siehe SHOP) — also ein Aufruf, dann einmal einkaufen und
+    // alle drei Fahrzeuge liegen zum Ausprobieren bereit.
+    //
+    // Online entscheidet der Server allein über die gemeinsame Kasse (jede
+    // 'econ'-Nachricht überschreibt state.money, ein lokales += wäre also
+    // im nächsten Moment wieder weg) — darum geht es hier denselben Weg wie
+    // Kaufen und Verkaufen: hinschicken und die Antwort abwarten. Offline
+    // bleibt der direkte Weg, genau wie bei buyFrom/sellTo.
+    //
+    // Gezählt wird das Geld NUR in der Kasse, nicht bei 💶 verdient — sonst
+    // löste ein Test die 🎯 Siegesmeldung für alle mit aus. Geschenktes Geld
+    // gibt man aus, gewonnen hat man damit nichts.
+    money(n=SHOP.reduce((s,w)=>s+w.price,0)){
+      if(!Number.isInteger(n)) return 'money(n): n muss eine ganze Zahl sein';
+      if(isConnected()){ send({t:'dev-money',n}); return 'Angefragt: '+n+' € — der Server antwortet gleich mit dem neuen Kassenstand.'; }
+      state.money=Math.max(0,state.money+n); updateHUD();
+      return 'Kasse: '+state.money+' €';
+    },
+    // Die drei Waren direkt in den Rucksack, ganz ohne Markt — praktisch,
+    // wenn nur das Fahren selbst dran ist und nicht der Einkauf davor.
+    vehicles(){
+      for(const w of SHOP) give(w.id,1);
+      updateHUD();
+      return 'Im Rucksack: '+SHOP.map(w=>ITEMS[w.id].nm).join(', ');
+    },
+  },
 };
+// Ein Hinweis in der Konsole, sonst weiß niemand, dass es das gibt.
+console.info('%cErntedominiksfest','font-weight:bold',
+  '— Entwicklerhilfen: game.dev.money() für die Kasse, game.dev.vehicles() für Brett/Boot/Schirm.');

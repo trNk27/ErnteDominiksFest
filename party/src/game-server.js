@@ -1630,6 +1630,28 @@ export class GameServer extends DurableObject {
       this.econ.bought++;
       this._scheduleFlush();
       this._broadcast({ t: "econ", ...this.econ, buyResult: { pid, id, ok: true } });
+    } else if (msg.t === "dev-money") {
+      // Developer cheat, reachable only from the browser console via
+      // game.dev.money() (see game.js's debug API — no key, no button, so a
+      // player can't stumble into it). It exists because the three market
+      // wares are the most expensive things in the game (2500 € for all of
+      // them, see SHOP) and testing a boat should not require an afternoon
+      // of picking Dominiks first.
+      //
+      // Money only — deliberately NOT `earned`. That is the number the 🎯
+      // goal counts (see GOAL/winGame), so crediting it here would let a
+      // test purchase trip the win screen for everyone in the room. Cheated
+      // cash spends the same but never counts toward finishing the game.
+      const { n } = msg;
+      if (typeof n !== "number" || !Number.isInteger(n)) return;
+      // Bounded like every other client-supplied number here: enough for any
+      // conceivable test, small enough that a typo can't push the shared
+      // wallet somewhere the HUD can't render. Negative values are allowed
+      // on purpose (handing money back after a test), but never past zero.
+      if (n < -1000000 || n > 1000000) return;
+      this.econ.money = Math.max(0, this.econ.money + n);
+      this._scheduleFlush();
+      this._broadcast({ t: "econ", ...this.econ });
     } else if (msg.t === "learn") {
       const { id } = msg;
       if (typeof id !== "string" || !RECIPES.some((r) => r.id === id)) return;

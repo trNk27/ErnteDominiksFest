@@ -161,6 +161,38 @@ async function main() {
     code5 === CLOSE_ROOM_FULL
   );
 
+  // --- 5b. Developer cheat: dev-money credits the wallet, but not `earned` ---
+  // `earned` is what the 🎯 goal counts, so if the cheat fed it, testing a
+  // 1500 € glider would fire the win screen for the whole room.
+  {
+    const econBefore = await (async () => {
+      const p = waitForMessage(ws1, "econ");
+      ws1.send(JSON.stringify({ t: "dev-money", n: 0 }));
+      return p;
+    })();
+    const p = waitForMessage(ws1, "econ");
+    ws1.send(JSON.stringify({ t: "dev-money", n: 2500 }));
+    const econAfter = await p;
+    ok(
+      `dev-money adds to the wallet (money ${econBefore.money} -> ${econAfter.money})`,
+      econAfter.money === econBefore.money + 2500
+    );
+    ok(
+      `dev-money leaves 'earned' (the goal counter) untouched (${econBefore.earned} -> ${econAfter.earned}, won=${econAfter.won})`,
+      econAfter.earned === econBefore.earned && econAfter.won === false
+    );
+    // Out-of-range and non-integer amounts are ignored outright, so a typo in
+    // the console can't put the shared wallet somewhere silly.
+    const p2 = waitForMessage(ws1, "econ");
+    ws1.send(JSON.stringify({ t: "dev-money", n: 99999999 }));
+    ws1.send(JSON.stringify({ t: "dev-money", n: -2500 }));
+    const econAfter2 = await p2;
+    ok(
+      `dev-money ignores an out-of-range amount and applies the valid one (money ${econAfter2.money})`,
+      econAfter2.money === econAfter.money - 2500
+    );
+  }
+
   // --- cleanup ---------------------------------------------------------------
   ws1.close();
   for (const c of extraConns) c.close();
