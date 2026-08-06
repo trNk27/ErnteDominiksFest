@@ -55,7 +55,8 @@
 //     value — the server hands out a single epoch timestamp (`dayEpoch0`, in
 //     `welcome`, persisted so it survives a restart) and every client
 //     independently computes identical day/dayT from Date.now()-dayEpoch0,
-//     no further network traffic needed.
+//     no further network traffic needed. (Phase 7 keeps this exact wire
+//     shape but makes the underlying clock pausable — see there.)
 //   - the 8 Jannessen + Manni wander around their home spot using the exact
 //     same random-walk math the client used to run independently per client
 //     (and so diverged within seconds) — now ticked server-side only
@@ -97,6 +98,28 @@
 //     also waits for this rather than assuming success). The server never
 //     needs to know WHY a drop was claimed (`reason` is purely
 //     informational for the client), only who claimed it first.
+// Phase 7 pauses game time while the room is empty:
+//   - the world was always persisted (Phase 3a onwards) and the object
+//     itself was never really "always on" either — both tick loops already
+//     stop the moment the last player leaves, and Cloudflare evicts an idle
+//     Durable Object from memory by itself. What DID keep running was the
+//     CLOCK, because day/night was derived from a fixed epoch against
+//     wall-clock time: come back after three days away and the calendar had
+//     burned through ~40 in-game days unwatched, quite possibly dropping
+//     you into the middle of a night full of Bennis.
+//   - so the epoch becomes a pausable clock (this.clock/_runningSince, see
+//     _gameNow): it advances only while at least one player is connected,
+//     is banked and written to storage the instant the room empties
+//     (_pauseClock), and picks back up on the next connect (_resumeClock).
+//   - the protocol is deliberately UNCHANGED: `welcome` still carries a
+//     `dayEpoch0` and the client still computes day/dayT from
+//     Date.now()-dayEpoch0 exactly as in Phase 5a. The epoch is simply
+//     derived per send (see _dayEpoch0) instead of stored, so a pause shows
+//     up as a later epoch next time. No client change at all.
+//   - the three absolute deadlines that would otherwise expire unattended
+//     (growing crops, cooking pots, trader refresh) are shifted forward by
+//     the offline gap on resume, so the world comes back exactly as it was
+//     left rather than with everything already finished.
 
 import { DurableObject } from "cloudflare:workers";
 
@@ -114,6 +137,13 @@ const STORAGE_KEY = "world";
 // How long to wait after the last edit before writing to storage — avoids a
 // storage.put() per dig/place while someone is rapidly mining.
 const FLUSH_DEBOUNCE_MS = 2000;
+// How often the running game clock is checkpointed to storage while at least
+// one player is online (see _startClockCheckpoint). Every ordinary _flush
+// already carries the clock along, so this only matters for a session that
+// edits nothing at all for minutes on end — and then only if the Durable
+// Object dies without running _pauseClock (a deploy mid-session, say). It
+// caps how much game time such an unclean death can roll back.
+const CLOCK_CHECKPOINT_MS = 60000;
 // Signs: a placeable, player-writable text object living outside the block
 // grid (see the `sign-*` handlers and class-level comment below). Same
 // defense-in-depth character cap the client's own <input maxlength> already
@@ -406,13 +436,28 @@ export class GameServer extends DurableObject {
     /** @type {Set<string>} recipe ids */
     this.known = new Set(["plank", "stick", "bench"]);
 
-    // Phase 5a: day/night is now a pure function of wall-clock elapsed since
-    // this epoch (see the `welcome`/_onMessage class comment) — set once on
-    // first-ever room creation and never touched again except by
-    // _loadPersisted reusing a previously persisted value, so the in-game
-    // calendar survives a server restart instead of resetting to day 1.
-    /** @type {number} */
-    this.dayEpoch0 = Date.now();
+    // Phase 5a: day/night is a pure function of elapsed game time (see the
+    // `welcome`/_onMessage class comment). Phase 7 makes that clock PAUSABLE
+    // rather than a fixed epoch: it only advances while at least one player
+    // is connected, so an empty room no longer burns through in-game days
+    // and nights unwatched (see _resumeClock/_pauseClock and the class-level
+    // comment above). Two fields hold it:
+    //   - `clock`: game milliseconds accumulated in all previous sessions.
+    //   - `_runningSince`: wall time this session started, or null while
+    //     paused. Everything time-related reads _gameNow(), never Date.now()
+    //     against a stored epoch.
+    // `pausedAt` is the wall time the clock last stopped — the anchor for
+    // measuring how long the room sat empty, so absolute deadlines (crops,
+    // pots, trader refresh) can be shifted forward by exactly that gap on
+    // the next resume.
+    /** @type {number} game ms accumulated before this session */
+    this.clock = 0;
+    /** @type {number|null} wall ms when this session's clock started; null while paused */
+    this._runningSince = null;
+    /** @type {number} wall ms when the clock was last paused */
+    this.pausedAt = Date.now();
+    /** @type {ReturnType<typeof setInterval> | null} periodic clock checkpoint while running */
+    this._clockTimer = null;
 
     // Same deterministic base world (terrain, trees, chests, ...) as the
     // client builds from shared/world.js — the server only cares about the
@@ -569,14 +614,106 @@ export class GameServer extends DurableObject {
   }
 
   /**
-   * Day/night as a pure function of wall-clock elapsed since this.dayEpoch0
-   * — the exact same formula the client now computes independently (see
-   * game.js update(dt)), just needed server-side too so mob spawning/fleeing
-   * knows whether it's currently night without any client telling it.
+   * The pausable game clock in milliseconds (see this.clock): everything
+   * accumulated in previous sessions, plus the current session so far if the
+   * clock is running. Frozen while the room is empty.
+   * @returns {number}
+   */
+  _gameNow() {
+    return this.clock + (this._runningSince === null ? 0 : Date.now() - this._runningSince);
+  }
+
+  /**
+   * The clock expressed as the wall-clock epoch the client protocol still
+   * speaks in: `dayEpoch0` such that `Date.now() - dayEpoch0` equals
+   * _gameNow() right now. Deliberately derived per send rather than stored,
+   * which is what lets the clock pause without any client change at all —
+   * game.js keeps computing day/dayT from Date.now() exactly as before (see
+   * its update(dt)), it just gets a later epoch handed to it after every
+   * pause. Valid only while the clock runs, which is precisely whenever a
+   * client is connected to be told about it.
+   * @returns {number}
+   */
+  _dayEpoch0() {
+    return Date.now() - this._gameNow();
+  }
+
+  /**
+   * Starts the game clock, if it isn't already running — called from fetch()
+   * on every connect, so in practice on the first player to arrive in an
+   * empty room. Idempotent.
+   *
+   * On a resume, real time has passed that the game must not have seen: the
+   * whole point of pausing. Day/night handles itself (it reads _gameNow()),
+   * but the three absolute wall-clock deadlines — growing crops, cooking
+   * pots, trader refresh — would otherwise all have quietly expired while
+   * nobody was watching. They are stored as `Date.now()`-based instants
+   * because both server AND client count them down independently (see
+   * game.js updateGrow/updateCook), so rather than convert the whole
+   * protocol to game time, each one is shifted forward by exactly the gap
+   * the room sat empty. Half-grown wheat comes back half-grown.
+   */
+  _resumeClock() {
+    if (this._runningSince !== null) return;
+    const gap = Date.now() - this.pausedAt;
+    this._runningSince = Date.now();
+    // Guard against a clock that ran backwards (host time adjusted, or a
+    // pausedAt written by a machine slightly ahead of this one): shifting by
+    // a negative gap would EXPIRE deadlines early, the exact bug this is
+    // here to prevent. Skipping the shift is always the safe direction.
+    if (gap > 0) {
+      for (const g of this.growing.values()) g.at += gap;
+      for (const p of this.pots.values()) if (p.readyAt > 0) p.readyAt += gap;
+      for (const t of this.trades) if (t && t.readyAt > 0) t.readyAt += gap;
+      // The shifted deadlines are part of the persisted blob, and the room
+      // may well sit idle for a while before anyone edits anything, so write
+      // them now rather than waiting for an unrelated dig to mark us dirty.
+      this._scheduleFlush();
+    }
+    this._startClockCheckpoint();
+  }
+
+  /**
+   * Stops the game clock and writes it, banking this session's elapsed time
+   * into this.clock — called from _handleDisconnect the moment the room
+   * empties, so the world freezes exactly where the last player left it.
+   * Idempotent. Returns the storage write so the caller can make sure it
+   * lands before the (now idle, and therefore evictable) object goes away.
+   * @returns {Promise<void>}
+   */
+  _pauseClock() {
+    if (this._runningSince === null) return Promise.resolve();
+    this.clock = this._gameNow();
+    this._runningSince = null;
+    this.pausedAt = Date.now();
+    if (this._clockTimer) { clearInterval(this._clockTimer); this._clockTimer = null; }
+    // Not _scheduleFlush: the debounce exists to batch rapid edits, and
+    // there will be no further edits — an empty room can be evicted from
+    // memory at any moment, taking a pending setTimeout with it, and losing
+    // this particular write would mean the clock silently kept running.
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    this._dirty = true;
+    return this._flush();
+  }
+
+  /**
+   * Checkpoints the running clock to storage every CLOCK_CHECKPOINT_MS (see
+   * there for why). Idempotent; cleared again by _pauseClock.
+   */
+  _startClockCheckpoint() {
+    if (this._clockTimer) return;
+    this._clockTimer = setInterval(() => this._scheduleFlush(), CLOCK_CHECKPOINT_MS);
+  }
+
+  /**
+   * Day/night as a pure function of the game clock — the exact same formula
+   * the client computes independently from the `dayEpoch0` it was handed
+   * (see game.js update(dt)), just needed server-side too so mob spawning/
+   * fleeing knows whether it's currently night without any client telling it.
    * @returns {{day:number, dayT:number, night:boolean}}
    */
   _dayNight() {
-    const elapsed = (Date.now() - this.dayEpoch0) / 1000;
+    const elapsed = this._gameNow() / 1000;
     const dayT = (elapsed % DAYLEN) / DAYLEN;
     const day = 1 + Math.floor(elapsed / DAYLEN);
     const night = dayT >= NIGHT_START && dayT < NIGHT_END;
@@ -731,13 +868,32 @@ export class GameServer extends DurableObject {
     if (Array.isArray(stored.trades) && stored.trades.length === this.trades.length) {
       this.trades = stored.trades;
     }
-    // Phase 5a: reuse the persisted day/night epoch, if any (absent on the
-    // very first room start, or on a blob written before this phase
-    // existed — in that case the constructor's freshly-set Date.now() from
-    // just above stands as-is, which is the correct "day 1 starts now"
-    // behavior for a brand-new world).
-    if (typeof stored.dayEpoch0 === "number" && Number.isFinite(stored.dayEpoch0)) {
-      this.dayEpoch0 = stored.dayEpoch0;
+    // Phase 7: reuse the persisted game clock, if any. Always loads PAUSED
+    // (this._runningSince stays null): a Durable Object only exists because
+    // a request woke it, and fetch() resumes the clock itself a moment
+    // later — but if this instance was started by anything else, or the
+    // connection is rejected as wrong-password/room-full, the world must
+    // stay frozen rather than start ticking for nobody.
+    if (typeof stored.clock === "number" && Number.isFinite(stored.clock)) {
+      this.clock = stored.clock;
+      // `clockSavedAt` is the instant `clock` was true at, so it is exactly
+      // the anchor _resumeClock needs. A blob written mid-session carries a
+      // savedAt of that moment, which is what makes an unclean death (see
+      // CLOCK_CHECKPOINT_MS) resume from the last checkpoint instead of
+      // silently crediting the game with all the downtime since.
+      this.pausedAt = typeof stored.clockSavedAt === "number" && Number.isFinite(stored.clockSavedAt)
+        ? stored.clockSavedAt
+        : Date.now();
+    } else if (typeof stored.dayEpoch0 === "number" && Number.isFinite(stored.dayEpoch0)) {
+      // Migration from the pre-Phase-7 always-running epoch: an already-live
+      // world carries only `dayEpoch0`. Converting it to elapsed game time
+      // keeps the calendar exactly where that world already is — the switch
+      // to a pausable clock is invisible to the players, it just stops
+      // advancing from here on whenever nobody is online.
+      this.clock = Math.max(0, Date.now() - stored.dayEpoch0);
+      // No pause has ever happened, so there is no offline gap to make up:
+      // anchor at now, which makes the first _resumeClock shift nothing.
+      this.pausedAt = Date.now();
     }
   }
 
@@ -783,9 +939,19 @@ export class GameServer extends DurableObject {
       // same "small enough to store wholesale" reasoning as econ above.
       known: [...this.known],
       trades: this.trades,
-      // Phase 5a: the day/night epoch — small and flat, same "store
-      // wholesale alongside everything else" reasoning as econ/known above.
-      dayEpoch0: this.dayEpoch0,
+      // Phase 7: the pausable game clock (see this.clock), plus the wall
+      // time that value is true at — the pair _loadPersisted needs to pick
+      // the clock back up without crediting the game for the downtime in
+      // between. While the clock runs, that instant is simply now; while it
+      // is paused, it stays pinned to the moment of the pause, so a late
+      // flush can never quietly shorten the offline gap.
+      clock: this._gameNow(),
+      clockSavedAt: this._runningSince === null ? this.pausedAt : Date.now(),
+      // Phase 5a's epoch, still written so that rolling the Worker back to a
+      // pre-Phase-7 build finds the calendar where it left it rather than
+      // resetting the world to day 1. Nothing reads it any more except that
+      // older code and _loadPersisted's migration branch.
+      dayEpoch0: this._dayEpoch0(),
     });
   }
 
@@ -868,6 +1034,11 @@ export class GameServer extends DurableObject {
     this.usedPids.add(pid);
     this.pidByConnection.set(connId, pid);
     this.connByPid.set(pid, server);
+    // Phase 7: the room is no longer empty, so the game clock runs again —
+    // before anything below reads a deadline or an epoch, since resuming is
+    // what shifts them past the downtime (see _resumeClock). No-op if it was
+    // already running.
+    this._resumeClock();
     // Phase 5a: (re)start the ambient Jannes/Manni wander tick now that
     // there's at least one connection — no-op if it's already running (see
     // _startCharTimer's own doc comment).
@@ -920,7 +1091,7 @@ export class GameServer extends DurableObject {
       // full Jannes/Manni wander roster, applied by snapping directly (see
       // the client's on('welcome',...)) so a joining player doesn't see
       // every NPC lerp in from nowhere.
-      dayEpoch0: this.dayEpoch0,
+      dayEpoch0: this._dayEpoch0(),
       chars: this.chars.map((c, idx) => ({ idx, x: c.x, z: c.z, y: c.y })),
     });
     this._broadcast({ t: "join", pid }, [connId]);
@@ -1575,6 +1746,17 @@ export class GameServer extends DurableObject {
       // vanish for free along with everything else non-persisted. No harm
       // either way.
       if (this._mobTimer) { clearInterval(this._mobTimer); this._mobTimer = null; }
+      // Phase 7: and stop the game clock itself, for the same "nobody's left
+      // to see it" reason — the day/night cycle, growing crops, cooking pots
+      // and trader cooldowns all freeze here and pick up where they left off
+      // when someone next connects (see _pauseClock/_resumeClock).
+      //
+      // blockConcurrencyWhile, not a bare call: it holds off every incoming
+      // event until the write lands, which also keeps the runtime from
+      // evicting this now-idle object mid-write. Losing exactly this write
+      // is the one failure that would defeat the whole feature — the world
+      // would come back believing it had been awake the entire time.
+      this.ctx.blockConcurrencyWhile(() => this._pauseClock());
     }
   }
 }

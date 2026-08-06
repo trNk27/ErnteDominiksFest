@@ -165,6 +165,35 @@ async function main() {
   ws1.close();
   for (const c of extraConns) c.close();
 
+  // --- 6. Phase 7: the game clock pauses while the room is empty -------------
+  // Every connection above is now closing, so the room is about to empty and
+  // the server should bank + freeze its clock (see _pauseClock). Sit out a
+  // few seconds of real time, reconnect, and check that the in-game clock did
+  // NOT advance by that much: `dayEpoch0` is handed out derived from the
+  // clock (see _dayEpoch0), so a paused clock shows up as an epoch that has
+  // slid forward by roughly the downtime, leaving elapsed game time the same.
+  {
+    const PAUSE_MS = 5000;
+    await new Promise((r) => setTimeout(r, PAUSE_MS));
+    const wsLater = connect(CORRECT_PW);
+    await new Promise((resolve, reject) => {
+      wsLater.once("open", resolve);
+      wsLater.once("error", reject);
+    });
+    const welcomeLater = await waitForMessage(wsLater, "welcome");
+    const elapsedBefore = welcome1.now - welcome1.dayEpoch0;
+    const elapsedAfter = welcomeLater.now - welcomeLater.dayEpoch0;
+    const advanced = elapsedAfter - elapsedBefore;
+    // Generous both ways: the earlier tests take a moment of legitimately
+    // online time to run, and the assertion that matters is only that the
+    // 3 s spent with an empty room is not in there.
+    ok(
+      `game clock did not advance across a ${PAUSE_MS}ms empty room (advanced ${advanced}ms, allowed < ${PAUSE_MS}ms)`,
+      typeof welcomeLater.dayEpoch0 === "number" && advanced >= 0 && advanced < PAUSE_MS
+    );
+    wsLater.close();
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }

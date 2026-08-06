@@ -34,6 +34,15 @@ für alle gleich). Was **nicht** geteilt ist und nur im eigenen Browser bleibt:
 Rucksack, Leben, Hunger, Position — keine Accounts, kein Login, keine
 Spielerdaten auf dem Server.
 
+**Die Zeit steht still, solange niemand spielt.** Der Server rechnet die Welt
+nur weiter, wenn mindestens einer verbunden ist: geht der Letzte raus, wird der
+Stand gespeichert und die Uhr angehalten — Tag und Nacht, wachsende Felder,
+laufende Kochtöpfe und die Wartezeit der Jannessen frieren genau dort ein. Beim
+nächsten Beitritt geht es an derselben Stelle weiter. Wer abends bei Sonnenlicht
+aufhört, steht am nächsten Wochenende wieder im selben Sonnenlicht, und der halb
+gewachsene Weizen ist immer noch halb gewachsen — statt dass drei Tage Pause
+vierzig Spieltage samt Bennis durchlaufen lassen.
+
 ### Server aufsetzen (einmalig)
 
 Der Mehrspieler-Teil läuft als kleiner
