@@ -572,7 +572,20 @@ const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench',
                      'hoe','kern','mycel','korn']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
 const ICON_ALT={dominik:'dominik_face'};
-const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':null;
+// Die neuen Sachen — Schnur, Kohle, Dünger, Schleuder, Ball, Knaller — haben
+// kein Sprite im Ordner, sondern ein gezeichnetes (siehe TEX). Hinter einer
+// pixTex steckt ein Canvas, und das gibt sein Bild direkt als Datenadresse
+// heraus: damit steht das Gezeichnete im Fenster genauso da wie ein geladenes
+// PNG, statt auf das Emoji zurückzufallen (⚫ sähe im Rucksack aus wie ein
+// verirrter Punkt). Einmal ausgerechnet und gemerkt — toDataURL ist teuer,
+// und die Leiste zeichnet sich oft neu.
+const _drawn={};
+function drawnSrc(id){
+  if(_drawn[id]!==undefined) return _drawn[id];
+  const c=TEX[id]?.image;                // geladene PNG-Texturen sind <img>, die können das nicht
+  return _drawn[id]=c&&c.toDataURL?c.toDataURL():null;
+}
+const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':drawnSrc(id);
 // Was ein Gegenstand kann, in einer Zeile — für die Schwebehilfe.
 function itemNote(id){
   const it=ITEMS[id]; if(!it) return '';
