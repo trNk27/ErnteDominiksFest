@@ -120,12 +120,49 @@
 //     (growing crops, cooking pots, trader refresh) are shifted forward by
 //     the offline gap on resume, so the world comes back exactly as it was
 //     left rather than with everything already finished.
+// Phase B1 (this revision) brings the client's Benni variants, knockback and
+// blood moons over to the server, which is the sole authority for every
+// online Benni:
+//   - `this.mobs` entries gain a `kind` ('benni'/'spider'/'cursed', from
+//     shared/world.js's MOBS table) and `kx`/`kz` (a horizontal shove
+//     velocity). `stepMob` now reads every combat number — speed, damage,
+//     attack cooldown, and whether the mob flies at all — from
+//     `MOBS[m.kind]` instead of the old flat MOB_SPEED/MOB_DMG/MOB_ATK_CD
+//     constants, and applies/decays the shove BEFORE the mob's own AI step
+//     each tick, exactly mirroring the client's offline `updateMobs` (see
+//     game.js) so a hit lands the same way whether or not anyone's connected
+//     to see it happen locally.
+//   - `_spawnMob` picks a `kind` with the same weighted-by-MOBS[].w draw as
+//     the client's (now offline-only) `pickMobKind` — `cursed` carries
+//     `w:0` and never comes up outside a blood moon, where it gets a real
+//     (0.5) weight. A flying `cursed` spawns and hovers FLY_H above the same
+//     ground spot everyone else stands on, and ignores `mobBlocked`
+//     entirely in `stepMob` — walls and steep drops don't stop it, by
+//     design: a torch wall no longer saves you on a blood moon night.
+//   - the spawn cap and interval both scale with `bloodMoon(day)` (a pure
+//     function of the day number, shared/world.js — client and server land
+//     on the same blood moon without an extra bit crossing the wire): the
+//     cap this.mobs must stay under doubles, and the interval between spawn
+//     attempts drops to roughly a third of normal, same ratios the client
+//     applies to its own offline fallback.
+//   - `mob-hit` additionally carries an optional `kx`/`kz` shove — validated
+//     the same way `dmg` already is (`Number.isFinite`, magnitude capped at
+//     KB_MAX) but defaulting to a no-op shove rather than rejecting the
+//     whole hit, since a missing/malformed shove shouldn't cancel an
+//     otherwise-valid one. On a kill, `mob-dead` now also carries `kind`,
+//     the death position, the rolled loot (`MOBS[kind].loot`, rolled here
+//     rather than trusting the client — see the client's own project-wide
+//     "trust local combat, arbitrate shared/contested state" split for why
+//     THIS particular roll is the server's job: with every connected client
+//     receiving the same `mob-dead`, only one of them may act on it), and
+//     `killerPid` naming that one client.
 
 import { DurableObject } from "cloudflare:workers";
 
 import {
   createWorld, BOUND, BLOCKS, mulberry, MARKET, lerp, clamp, SEA,
-  DAYLEN, NIGHT_START, NIGHT_END, MOB_HP, MOB_SPEED, MOB_DMG, MOB_ATK_CD,
+  DAYLEN, NIGHT_START, NIGHT_END, MOBS, mobCap as sharedMobCap, bloodMoon,
+  KB_DRAG, KB_MAX, FLY_H, MOB_SPAWN_MIN, MOB_SPAWN_MAX,
 } from "../../shared/world.js";
 import { PRICES, SHOP, GOAL, RECIPES, REFRESH, offerWant } from "../../shared/economy.js";
 
@@ -175,12 +212,14 @@ const CHAR_TICK_MS = 200;
 // timer (not a unified one) since the two run at genuinely different rates
 // for genuinely different reasons; see the class-level comment above.
 const MOB_TICK_MS = 100;
-// The client's own mobCap (game.js) is `Math.min(12,3+Math.floor(day*1.1))`
-// — a single player's threat budget. Online, up to 4 players share the same
-// mob pool, so the server halves it (rounded up, floored at 1 so day 1 never
-// rounds to zero) rather than letting a full room face the single-player cap
-// four times over.
-const mobCap = (day) => Math.max(1, Math.ceil(Math.min(12, 3 + Math.floor(day * 1.1)) / 2));
+// mobCap() (shared/world.js, `Math.min(7,2+Math.floor(day*.6))`) is a single
+// player's threat budget. Online, up to 4 players share the same mob pool, so
+// the server halves it (rounded up, floored at 1 so day 1 never rounds to
+// zero) rather than letting a full room face the single-player cap four times
+// over — same halving rationale as before, just reading the now-shared
+// mobCap() instead of a duplicated local formula, so client and server can
+// never quietly drift apart on what a "normal" night's threat budget is.
+const mobCap = (day) => Math.max(1, Math.ceil(sharedMobCap(day) / 2));
 
 /**
  * Plain (non-seeded) random in [a,b) — matches the client's own `rnd()`,
@@ -192,6 +231,30 @@ const mobCap = (day) => Math.max(1, Math.ceil(Math.min(12, 3 + Math.floor(day * 
  */
 function rnd(a, b) {
   return a + Math.random() * (b - a);
+}
+
+/**
+ * Server-side port of the client's `pickMobKind(blood)` (game.js) — a
+ * weighted pick over MOBS[].w, `cursed` swapped in at weight .5 only during
+ * a blood moon (its normal weight, `w:0`, means it otherwise never comes up
+ * at all). Kept as a real port rather than a shared export because it needs
+ * nothing from shared/world.js beyond MOBS itself, and Math.random() here is
+ * exactly as fine as it is in `rnd()` above (see that doc comment).
+ * @param {boolean} blood
+ * @returns {string} a key of MOBS
+ */
+function pickMobKind(blood) {
+  let total = 0;
+  const ws = Object.entries(MOBS).map(([k, c]) => {
+    const w = k === "cursed" && blood ? 0.5 : c.w;
+    total += w;
+    return [k, w];
+  });
+  let r = Math.random() * total;
+  for (const [k, w] of ws) {
+    if ((r -= w) < 0) return k;
+  }
+  return "benni";
 }
 
 /**
@@ -234,13 +297,15 @@ function wanderChar(c, dt, world) {
  * snaps to whole blocks, so nudging `m.y` toward it instead of setting it
  * outright avoids a Benni popping at every cell boundary. Only the
  * rendering-free half of the original: no mesh.position write here, that's
- * the client's job once it lerps toward the broadcast `y`.
- * @param {{x:number,z:number,y:number}} m
+ * the client's job once it lerps toward the broadcast `y`. A flying `cursed`
+ * hovers FLY_H above the very same ground value instead of standing on it.
+ * @param {{x:number,z:number,y:number,kind?:string}} m
  * @param {number} dt
  * @param {ReturnType<typeof createWorld>} world
  */
 function mobY(m, dt, world) {
-  const g = world.surfaceAt(m.x, m.z);
+  const cfg = MOBS[m.kind || "benni"];
+  const g = world.surfaceAt(m.x, m.z) + (cfg.fly ? FLY_H : 0);
   m.y = Math.abs(g - m.y) > 2.5 ? g : lerp(m.y, g, Math.min(1, dt * 11));
   return m.y;
 }
@@ -256,7 +321,18 @@ function mobY(m, dt, world) {
  * Mutates `m` in place; returns what the caller (the mob tick) needs to act
  * on — whether to drop this mob from `this.mobs`, and whether an attack
  * landed on a specific player this tick.
- * @param {{x:number,z:number,y:number,hp:number,hurtT:number,atkCd:number,fleeing:boolean}} m
+ *
+ * Reads `MOBS[m.kind]` for every combat number instead of the old flat
+ * MOB_SPEED/MOB_DMG/MOB_ATK_CD constants, so the three variants genuinely
+ * fight differently server-side too. A flying `cursed` skips `mobBlocked`
+ * entirely, both in its own chase step and in the knockback step below — it
+ * flies over walls and steep drops, which is the whole point of it; a torch
+ * wall no longer saves you on a blood moon night. The knockback step
+ * (`m.kx`/`m.kz`) runs FIRST, before the mob's own AI movement, so a shove
+ * lands visibly instead of being overwritten by the same tick's chase step —
+ * identical shape to the client's own `updateMobs` (see game.js), just
+ * reading `world.mobBlocked` instead of the client's module-scope version.
+ * @param {{x:number,z:number,y:number,hp:number,hurtT:number,atkCd:number,fleeing:boolean,kind?:string,kx?:number,kz?:number}} m
  * @param {number} dt
  * @param {ReturnType<typeof createWorld>} world
  * @param {{pid:number,x:number,y:number,z:number}[]} players currently connected, position-known players
@@ -264,7 +340,19 @@ function mobY(m, dt, world) {
  * @returns {{remove:boolean, attack:{pid:number,dmg:number}|null}}
  */
 function stepMob(m, dt, world, players, night) {
+  const cfg = MOBS[m.kind || "benni"];
   if (m.hurtT > 0) m.hurtT -= dt;
+  if (m.kx || m.kz) {
+    const nx = m.x + m.kx * dt, nz = m.z + m.kz * dt;
+    if (cfg.fly || !world.mobBlocked(nx, nz, m.y)) {
+      m.x = clamp(nx, BOUND.x0, BOUND.x1); m.z = clamp(nz, BOUND.z0, BOUND.z1);
+    } else {
+      m.kx = 0; m.kz = 0;
+    }
+    const f = Math.max(0, 1 - dt * KB_DRAG);
+    m.kx *= f; m.kz *= f;
+    if (Math.hypot(m.kx, m.kz) < 0.05) { m.kx = 0; m.kz = 0; }
+  }
   if (!players.length) {
     // Nobody connected/positioned to react to yet (a brief window right
     // after connect, before anyone's first `pos` has arrived). By day
@@ -281,28 +369,30 @@ function stepMob(m, dt, world, players, night) {
   const dx = nearest.x - m.x, dz = nearest.z - m.z, d = nd || 1;
   if (!night) {                                 // Tagesanbruch: sie verziehen sich
     m.fleeing = true;
-    m.x -= dx / d * MOB_SPEED * 1.6 * dt;
-    m.z -= dz / d * MOB_SPEED * 1.6 * dt;
+    m.x -= dx / d * cfg.speed * 1.6 * dt;
+    m.z -= dz / d * cfg.speed * 1.6 * dt;
     mobY(m, dt, world);
     const allFar = players.every((p) => Math.hypot(p.x - m.x, p.z - m.z) > 44);
     return { remove: allFar, attack: null };
   }
   let attack = null;
   if (d > 1.9) {
-    const my = world.surfaceAt(m.x, m.z);
-    let nx = m.x + dx / d * MOB_SPEED * dt, nz = m.z + dz / d * MOB_SPEED * dt;
-    if (world.mobBlocked(nx, nz, my)) {          // an Wänden und Steilhängen entlang
-      nx = m.x + (dz / d) * MOB_SPEED * dt; nz = m.z - (dx / d) * MOB_SPEED * dt;
-      if (world.mobBlocked(nx, nz, my)) { nx = m.x; nz = m.z; }
+    let nx = m.x + dx / d * cfg.speed * dt, nz = m.z + dz / d * cfg.speed * dt;
+    if (!cfg.fly) {
+      const my = world.surfaceAt(m.x, m.z);
+      if (world.mobBlocked(nx, nz, my)) {        // an Wänden und Steilhängen entlang
+        nx = m.x + (dz / d) * cfg.speed * dt; nz = m.z - (dx / d) * cfg.speed * dt;
+        if (world.mobBlocked(nx, nz, my)) { nx = m.x; nz = m.z; }
+      }
     }
     m.x = clamp(nx, BOUND.x0, BOUND.x1); m.z = clamp(nz, BOUND.z0, BOUND.z1);
   } else {
     m.atkCd -= dt;
     if (m.atkCd <= 0) {
-      m.atkCd = MOB_ATK_CD;
+      m.atkCd = cfg.atkCd;
       // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher.
       if (Math.abs(world.surfaceAt(m.x, m.z) - nearest.y) < 2.2) {
-        attack = { pid: nearest.pid, dmg: MOB_DMG };
+        attack = { pid: nearest.pid, dmg: cfg.dmg };
       }
     }
   }
@@ -727,8 +817,15 @@ export class GameServer extends DurableObject {
    * currently-connected player's last-known position instead of the single
    * local `player`, and with no mesh/texture concerns at all. A no-op if
    * nobody has sent a `pos` yet (this.lastPos empty) — nothing to anchor on.
+   *
+   * `kind` is picked the same weighted way as the client's `pickMobKind`
+   * (see there): `cursed` only gets a real (0.5) weight on a blood moon,
+   * otherwise its `w:0` in MOBS keeps it from ever coming up. A flying
+   * `cursed` spawns FLY_H above the very ground spot everyone else spawns on.
+   * @param {number} day current game day, for bloodMoon(day) — the caller
+   *   (_startMobTimer) already computed it this tick, no reason to redo it.
    */
-  _spawnMob() {
+  _spawnMob(day) {
     const anchors = [...this.lastPos.values()];
     if (!anchors.length) return;
     const anchor = anchors[Math.floor(Math.random() * anchors.length)];
@@ -739,10 +836,13 @@ export class GameServer extends DurableObject {
       z = clamp(Math.round(anchor.z + Math.sin(a) * d), BOUND.z0 + 2, BOUND.z1 - 2);
     } while (this.world.litAt(x, z) && ++tries < 12);
     if (this.world.litAt(x, z)) return;
-    const y = this.world.surfaceAt(x, z);
-    if (y < SEA - 1) return;
+    const ground = this.world.surfaceAt(x, z);
+    if (ground < SEA - 1) return;
+    const kind = pickMobKind(bloodMoon(day));
+    const cfg = MOBS[kind];
+    const y = cfg.fly ? ground + FLY_H : ground;
     const id = this._nextMobId++;
-    this.mobs.set(id, { id, x, z, y, hp: MOB_HP, hurtT: 0, atkCd: rnd(0, 1), fleeing: false });
+    this.mobs.set(id, { id, x, z, y, kind, hp: cfg.hp, kx: 0, kz: 0, hurtT: 0, atkCd: rnd(0, 1), fleeing: false });
   }
 
   /**
@@ -750,20 +850,25 @@ export class GameServer extends DurableObject {
    * same idempotent-and-lifecycle-matched shape as _startCharTimer above,
    * just a separate timer since combat wants a faster rate than ambient
    * wandering (see the class-level comment). Each tick: maybe spawns one
-   * new Benni (night-gated, capped, see mobCap), steps every existing one's
-   * AI (see stepMob), delivers any attacks landed this tick to the ONE
+   * new Benni (night-gated, capped, see mobCap — doubled, and spawning
+   * roughly three times as often, on a blood moon), steps every existing
+   * one's AI (see stepMob), delivers any attacks landed this tick to the ONE
    * player actually hit (never broadcast — see the class-level comment),
-   * and broadcasts a full position/hp snapshot to everyone.
+   * and broadcasts a full position/hp/kind snapshot to everyone.
    */
   _startMobTimer() {
     if (this._mobTimer) return;
     const dt = MOB_TICK_MS / 1000;
     this._mobTimer = setInterval(() => {
       const { day, night } = this._dayNight();
+      // bloodMoon(day) is a pure function of the day number (see
+      // shared/world.js) — client and server land on the exact same night
+      // without a single extra bit crossing the wire.
+      const blood = bloodMoon(day);
 
       this._mobSpawnTimer -= dt;
       if (this._mobSpawnTimer <= 0) {
-        this._mobSpawnTimer = rnd(2.5, 5);
+        this._mobSpawnTimer = rnd(MOB_SPAWN_MIN, MOB_SPAWN_MAX) / (blood ? 3 : 1);
         // No explicit "is anyone connected" check needed here (unlike
         // fetch()/_handleDisconnect, which legitimately need a fresh
         // this.conns read) — this timer's own lifecycle already guarantees
@@ -776,8 +881,8 @@ export class GameServer extends DurableObject {
         // connection's request — a lesson carried over unchanged from the
         // PartyKit version (its room.getConnections() had the exact same
         // restriction; see the class-level comment history).
-        if (night && this.mobs.size < mobCap(day)) {
-          this._spawnMob();
+        if (night && this.mobs.size < mobCap(day) * (blood ? 2 : 1)) {
+          this._spawnMob(day);
         }
       }
 
@@ -803,7 +908,7 @@ export class GameServer extends DurableObject {
 
       this._broadcast({
         t: "mob-state",
-        list: [...this.mobs.values()].map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, hp: m.hp, hurtT: m.hurtT > 0 })),
+        list: [...this.mobs.values()].map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, hp: m.hp, hurtT: m.hurtT > 0, kind: m.kind })),
       });
     }, MOB_TICK_MS);
   }
@@ -1217,15 +1322,40 @@ export class GameServer extends DurableObject {
    *     on by the time this is processed) and `ok`. A losing/late request
    *     (the offer is already done) gets its own `trade-result` with
    *     `ok:false` so its client isn't left hanging.
-   *   - `mob-hit` (Phase 5b): a melee hit landed on Benni `id` for `dmg`.
-   *     Not arbitrated at all (unlike chest-take/pot-claim/trade-complete) —
-   *     hp isn't scarce, two players hitting the same Benni just both apply
-   *     — a plain apply-and-broadcast (`mob-dead` if it dies, otherwise the
-   *     drop shows up in the next `mob-state` snapshot's `hurtT`/`hp`).
+   *   - `mob-hit` (Phase 5b, knockback/loot added later): a melee hit landed
+   *     on Benni `id` for `dmg`, plus an optional horizontal shove `kx`/`kz`
+   *     (the client's own weapon-swing knockback — see game.js damageMob's
+   *     doc comment for the exact contract). Not arbitrated at all (unlike
+   *     chest-take/pot-claim/trade-complete) — hp isn't scarce, two players
+   *     hitting the same Benni just both apply — a plain apply-and-broadcast
+   *     (`mob-dead` if it dies, otherwise the drop shows up in the next
+   *     `mob-state` snapshot's `hurtT`/`hp`/position). `kx`/`kz` are trusted
+   *     no further than `dmg` already is (same "trust local combat" project
+   *     philosophy — see the class-level comment), but ARE bounds-checked
+   *     (`Number.isFinite`, magnitude <= KB_MAX) and default to 0 when absent
+   *     or out of bounds, same as `dmg`'s own validation just with a soft
+   *     fallback instead of dropping the whole hit — a forged giant shove
+   *     shouldn't be able to fling a Benni across the map, but a missing or
+   *     slightly-malformed kx/kz shouldn't cancel an otherwise-valid hit
+   *     either. On a kill, the server — not the client — rolls the loot
+   *     (`MOBS[kind].loot`) and names the killer (`killerPid`, this
+   *     handler's own `pid`) in `mob-dead`, so exactly one connected client
+   *     (the one whose mob-hit landed the killing blow) spawns the drop
+   *     instead of every client that merely learns of the death doing so —
+   *     see game.js's `on('mob-dead', ...)` for the client half of this.
    *     `mob-state` (server -> everyone, every MOB_TICK_MS) and `mob-dead`/
    *     `mob-attack` (server -> everyone / a single targeted player) are
    *     never received here, only sent — see _startMobTimer and the
    *     class-level comment.
+   *   - `shot` (thrown/shot projectiles — Dominik, ball, cracker): a plain,
+   *     unarbitrated relay, exactly like `drop-spawn` — the sender already
+   *     simulates and shows its own projectile locally, so this only lets
+   *     everyone else see the same flight; nothing is stored or persisted.
+   *     Safe to leave unarbitrated for the same reason `drop-spawn` is:
+   *     there is nothing scarce or contested here to duplicate. Damage stays
+   *     exclusively `mob-hit`'s job, arbitrated exactly as above — a forged
+   *     or duplicated `shot` can spawn phantom visuals but can never itself
+   *     land a hit or grant loot.
    * @param {string | ArrayBuffer} message
    * @param {string} connId
    */
@@ -1712,20 +1842,55 @@ export class GameServer extends DurableObject {
       // held-weapon damage — trusted, per this project's established "trust
       // local combat, arbitrate only shared/contested state" philosophy; see
       // the class-level comment for why hp needs no race-arbitration at all).
-      const { id, dmg } = msg;
+      const { id, dmg, kx, kz } = msg;
       if (typeof id !== "number" || !Number.isFinite(id)) return;
       if (typeof dmg !== "number" || !Number.isFinite(dmg) || dmg <= 0 || dmg > 20) return;
       const m = this.mobs.get(id);
       if (!m) return; // already dead/despawned — a late/duplicate hit, quietly ignored
+      const cfg = MOBS[m.kind || "benni"];
+      // kx/kz: optional shove, absent on older/other calls into this same
+      // handler (see the class-level comment). Anything not a finite pair
+      // within KB_MAX quietly falls back to "no shove" rather than dropping
+      // the whole hit — the damage itself is valid either way.
+      const hasShove = Number.isFinite(kx) && Number.isFinite(kz) && Math.hypot(kx, kz) <= KB_MAX;
+      if (hasShove) {
+        m.kx = (m.kx || 0) + kx * cfg.kbTake;
+        m.kz = (m.kz || 0) + kz * cfg.kbTake;
+      }
       m.hp -= dmg;
       m.hurtT = 1; // seconds; ticks down in stepMob, shows as hurtT:true in the next few mob-state snapshots
       if (m.hp <= 0) {
         this.mobs.delete(id);
+        // Beute wird HIER gewürfelt, nicht auf dem Client — sonst müsste
+        // jeder mob-dead-Empfänger seinerseits spawnDrop() aufrufen und der
+        // Loot läge bis zu viermal auf dem Boden (spawnDrop broadcastet
+        // selbst, siehe Phase 6). killerPid nennt den einen Client, dessen
+        // Treffer den Tod verursacht hat — nur der spawnt den Drop, alle
+        // anderen sehen ihn ganz normal über drop-spawn (siehe game.js
+        // on('mob-dead',...)).
+        const [lootId, lo, hi] = cfg.loot;
+        const n = lo + Math.floor(Math.random() * (hi - lo + 1));
         // A dedicated event, unlike the day-flee despawn (which relies on
         // snapshot-absence, see mob-state) — the client needs to tell "died,
         // play the death sound" apart from "just wandered out of range".
-        this._broadcast({ t: "mob-dead", id });
+        this._broadcast({
+          t: "mob-dead", id, kind: m.kind, x: m.x, y: m.y, z: m.z,
+          killerPid: pid, loot: { id: lootId, n },
+        });
       }
+    } else if (msg.t === "shot") {
+      // Purely cosmetic relay, exactly like `drop-spawn` above: the sender
+      // already simulates and shows its own thrown/shot pellet locally, so
+      // there is nothing here to decide or arbitrate — this only lets
+      // everyone ELSE see the same flight. Damage still travels exclusively
+      // through `mob-hit`, arbitrated exactly as before; a forged/duplicated
+      // `shot` can make phantom projectiles fly but can never itself deal
+      // damage or grant loot.
+      const { id, x, y, z, vx, vy, vz } = msg;
+      if (typeof id !== "string" || !id) return;
+      const nums = [x, y, z, vx, vy, vz];
+      if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return;
+      this._broadcast({ t: "shot", id, x, y, z, vx, vy, vz }, [connId]);
     }
   }
 
