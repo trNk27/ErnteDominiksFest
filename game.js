@@ -4514,6 +4514,10 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   // Spielhandlungen (Wurf-Physik, echtes Warten auf COOK_TIME) nachstellen
   // zu müssen.
   send, getPid, isConnected, finishCook, potCount,
+  // Die neuen Sachen: Benni-Arten samt ihren Werten, der Blutmond-Würfel und
+  // die Geschosse in der Luft. bloodMoon ist rein — man kann durchprobieren,
+  // welcher Tag einer wird, ohne bis dahin spielen zu müssen.
+  MOBS, bloodMoon, MOB_TEX, shots, spawnShot, hitMob, useRight,
   // ---------------------------------------------------------- Entwickler
   // Nur über die Konsole erreichbar: keine Taste, kein Knopf, kein Eintrag
   // im Menü — wer nicht danach sucht, stolpert auch nicht hinein.
