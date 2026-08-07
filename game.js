@@ -1150,6 +1150,98 @@ function updateDrops(dt){
   }
 }
 
+// ------------------------------------------------------------------ Wurfgeschosse
+// Schleuder, Basketball und Knaller feuern denselben kleinen Würfel ab wie
+// ein Boden-Drop (geteilte Geometrie/Materialien, dasselbe lokal-bauen-und-
+// broadcasten-Muster, s. spawnDrop/spawnDropRemote oben) — nur bleibt er
+// nicht liegen. Er fliegt, bis er trifft, ans Gelände stößt oder verpufft.
+const shots=[];   // {id,x,y,z,vx,vy,vz,mesh,life,dmg,kb,fuse,blast,mine}
+const SHOT_S=.22, SHOT_CAP=60, SHOT_LIFE=4;
+function removeShot(s){
+  const i=shots.indexOf(s);
+  if(i<0) return;
+  scene.remove(s.mesh);               // Würfel und Material sind geteilt, nichts wegwerfen (s. dropMat)
+  shots.splice(i,1);
+}
+// Gemeinsamer Bau-Kern, genau wie _mkDrop oben: derselbe Würfel, ob selbst
+// abgefeuert oder von einem anderen Client gemeldet — nur `mine` entscheidet,
+// ob er hier auch Schaden anrichten darf (s. spawnShot/spawnShotRemote).
+function _mkShot(id,x,y,z,vx,vy,vz,mine,opts){
+  if(!ITEMS[id]) return null;
+  while(shots.length>=SHOT_CAP) removeShot(shots[0]);   // Notbremse, s. DROP_CAP
+  const mesh=new THREE.Mesh(BLOCKGEO,dropMat(id));
+  mesh.scale.setScalar(SHOT_S);
+  mesh.castShadow=true;
+  mesh.position.set(x,y,z);
+  scene.add(mesh);
+  const s={id,x,y,z,vx,vy,vz,mesh,spin:rnd(0,6.28),life:SHOT_LIFE,
+           dmg:opts.dmg||0,kb:opts.kb||0,fuse:opts.fuse??0,blast:opts.blast??0,mine};
+  shots.push(s);
+  return s;
+}
+// Wie spawnDrop: lokal bauen und — sofern verbunden — an alle ANDEREN Clients
+// melden (Empfänger s. on('shot',...) unten). Der Server relayt den Typ nach
+// heutigem Stand nicht (er kennt nur die fest verdrahteten t-Werte, s.
+// _onMessage dort) — verbunden bleibt das Fliegen für alle Mitspieler also
+// vorerst unsichtbar, bis das dort nachgezogen wird. Für DIESEN Client ändert
+// das nichts: Schaden lief noch nie über diese Nachricht (s. mine unten).
+function spawnShot(id,x,y,z,vx,vy,vz,opts={}){
+  const s=_mkShot(id,x,y,z,vx,vy,vz,true,opts);
+  if(isConnected()) send({t:'shot',id,x,y,z,vx,vy,vz});
+  return s;
+}
+// Für eine ankommende shot-Nachricht: baut denselben Würfel nach, aber ohne
+// Schaden (mine:false) und ohne erneut zu broadcasten — reines Anschauungs-
+// material für andere Clients, exakt das Muster von spawnDropRemote.
+function spawnShotRemote(id,x,y,z,vx,vy,vz){
+  return _mkShot(id,x,y,z,vx,vy,vz,false,{});
+}
+// Der Knaller zündet — eigener Name statt inline, weil zwei Stellen unten
+// dorthin verzweigen (Lunte abgelaufen, Gelände getroffen). Nur eigene
+// Knaller (mine) richten Schaden an, ein gespiegelter macht trotzdem Krach,
+// das kostet nichts und sieht richtig aus. Blöcke bleiben stehen: eine
+// Explosion, die das Gelände verändert, müsste über den vernetzten
+// Block-Edit-Pfad laufen (setBlock + send('block',...)) — ein eigenes,
+// deutlich größeres Problem, hier bewusst ausgespart.
+function detonate(s){
+  SND.boom();
+  if(!s.mine) return;
+  for(const m of mobs){
+    const dx=m.x-s.x, dz=m.z-s.z, d=Math.hypot(dx,dz);
+    if(d>s.blast) continue;
+    const fall=1-d/s.blast;             // am Rand der Druckwelle nur noch ein Kitzeln
+    hitMob(m,s.dmg*fall,s.kb*fall,dx,dz);
+  }
+}
+function updateShots(dt){
+  for(let i=shots.length-1;i>=0;i--){
+    const s=shots[i];
+    s.spin+=dt*9; s.life-=dt;
+    if(s.blast){                        // nur der Knaller trägt eine Lunte
+      s.fuse-=dt;
+      if(s.fuse<=0){ detonate(s); removeShot(s); continue; }
+    }
+    if(s.life<=0){ removeShot(s); continue; }
+    s.vy-=DROP_GRAV*dt;                 // keine Reibung — es fliegt, es rollt nicht
+    const nx=s.x+s.vx*dt, ny=s.y+s.vy*dt, nz=s.z+s.vz*dt;
+    // Ein Benni geht vor Gelände. Der Knaller schlägt bei Berührung nicht
+    // ein — er will die Lunte oder den Boden, s. detonate — und nur eigene
+    // Geschosse machen überhaupt Schaden; ein gespiegeltes von einem anderen
+    // Client ist reine Deko (s. mine bei spawnShotRemote).
+    if(s.mine&&!s.blast){
+      const m=mobs.find(mm=>Math.hypot(mm.x-nx,mm.z-nz)<.9&&Math.abs(mm.y+1-ny)<1.2);
+      if(m){ hitMob(m,s.dmg,s.kb,s.vx,s.vz); removeShot(s); continue; }
+    }
+    if(fillsAt(Math.round(nx),Math.floor(ny),Math.round(nz))){
+      if(s.blast) detonate(s);          // Volltreffer aufs Gelände zündet sofort, s.o.
+      removeShot(s); continue;
+    }
+    s.x=nx; s.y=ny; s.z=nz;
+    s.mesh.position.set(s.x,s.y,s.z);
+    s.mesh.rotation.set(s.spin,s.spin*.7,0);
+  }
+}
+
 // ------------------------------------------------------------------ Kochtopf
 // Der Topf ist kein Raster mehr, sondern ein Topf: Zutaten hineinwerfen,
 // Rechtsklick, und was dabei herauskommt, fällt oben wieder heraus.
@@ -1995,6 +2087,29 @@ function useRight(){
     updateHUD();
     return;
   }
+  // 3b. Schleuder abfeuern, Basketball/Knaller werfen — nach Hacke/Saat, aber
+  // klar vor dem Essen: träfe die Reihenfolge es andersherum, käme ein
+  // Basketball nie zum Fliegen (er würde ja nie bis hierher durchfallen),
+  // und schlimmer noch, eine geworfene Dominik-Suppe würde vorher aufgegessen.
+  if(it&&it.sling){
+    if(!take(it.ammo,1)){ SND.fail(); return; }
+    updateEyeRay();
+    const sp=20;                        // flach und schnell, eine Schleuder ist kein Wurf
+    spawnShot(it.ammo,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp,eyeDir.z*sp,{dmg:it.dmg,kb:it.kb});
+    playSample('dominik_break',.6,rnd(1.8,2.2));   // ein Dominik quietscht anders als er zerplatzt
+    updateHUD();
+    return;
+  }
+  if(it&&it.throw){
+    consumeHeld();
+    updateEyeRay();
+    const sp=9;                         // langsamer als die Schleuder, dafür mit Bogen
+    spawnShot(it.throw,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp+3,eyeDir.z*sp,
+      {dmg:it.dmg,kb:it.kb,fuse:it.fuse,blast:it.blast});
+    SND.place();
+    updateHUD();
+    return;
+  }
   // 4. Essen
   if(it&&it.food){
     if(player.food>=player.maxfood&&player.hp>=player.maxhp){ toast('😋 Du bist satt.','',1200); return; }
@@ -2052,6 +2167,19 @@ function useRight(){
     SND.place(); updateHUD();
   }
 }
+// hitMob ist der einzige Ort, der weiß, ob wir online sind oder nicht — jeder
+// Angriff (Nahkampf hier unten in attack(), Geschosse in updateShots/
+// detonate) ruft nur noch hier durch, statt die Verzweigung selbst zu kennen.
+// dx,dz  Stoßrichtung, muss nicht normiert sein
+function hitMob(m,dmg,kb,dx,dz){
+  const l=Math.hypot(dx,dz)||1, kx=dx/l*kb, kz=dz/l*kb;
+  // Online: nur die Trefferabsicht melden, hp NICHT lokal anfassen — die
+  // tatsächliche Änderung kommt einen Tick später über mob-state/mob-dead
+  // zurück (siehe die Handler weiter unten). Eine bewusste, kleine
+  // Latenz, kein Bug.
+  if(isConnected()){ playSample('punch',.6); send({t:'mob-hit',id:m.id,dmg,kx,kz}); return; }
+  damageMob(m,dmg,kx,kz);
+}
 function attack(){
   if(player.atkCd>0||state.paused) return;
   // Ein Schlag auf ein abgestelltes Fahrzeug hebt es auf — dasselbe Gefühl
@@ -2071,16 +2199,10 @@ function attack(){
     if(dot<.4) continue;
     if(d<bestD){ bestD=d; best=m; }
   }
-  if(best){
-    // Online: nur die Trefferabsicht melden, hp NICHT lokal anfassen — die
-    // tatsächliche Änderung kommt einen Tick später über mob-state/mob-dead
-    // zurück (siehe die Handler weiter unten). Eine bewusste, kleine
-    // Latenz, kein Bug.
-    if(isConnected()){ playSample('punch',.6); send({t:'mob-hit',id:best.id,dmg:heldDmg()}); return true; }
-    damageMob(best,heldDmg());
-    return true;
-  }
-  return false;
+  if(!best) return false;
+  // Stoßrichtung: vom Spieler weg, mit der Wucht der Waffe in der Hand.
+  hitMob(best,heldDmg(),heldKb(),best.x-player.x,best.z-player.z);
+  return true;
 }
 
 // ------------------------------------------------------------------ Truhen
@@ -3530,6 +3652,16 @@ on('pot-grant',msg=>{
 on('drop-spawn',msg=>{
   spawnDropRemote(msg.dropId,msg.id,msg.n,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz);
 });
+// Ein von einem anderen Client abgefeuertes Geschoss — rein kosmetisch nach-
+// gebaut (spawnShotRemote setzt mine:false, s. dort), Schaden läuft für
+// diesen Client ausschließlich über 'mob-hit', nie über diese Nachricht.
+// Stand heute relayt der Server unbekannte t-Werte gar nicht (s. Kommentar
+// bei spawnShot) — dieser Handler feuert online also erst, sobald der
+// Server um 'shot' erweitert wurde, und ist bis dahin totes, aber
+// harmloses Gleis.
+on('shot',msg=>{
+  spawnShotRemote(msg.id,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz);
+});
 // Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs um einen
 // Boden-Drop (s. updateDrops: sell/pickup/pot melden sich dort per
 // 'drop-claim' an) — exakt dasselbe Muster wie Truhen-/Topf-Claim. Nur der
@@ -4107,6 +4239,7 @@ function update(dt){
     updateVitals(dt);
     if(isConnected()) updateMobsOnline(dt); else updateMobs(dt);
     updateDrops(dt);
+    updateShots(dt);
     updatePots(dt);
     updateGrow();
   }
