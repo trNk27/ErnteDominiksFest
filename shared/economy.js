@@ -22,6 +22,7 @@ export const SHOP=[
   {id:'board', price:250,  txt:'Auf festem Boden fast doppelt so flott.'},
   {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
   {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
+  {id:'fert',  price:120,  txt:'???'},
 ];
 
 // ------------------------------------------------------------------ Rezepte
@@ -57,6 +58,10 @@ export const RECIPES=[
   {id:'soup',  rank:99,out:['soup',1],     station:'pot', secret:true,
    shapeless:['dominik','dominik','dominik','mushroom','mushroom',
               'salt','pepper','pepper','bowl']},
+  // Schleuder: Griff aus Stöcken, Gabel aus einem dritten — die Schnur spannt das Band.
+  {id:'sling',  rank:6.5,out:['sling',1],  pat:['KSK',' K ',' K '], key:{K:'stick',S:'string'}},
+  // Kein Muster, nur eine Mischung — im Kochtopf würde man das nicht essen wollen.
+  {id:'cracker',rank:7.5,out:['cracker',3],shapeless:['coal','fert']},
 ];
 
 // ------------------------------------------------------------------ Angebote

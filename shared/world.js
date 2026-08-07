@@ -37,7 +37,25 @@ const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
 // seinen Offline-Einzelspieler-Fallback, der Server für die echte, jetzt
 // serverseitige KI) und ein doppelt getipptes MOB_SPEED leicht auseinander-
 // laufen könnte, ohne dass es sofort auffiele.
-export const MOB_HP=10, MOB_SPEED=2.35, MOB_DMG=3, MOB_ATK_CD=1.4;
+// Phase A: aus dem einen Benni werden drei Spielarten. Jede trägt ihre
+// Kampfwerte, ihre Fluggabe und ihre Beute selbst statt sie über eine
+// wachsende Zahl loser Konstanten zu verstreuen — MOB_HP & Co. bleiben als
+// Aliase erhalten, damit nichts, was sie schon importiert, bricht.
+export const MOBS={
+  benni :{hp:10,speed:2.35,dmg:3,atkCd:1.4,h:1.95,kbTake:1,  fly:false,w:1,   loot:['ball',1,2]},
+  spider:{hp:14,speed:1.9, dmg:4,atkCd:1.6,h:1.5, kbTake:.7, fly:false,w:.28, loot:['string',1,2]},
+  cursed:{hp:7, speed:3.1, dmg:2,atkCd:1.0,h:1.5, kbTake:1.4,fly:true, w:0,   loot:['string',1,1]},
+};
+export const MOB_HP=MOBS.benni.hp, MOB_SPEED=MOBS.benni.speed,
+             MOB_DMG=MOBS.benni.dmg, MOB_ATK_CD=MOBS.benni.atkCd;
+// Stoßwerte: wie schnell ein Stoß verebbt (KB_DRAG), wie groß der Server ihn
+// höchstens durchlässt (KB_MAX) und wie hoch der Fluch-Benni über dem Boden
+// schwebt (FLY_H).
+export const KB_DRAG=6, KB_MAX=10, FLY_H=2.2;
+// Wie viele Bennis (aller Art) gleichzeitig unterwegs sein dürfen — wächst
+// mit den Tagen, aber nur bis sieben, sonst erstickt man im eigenen Erfolg.
+export const mobCap=day=>Math.min(7,2+Math.floor(day*.6));
+export const MOB_SPAWN_MIN=6, MOB_SPAWN_MAX=11;
 
 // ------------------------------------------------------------------ Geländeform
 export function hash2(x,z,s){
@@ -45,6 +63,9 @@ export function hash2(x,z,s){
   h=Math.imul(h^h>>>13,1274126177);
   return ((h^h>>>16)>>>0)/4294967296;
 }
+// Reine Funktion der Tageszahl — wie dayEpoch0 kommen Client und Server ohne
+// ein einziges zusätzliches Netzwerkpaket auf denselben Blutmond.
+export const bloodMoon=day=>hash2(day,0,777)<1/7;
 export function vnoise(x,z,scale,seed){
   const fx=x/scale, fz=z/scale;
   const x0=Math.floor(fx), z0=Math.floor(fz);
@@ -167,6 +188,7 @@ export const BLOCKS={
   pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
            cross:true, size:.95,sit:true, alpha:true, pass:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
+  coalore:{tex:'coalore',hard:2.2,drop:'coal',   nm:'Kohleader', pick:true},
   // --- Acker und was darauf wächst
   till   :{tex:'till',  hard:.6,  drop:'dirt',   nm:'Ackerboden'},
   // Der gezogene Dominik hängt an keinem Baum, er sitzt im Beet.
@@ -239,7 +261,13 @@ export function createWorld(){
   // also überall gleich, ohne dass etwas gespeichert werden müsste.
   function saltVein(x,y,z){
     const lay=Math.floor(y/3);
-    return vnoise(x+lay*29,z-lay*17,8,61)>.91;
+    return vnoise(x+lay*29,z-lay*17,8,61)>.885;
+  }
+  // Kohle liegt flacher als Salz und aus eigenem Samen — sonst säßen beide
+  // Adern immer an derselben Stelle übereinander.
+  function coalVein(x,y,z){
+    const lay=Math.floor(y/3);
+    return vnoise(x-lay*19,z+lay*23,8,67)>.86;
   }
   function terrainType(x,z,y){
     const H=terrainH(x,z);
@@ -247,6 +275,7 @@ export function createWorld(){
     if(y<=BEDROCK) return 'bedrock';        // unzerstörbarer Boden der Welt
     if(y===H-1) return surfaceTex(x,z,H);
     if(y>=H-3) return 'dirt';
+    if(y<=H-4&&coalVein(x,y,z)) return 'coalore';
     if(y<=H-5&&saltVein(x,y,z)) return 'saltore';
     return 'rock';
   }
@@ -474,7 +503,7 @@ export function createWorld(){
 
   return {
     scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
-    K, terrainType, saltVein,
+    K, terrainType, saltVein, coalVein,
     blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, litAt, setBlock,
   };
 }

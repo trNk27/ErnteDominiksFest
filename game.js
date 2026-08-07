@@ -43,17 +43,37 @@ function tone(f,d,type='sine',v=.1,w=0){
   o.connect(g).connect(c.destination);
   o.start(c.currentTime+w); o.stop(c.currentTime+w+d+.02);
 }
-function playSample(name,vol=1){
+// rate verstellt die Wiedergabegeschwindigkeit mit — tiefer klingt ein Schrei
+// verzerrt und schwer, höher schrill und dünn. So bekommen die Benni-Varianten
+// ihre eigene Stimme, ohne dass eine einzige neue Sounddatei nötig wäre.
+function playSample(name,vol=1,rate=1){
   const c=ac(); if(!c||!SAMPLES[name]) return false;
   if(c.state==='suspended') c.resume();
   const src=c.createBufferSource(),g=c.createGain();
-  src.buffer=SAMPLES[name]; g.gain.value=vol;
+  src.buffer=SAMPLES[name]; g.gain.value=vol; src.playbackRate.value=rate;
   src.connect(g).connect(c.destination); src.start(); return true;
 }
 async function loadSample(name,url){
   try{ const buf=await fetch(url).then(r=>r.arrayBuffer());
     if(AC) SAMPLES[name]=await AC.decodeAudioData(buf); else _pd.push([name,buf]);
   }catch(e){}
+}
+// Kein Sample fürs Knallen — ein weißes Rauschen reicht, einmal gebaut und
+// dann immer wieder abgespielt, statt es jedes Mal neu auszuwürfeln.
+let _boomBuf=null;
+function boomNoise(dur,vol){
+  const c=ac(); if(!c) return;
+  if(c.state==='suspended') c.resume();
+  if(!_boomBuf){
+    _boomBuf=c.createBuffer(1,c.sampleRate*.3,c.sampleRate);
+    const d=_boomBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  }
+  const src=c.createBufferSource(),g=c.createGain();
+  src.buffer=_boomBuf;
+  g.gain.setValueAtTime(vol,c.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,c.currentTime+dur);
+  src.connect(g).connect(c.destination); src.start();
 }
 const SND={
   tap:()=>tone(620,.05,'square',.05),
@@ -75,6 +95,8 @@ const SND={
   step:()=>tone(90+Math.random()*30,.05,'triangle',.03),
   land:()=>tone(110,.07,'triangle',.05),
   fail:()=>tone(160,.15,'square',.06),
+  // Knaller: Rauschstoß fürs Krachen, zwei tiefe Sägezahntöne für den Wumms.
+  boom:()=>{boomNoise(.28,.35);tone(65,.24,'sawtooth',.2);tone(42,.32,'sawtooth',.16,.04);},
 };
 loadSample('dig','./block_break.wav');
 loadSample('pop','./item_pickupp.ogg');
@@ -271,6 +293,13 @@ const TEX={
       g.fillStyle='#c9d2ea'; g.fillRect(x,y+1,1,1); g.fillRect(x+1,y,1,1);
     }
   }),
+  // Kohleader: derselbe Fels wie beim Salz, nur mit dunklen statt hellen Nestern.
+  coalore:noiseTex(['#8e8e8e','#828282','#9a9a9a','#787878'],24,g=>{
+    for(const [x,y] of [[3,2],[10,4],[12,9],[5,11],[7,3],[2,13]]){
+      g.fillStyle='#26221e'; g.fillRect(x,y,2,2);
+      g.fillStyle='#131110'; g.fillRect(x,y+1,1,1); g.fillRect(x+1,y,1,1);
+    }
+  }),
   // Setzlinge: ein Halm mit zwei Blättchen, freigestellt. Die Tönung sagt,
   // was daraus wird — sonst weiß man im Beet nicht mehr, was wo steckt.
   sprout_d:sproutTex('#7fbf4a','#e2a24c'),
@@ -307,6 +336,67 @@ const TEX={
     g.fillStyle='#f2ece0';                                  // Tupfen
     g.fillRect(4,5,2,2); g.fillRect(10,4,2,2); g.fillRect(7,3,2,2); g.fillRect(12,7,2,1);
     g.fillStyle='#8e2620'; g.fillRect(1,8,14,1);            // Hutrand als Schatten
+  }),
+  // Kohle: ein dunkler Klumpen, freigestellt — Gegenstand, keine Blockfläche.
+  coal   :pixTex(g=>{
+    const cols=['#232323','#2c2c2c','#1a1a1a','#333333'], r=mulberry(68);
+    for(let y=4;y<12;y++) for(let x=3;x<13;x++){
+      if(Math.hypot(x-8,y-8)>4.4-r()*1.2) continue;
+      g.fillStyle=cols[Math.floor(r()*cols.length)]; g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='#4a4a4a'; g.fillRect(6,5,2,1); g.fillRect(9,9,1,1);  // Glanzlichter
+  }),
+  // Schnur: ein loses Knäuel aus überlappenden Schlaufen, freigestellt.
+  string :pixTex(g=>{
+    g.fillStyle='#e8dcc0';
+    for(const [cx,cy,rad] of [[6,6,3.4],[10,10,3.4],[8,4,2.6]])
+      for(let y=0;y<16;y++) for(let x=0;x<16;x++){
+        const d=Math.hypot(x-cx+.5,y-cy+.5);
+        if(d>rad-.9&&d<rad) g.fillRect(x,y,1,1);
+      }
+  }),
+  // Schleuder: hölzerne Gabel mit gespanntem Band, freigestellt.
+  sling  :pixTex(g=>{
+    g.fillStyle='#8a6535';
+    g.fillRect(7,9,2,6);                                    // Griff
+    [[7,8],[6,7],[6,6],[5,5],[5,4],[4,3]].forEach(([x,y])=>g.fillRect(x,y,1,1));
+    [[8,8],[9,7],[9,6],[10,5],[10,4],[11,3]].forEach(([x,y])=>g.fillRect(x,y,1,1));
+    g.fillStyle='#caa96a';
+    g.fillRect(4,2,1,2); g.fillRect(11,2,1,2);
+    g.fillRect(5,2,6,1);                                    // das gespannte Band
+  }),
+  // Basketball: wie der Pilz mit Sorgfalt gezeichnet — genoppte Kugel mit
+  // den dunklen Nahtlinien, freigestellt.
+  ball   :pixTex(g=>{
+    const cols=['#e07a1f','#d46f18','#eb8a2e','#c96814'], r=mulberry(53);
+    const cx=7.5,cy=7.5,rad=6.4;
+    for(let y=1;y<15;y++) for(let x=1;x<15;x++){
+      if(Math.hypot(x-cx,y-cy)>rad) continue;
+      g.fillStyle=cols[Math.floor(r()*cols.length)]; g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='#2a1608';                                  // die Nähte
+    for(let y=2;y<14;y++) g.fillRect(7,y,1,1);
+    for(let x=2;x<14;x++) g.fillRect(x,7,1,1);
+    [[3,3],[2,5],[2,7],[2,9],[2,11],[3,13],
+     [12,3],[13,5],[13,7],[13,9],[13,11],[12,13]].forEach(([x,y])=>g.fillRect(x,y,1,1));
+  }),
+  // Knaller: roter Zylinder mit brennender Lunte, freigestellt.
+  cracker:pixTex(g=>{
+    g.fillStyle='#c9302a'; g.fillRect(6,5,4,9);
+    g.fillStyle='#8e2620'; g.fillRect(6,5,1,9); g.fillRect(9,5,1,9);
+    g.fillStyle='#2a2a2a'; g.fillRect(6,4,4,1); g.fillRect(6,13,4,1);  // Kappen
+    g.fillStyle='#e8dcc0'; g.fillRect(7,2,1,2); g.fillRect(8,1,1,1);   // Lunte
+    g.fillStyle='#ffb03a'; g.fillRect(8,0,2,2);                       // Funke
+    g.fillStyle='#ff6a1a'; g.fillRect(9,0,1,1);
+  }),
+  // Aquariendünger: ein Fläschchen mit einer Flüssigkeit, die nicht ganz
+  // natürlich aussieht — mehr wird hier bewusst nicht verraten.
+  fert   :pixTex(g=>{
+    g.fillStyle='#cfe0df'; g.fillRect(6,3,4,2); g.fillRect(5,5,6,9);   // Glas
+    g.fillStyle='#3a2418'; g.fillRect(6,1,4,2);                       // Korken
+    g.fillStyle='#5fd6a0'; g.fillRect(6,8,4,5);                       // die Flüssigkeit
+    g.fillStyle='#8f2fb0'; g.fillRect(7,9,1,1); g.fillRect(9,11,1,1); // ein Schimmer, der so nicht sein sollte
+    g.fillStyle='#213331'; g.fillRect(5,13,6,1);
   }),
 };
 
@@ -396,9 +486,9 @@ const ITEMS={
   mycel   :{ic:'🧫',nm:'Myzel',       seed:{sprout:'sprout_m',ripe:'shroom'}},
   korn    :{ic:'🌾',nm:'Pfefferkorn', seed:{sprout:'sprout_p',ripe:'pepper'}},
   hoe     :{ic:'🧑‍🌾',nm:'Hacke',       hoe:true},
-  sword   :{ic:'⚔️',nm:'Steinschwert',dmg:6},
-  axe     :{ic:'🪓',nm:'Steinaxt',    dmg:4, axe:true},
-  pick    :{ic:'⛏️',nm:'Spitzhacke',  dmg:3, pick:true},
+  sword   :{ic:'⚔️',nm:'Steinschwert',dmg:6, kb:3},
+  axe     :{ic:'🪓',nm:'Steinaxt',    dmg:4, axe:true, kb:2.5},
+  pick    :{ic:'⛏️',nm:'Spitzhacke',  dmg:3, pick:true, kb:2},
   compote :{ic:'🍯',nm:'Dominik-Kompott',food:8},
   panfry  :{ic:'🍳',nm:'Pilzpfanne',  food:10},
   soup    :{ic:'🍲',nm:'Dominik-Suppe',food:20},
@@ -411,6 +501,13 @@ const ITEMS={
   // Was aus dem Topf kommt, wenn die Zutaten nicht zusammenpassen. Essbar
   // ist es gerade noch.
   junk    :{ic:'🤢',nm:'Angebrannte Pampe',food:1},
+  // Phase A: neue Rohstoffe, Waffen und ein Fläschchen, das nichts von sich preisgibt.
+  string  :{ic:'🧵',nm:'Schnur'},
+  coal    :{ic:'⚫',nm:'Kohle'},
+  fert    :{ic:'🧪',nm:'Aquariendünger', mystery:true},
+  sling   :{ic:'🏹',nm:'Schleuder',      sling:true, ammo:'dominik', dmg:4, kb:2},
+  ball    :{ic:'🏀',nm:'Basketball',     throw:'ball',    dmg:5, kb:4},
+  cracker :{ic:'🧨',nm:'Knaller',        throw:'cracker', dmg:7, kb:7, blast:3.5, fuse:1.1},
 };
 
 // ------------------------------------------------------------------ Geld
@@ -446,6 +543,8 @@ function consumeHeld(){
 }
 const hasTool=k=>{ const id=heldId(); return !!(id&&ITEMS[id]&&ITEMS[id][k]); };
 const heldDmg=()=>{ const id=heldId(); return (id&&ITEMS[id]?.dmg)||2; };
+// Die bloße Faust stößt ein bisschen, ein Schwert stößt richtig.
+const heldKb=()=>{ const id=heldId(); return (id&&ITEMS[id]?.kb)||.5; };
 
 // ------------------------------------------------------------------ Rezepte
 // pat  Zeilen von oben nach unten, key übersetzt die Zeichen, ' ' bleibt leer
@@ -474,6 +573,7 @@ const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':nul
 // Was ein Gegenstand kann, in einer Zeile — für die Schwebehilfe.
 function itemNote(id){
   const it=ITEMS[id]; if(!it) return '';
+  if(it.mystery) return '???';                              // der Dünger erklärt sich nie
   const p=[];
   if(it.food) p.push('🍗 sättigt um '+it.food);
   if(it.dmg) p.push('⚔️ Schaden '+it.dmg);
@@ -863,9 +963,11 @@ function dropMat(id){
   const it=ITEMS[id], b=it?.block?BLOCKS[it.block]:null;
   // Ein Block trägt seine Weltoberfläche, alles andere sein Bildchen — und
   // das hat durchsichtige Ränder, die weggeschnitten werden müssen.
+  // Ohne eigenes Sprite (siehe ICONS) greift die prozedurale TEX-Textur, statt
+  // dass ein Basketball oder ein Kohleklumpen als schlichter Erdklotz herumliegt.
   m=new THREE.MeshLambertMaterial(b
     ?{map:TEX[b.tex]||TEX.stone}
-    :{map:ITEM_TEX[id]||TEX.dirt,transparent:true,alphaTest:.5,side:THREE.DoubleSide});
+    :{map:ITEM_TEX[id]||TEX[id]||TEX.dirt,transparent:true,alphaTest:.5,side:THREE.DoubleSide});
   dropMats.set(id,m);
   return m;
 }
@@ -1244,6 +1346,10 @@ const loadTex=url=>new Promise((res,rej)=>texLoader.load(url,t=>{
 },undefined,()=>rej(new Error('Bild fehlt: '+url))));
 const billboards=[];
 let benniTex=null;
+// Phase A: Spinne und Fluch-Benni tragen kein eigenes Bild, sondern eine aus
+// benni.png abgeleitete Textur je Spielart (siehe Boot-Block unten) — kein
+// zweites, 1,4 MB schweres PNG für dieselbe Silhouette.
+const MOB_TEX={};
 function labelTex(lines,color='#ffd76a'){
   const W=512,LH=54,pad=18;
   const arr=Array.isArray(lines)?lines:[lines];
@@ -4067,12 +4173,55 @@ const loadItemTex=id=>loadTex(iconSrc(id)).then(t=>{
 }).catch(()=>{});
 const UISPRITES=['heart_full','heart_half','heart_empty','food_full','food_half','food_empty',
                  'icon_bag','icon_book','icon_pause'];
+// Spinne und Fluch-Benni bekommen ihre Optik aus benni.png selbst: einmal
+// beim Laden pixelweise verrechnet, nie pro Frame — bei 1,4 MB Bildgröße
+// wäre alles andere spürbar. Schlägt die Verrechnung fehl (etwa ein vom
+// Browser verweigerter Canvas-Zugriff), fallen beide einfach auf das
+// unveränderte Bild zurück statt den Start abzubrechen.
+function buildMobTex(t){
+  MOB_TEX.benni=t;
+  try{
+    const img=t.image, w=img.width, h=img.height;
+    const src=document.createElement('canvas'); src.width=w; src.height=h;
+    src.getContext('2d').drawImage(img,0,0);
+    const data=src.getContext('2d').getImageData(0,0,w,h).data;
+    const mk=px=>{
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').putImageData(new ImageData(px,w,h),0,0);
+      const tx=new THREE.CanvasTexture(c);
+      tx.colorSpace=THREE.SRGBColorSpace;
+      tx.magFilter=THREE.NearestFilter;
+      tx.minFilter=THREE.NearestMipmapLinearFilter;
+      return tx;
+    };
+    // Spinne: entsättigt und abgedunkelt, Alpha unangetastet.
+    const sp=new Uint8ClampedArray(data);
+    for(let i=0;i<sp.length;i+=4){
+      const gr=(sp[i]*.3+sp[i+1]*.59+sp[i+2]*.11)*.55;
+      sp[i]=gr; sp[i+1]=gr; sp[i+2]=gr;
+    }
+    MOB_TEX.spider=mk(sp);
+    // Fluch-Benni: hart Richtung Rot, mehr Kontrast, und im oberen
+    // Mittelfeld abgedunkelt, damit die Augen wie hohle Höhlen wirken.
+    const cu=new Uint8ClampedArray(data);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const i=(y*w+x)*4;
+      let r=cu[i],g=cu[i+1],b=cu[i+2];
+      r=clamp((r-128)*1.4+128+40,0,255);
+      g=clamp((g-128)*1.4+128-30,0,255);
+      b=clamp((b-128)*1.4+128-30,0,255);
+      if(y/h>.15&&y/h<.5&&Math.abs(x/w-.5)<.22){ r*=.25; g*=.25; b*=.25; }
+      cu[i]=r; cu[i+1]=g; cu[i+2]=b;
+    }
+    MOB_TEX.cursed=mk(cu);
+  }catch(e){ MOB_TEX.spider=t; MOB_TEX.cursed=t; }
+}
 Promise.all([
   ...[...ICONS].map(id=>loadItemTex(id)),
   preload('./sprites/items/page1.png'),
   ...UISPRITES.map(n=>preload('./sprites/ui/'+n+'.png')),
   ...[...new Set(CHARS.map(c=>c.key))].map(k=>loadTex(k+'.png').then(t=>{CHAR_TEX[k]=t;})),
-  loadTex('benni.png').then(t=>{benniTex=t;}),
+  loadTex('benni.png').then(t=>{benniTex=t; buildMobTex(t);}).catch(()=>{}),
   // Der freigestellte Kopf aus dominik.png wird zum Gesicht auf der
   // Spielerfigur (siehe FACES/headTex) — bisher lag das Bild ungenutzt herum.
   loadTex('dominik.png').then(t=>{FACE_TEX.dominik=t;}),
