@@ -3,7 +3,8 @@
 Ein Minecraft-artiges Survival-Spiel in **Ego-Perspektive**, im Browser, ohne Installation.
 Die Welt besteht aus Blöcken: du **baust sie ab** (linke Maustaste), **setzt sie wieder**
 (rechte Maustaste), legst dir im **Raster** Werkzeug zurecht und hältst nachts die
-**Bennis** aus. Kein Punktestand, keine Aufgabenliste — nur überleben.
+**Bennis** aus — nicht jede Nacht gleich ruhig. Kein Punktestand, keine Aufgabenliste —
+nur überleben.
 
 **Ziel: 10 000 €.** Ernte **🍑 Dominiks** und wirf sie **Manni** über den Tresen — einen
 Euro das Stück. Gekocht bringen sie ein Vielfaches: die **🍲 Dominik-Suppe** zahlt **100 €**.
@@ -130,7 +131,7 @@ danach sucht, stolpert auch nicht hinein.
 | `⇧ Shift` | im Wasser **abtauchen** |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · **hacken / säen** · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · Essen |
+| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · **hacken / säen** · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · **Schleuder abfeuern / Wurfwaffe werfen** · Essen |
 | `Q` | Gegenstand einen Block weit vor sich werfen · `⇧Q` den ganzen Stapel |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
@@ -150,8 +151,35 @@ wie für die Bennis.
   (rechte Maustaste mit dem Essen in der Hand): 🍯 Kompott und 🍳 Pilzpfanne sättigen
   ordentlich, die 🍲 Suppe füllt alles auf. Ist der Balken voll, heilst du dich langsam
   selbst; ist er leer, kostet es Leben.
-- **🌙 Nacht** — ab der Dämmerung tauchen Bennis auf. **🔥 Fackeln** halten sie in weitem
-  Umkreis fern, ein ⚔️ Steinschwert räumt auf, eine zwei Blöcke hohe Mauer auch.
+- **🌙 Nacht** — ab der Dämmerung tauchen Bennis auf, insgesamt spürbar weniger als früher:
+  höchstens sieben gleichzeitig statt zwölf, und zwischen zwei Ankünften vergehen sechs bis
+  elf statt zweieinhalb bis fünf Sekunden. **🔥 Fackeln** halten sie in weitem Umkreis vom
+  Auftauchen ab, eine zwei Blöcke hohe Mauer sperrt sie aus. Erledigt, lassen sie jetzt auch
+  etwas fallen:
+
+  | Sorte | Leben · Schaden | Fällt beim Tod |
+  |---|---|---|
+  | **Benni** — der gewöhnliche | 10 · 3 | 🏀 Basketball |
+  | **Spinnen-Benni** — geduckt, breit, das Kreischen tief ins Verzerrte gezogen | 14 · 4, kaum vom Fleck zu stoßen | 🧵 Schnur |
+  | **Fluch-Benni** — nur in der Blutmondnacht: klein, fliegt, rotes hohles Gesicht, ein hoher, dünner Schrei | 7 · 2 | 🧵 Schnur |
+
+- **🩸 Blutmond** — ungefähr jede siebte Nacht. Es ist reine Rechnung aus der Tageszahl,
+  keiner muss es ansagen: alle am selben Server erleben ohne ein Wort dieselbe
+  Blutmondnacht. Der Himmel kippt ins Dunkelrote, es kommen deutlich mehr Bennis als sonst,
+  und nur in dieser einen Nacht mischt sich der Fluch-Benni darunter. Er fliegt — die zwei
+  Blöcke hohe Mauer, die sonst ausreicht, hält ihn nicht auf.
+- **⚔️ Wehren** — jeder Treffer stößt jetzt auch, von der bloßen Faust bis zum
+  ⚔️ Steinschwert, und jede Benni-Sorte nimmt den Stoß anders hin: die Spinne bleibt fast
+  stehen, der Fluch-Benni taumelt wie ein Blatt. Dazu drei geworfene Waffen: die
+  **🏹 Schleuder** verschießt 🍑 Dominiks mit einem hohen Quietschen, ohne sich selbst zu
+  verbrauchen; der **🏀 Basketball** fliegt im Bogen; der **🧨 Knaller** zündet nach kurzer
+  Lunte und stößt alles im Umkreis weg, ohne dabei Blöcke zu zerlegen.
+
+  | Waffe | Schaden | Stoß |
+  |---|---|---|
+  | 🏹 Schleuder | 4 | 2 |
+  | 🏀 Basketball | 5 | 4 |
+  | 🧨 Knaller | 7 | 7 |
 
 ## Abbauen und Bauen
 
@@ -168,6 +196,7 @@ die **fallen beim ersten Klick** (siehe unten).
 | 🍃 Laub | manchmal einen 🥢 Stock | — |
 | 🪨 Stein / 🧱 Ziegel | Stein, Ziegel | ⛏️ Spitzhacke |
 | 🧂 Salzader | Salz | ⛏️ Spitzhacke · nur tief im Fels |
+| ⚫ Kohleader | Kohle | ⛏️ Spitzhacke · nur tief im Fels |
 | 🍑 Dominik | Dominik (Essen + Zutat) | — · hängt hoch, bau dir was drunter |
 | 🍄 Pilz | Pilz (Essen + Zutat) | — |
 | 🌶️ Pfefferstrauch | Pfeffer | — · nur hinter dem Fluss |
@@ -246,6 +275,8 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
 | 🍲 Kochtopf | 🪨·🪨 / 🪨·🪨 / 🪨🟧🪨 | Werkbank |
 | 🧑‍🌾 Hacke | 🪨🪨· / ·🥢· / ·🥢· | Werkbank |
+| 🏹 Schleuder | 🥢🧵🥢 / ·🥢· / ·🥢· | Werkbank |
+| 🧨 Knaller ×3 | ⚫ · 🧪 | Anordnung egal |
 
 ## 🧑‍🌾 Das Feld
 
@@ -312,8 +343,13 @@ Hand fällt, **treibt an der Oberfläche** statt auf dem Grund zu verschwinden.
 ## 🛒 Manni-Markt — Geld verdienen und ausgeben
 
 Gleich neben dem Startpunkt steht **Manni** in seinem Stand — vier Pfosten, ein Dach,
-ein Tresen. Er handelt nicht mit Knöpfen: **wirf ihm hin, was du verkaufen willst** (`Q`,
-`⇧Q` für den ganzen Stapel), und er zahlt bar. Ein ganzer Stapel wird auf einmal bezahlt.
+ein Tresen. Rechtsklick öffnet seinen Laden: oben steht nur die Kasse, darunter seine
+Annahme und seine Auslage. Namen, Preise und was ein Ding tut, stehen nirgends im
+Fließtext — die zeigt sich erst, wenn der Mauszeiger darüberhält.
+
+**Verkaufen**: den Stapel aufnehmen — wie im Raster hängt er dann am Zeiger — und auf
+Mannis Annahme fallen lassen, schon ist er bezahlt, ein ganzer Stapel auf einmal. Wer
+lieber wirft: **`Q`**/**`⇧Q`** vor ihm hin tut es weiterhin genauso.
 
 | Er kauft | Preis |
 |---|---|
@@ -325,17 +361,19 @@ ein Tresen. Er handelt nicht mit Knöpfen: **wirf ihm hin, was du verkaufen will
 Alles andere lässt er liegen. Ein Dominik zu einer Suppe verkocht ist das Dreiunddreißig-
 fache wert — **kochen lohnt sich**, und deshalb lohnen sich die Rezepte der Jannessen.
 
-Verkaufen tut er nur, was sich **nicht bauen lässt**. Rechtsklick öffnet den Laden:
+**Kaufen**: in der Auslage anklicken, und es landet direkt im Rucksack statt vor seinen
+Füßen. Verkaufen tut er nur, was sich **nicht bauen lässt**:
 
 | Ware | Preis | Wirkung (in der Hand gehalten) |
 |---|---|---|
 | 🛹 Skateboard | 250 € | An Land fast doppelt so flott unterwegs |
 | 🛶 Boot | 750 € | Setzt dich **oben aufs** Wasser statt hinein, und schnell |
 | 🪂 Gleitschirm | 1500 € | Im Fallen segelst du sanft hinab statt zu stürzen |
+| 🧪 Aquariendünger | 120 € | ??? |
 
-Die drei wirken, solange du sie in der Hand hältst — sie kosten also den Platz für Hacke
-oder Schwert. Alle drei bringen dich schneller zur nächsten Ernte und zahlen sich damit
-selbst zurück.
+Die ersten drei wirken, solange du sie in der Hand hältst — sie kosten also den Platz für
+Hacke oder Schwert. Alle drei bringen dich schneller zur nächsten Ernte und zahlen sich
+damit selbst zurück. Was der Dünger tut, verrät Manni nicht — und dabei bleibt es.
 
 Oben links steht, wieviel in der Kasse liegt (💶) und wieviel du **insgesamt verdient**
 hast (🎯). Einkaufen mindert das Verdiente nicht — das Ziel ist der Umsatz, nicht der
@@ -394,8 +432,10 @@ jedem Start dieselbe, kein Speicherstand nötig.
   vier Blöcke untergebaut werden. Im Schatten stehen **🍄 Pilze**.
 - **Hinter den Flüssen** — dem Streifen im Westen und im Norden, den man nur über eine
   Furt erreicht — wachsen **🌶️ Pfeffersträucher** in lockeren Feldern. Diesseits keiner.
-- **Tief im Fels** sitzen **🧂 Salzadern**: helle Kristallnester, ab fünf Blöcken unter
-  der Oberfläche, gut zwei Prozent des Gesteins. Ohne ⛏️ Spitzhacke wird das nichts.
+- **Tief im Fels** sitzen **🧂 Salzadern** — helle Kristallnester, ab fünf Blöcken unter
+  der Oberfläche, inzwischen gut anderthalbmal so dicht gesät wie früher. Eine Lage
+  höher, schon ab vier Blöcken Tiefe, liegen dunklere **⚫ Kohleadern**. Ohne ⛏️
+  Spitzhacke wird bei beiden nichts.
 - **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
   steht eine Truhe, im zweiten wohnt ein **Jannes**.
 - Wild wachsende **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** kommen **nicht wieder** —
