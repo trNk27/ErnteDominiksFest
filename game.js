@@ -9,7 +9,7 @@ import {
   createWorld, DAYLEN, NIGHT_START, NIGHT_END, REACH, BOUND, HOME, SEA, RIVER_BED, RIVER_W,
   WATER_Y, BEDROCK, SPAWN, MARKET, hash2, vnoise, riverAt, beyondRiver, rawHeight,
   VILLAGES, VILL_R, VILL_FADE, terrainH, surfaceTex, BLOCKS, TREE_TOP, TRUNK_MIN, FRUIT_OFF, treeSpot,
-  MOB_HP, MOB_SPEED, MOB_DMG, MOB_ATK_CD,
+  MOBS, mobCap, bloodMoon, KB_DRAG, FLY_H, MOB_SPAWN_MIN, MOB_SPAWN_MAX,
 } from './shared/world.js';
 import {GOAL, SEED_OF, PRICES, SHOP, RECIPES, REFRESH, RAW, offerWant} from './shared/economy.js';
 import {PARTY_URL, connect, on, send, isConnected, getPid} from './net.js';
@@ -87,6 +87,9 @@ const SND={
   hurt:()=>{tone(180,.2,'sawtooth',.13);tone(120,.25,'sawtooth',.1,.1);},
   mobDie:()=>{tone(400,.1,'square',.08);tone(200,.18,'square',.07,.09);},
   night:()=>{tone(160,.5,'sine',.09);tone(120,.6,'sine',.08,.2);},
+  // Ein tiefes, lang ausklingendes Anschwellen statt der kurzen Nacht-Töne —
+  // dieselben drei Oszillatoren, nur tiefer und länger gehalten.
+  bloodMoon:()=>{tone(70,1.6,'sawtooth',.11);tone(52,2,'sine',.1,.3);tone(38,2.6,'sawtooth',.08,.6);},
   dawn:()=>{tone(523,.14,'triangle',.08);tone(659,.14,'triangle',.08,.12);tone(784,.2,'triangle',.08,.24);},
   chest:()=>{tone(440,.09,'triangle',.08);tone(660,.12,'triangle',.08,.08);},
   book:()=>{tone(659,.12,'triangle',.09);tone(988,.18,'triangle',.09,.11);},
@@ -1702,18 +1705,43 @@ function updateBillboards(){
 // keeping in sync) those two loops too, for no real benefit.
 const mobs=[];
 // h/asp/mesh construction shared by the offline spawnMob() and the online
-// ensureMob() below — same Benni sprite plane either way, just built from
-// local physics vs. a server snapshot.
-function makeMobMesh(x,y,z){
-  const h=1.95, asp=benniTex.image.width/benniTex.image.height;
-  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp,h),
-    new THREE.MeshLambertMaterial({map:benniTex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
+// ensureMob() below — dieselbe Fläche für alle drei Spielarten, nur Höhe und
+// Textur kommen aus MOBS/MOB_TEX. Fehlt eine Variantentextur (Ladefehler),
+// fällt sie auf benniTex zurück statt gar keine Fläche zu zeigen.
+function makeMobMesh(x,y,z,kind='benni'){
+  const cfg=MOBS[kind]||MOBS.benni, tex=MOB_TEX[kind]||benniTex;
+  const h=cfg.h, asp=tex.image.width/tex.image.height;
+  // Die Spinnentextur ist nicht vorverzerrt (sie ist derselbe Benni, nur
+  // eingefärbt) — geduckt und breit wird sie erst über die Geometrie.
+  const wMul=kind==='spider'?1.55:1;
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp*wMul,h),
+    new THREE.MeshLambertMaterial({map:tex,transparent:true,alphaTest:.5,side:THREE.DoubleSide}));
   mesh.position.set(x,y+h/2,z); mesh.castShadow=true;
   scene.add(mesh);
   return mesh;
 }
+// Kreischen je Spielart — dieselben drei Sample-Namen wie eh und je, nur mit
+// eigener Tonhöhe (siehe playSample-Kommentar oben): die Spinne tief und
+// damit verzerrt, der Fluch-Benni hoch und dünn. So bekommt jede Spielart
+// ihre eigene Stimme, ohne eine einzige neue Sounddatei.
+function scream(kind){
+  const s=pick(['benni1','benni2','benni3']);
+  if(kind==='spider') playSample(s,.7,rnd(.55,.7));
+  else if(kind==='cursed') playSample(s,.6,rnd(1.9,2.3));
+  else playSample(s,.7,rnd(.95,1.05));
+}
 // ---- Offline (Einzelspieler/kein Server) — volle lokale Simulation, wie bisher.
-const mobCap=()=>Math.min(12,3+Math.floor(state.day*1.1));
+// Gewichtete Auswahl über MOBS[].w — cursed trägt w:0 und taucht normal nie
+// auf, in der Blutmondnacht bekommt er hier eine echte Chance.
+function pickMobKind(blood){
+  let total=0;
+  const ws=Object.entries(MOBS).map(([k,c])=>{
+    const w=k==='cursed'&&blood?.5:c.w; total+=w; return [k,w];
+  });
+  let r=Math.random()*total;
+  for(const [k,w] of ws){ if((r-=w)<0) return k; }
+  return 'benni';
+}
 function spawnMob(){
   if(!benniTex) return;
   let x,z,tries=0;
@@ -1723,19 +1751,30 @@ function spawnMob(){
     z=clamp(Math.round(player.z+Math.sin(a)*d),BOUND.z0+2,BOUND.z1-2);
   } while(litAt(x,z)&&++tries<12);
   if(litAt(x,z)) return;
-  const y=surfaceAt(x,z);
-  if(y<SEA-1) return;
-  const mesh=makeMobMesh(x,y,z);
-  mobs.push({x,z,y,hp:MOB_HP,mesh,atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6),screamCd:rnd(3,7)});
+  const ground=surfaceAt(x,z);
+  if(ground<SEA-1) return;
+  const kind=pickMobKind(bloodMoon(state.day)), cfg=MOBS[kind];
+  const y=cfg.fly?ground+FLY_H:ground;
+  const mesh=makeMobMesh(x,y,z,kind);
+  mobs.push({x,z,y,kind,hp:cfg.hp,kx:0,kz:0,mesh,
+    atkCd:rnd(0,1),hurtT:0,bob:rnd(0,6),screamCd:rnd(3,7)});
 }
 function dropMob(m,i){
   scene.remove(m.mesh); m.mesh.geometry.dispose(); m.mesh.material.dispose();
   mobs.splice(i<0?mobs.indexOf(m):i,1);
 }
-function damageMob(m,dmg){
+// Vertragsstelle für B2 (attack()): Signatur bleibt genau damageMob(m,dmg,kx,kz)
+// — kx/kz sind ein horizontaler Stoß im Weltkoordinatensystem, standardmäßig
+// keiner. kbTake gewichtet ihn je Spielart (die Spinne ist träge, der
+// Fluch-Benni wird herumgeworfen wie ein Blatt).
+function damageMob(m,dmg,kx=0,kz=0){
+  const cfg=MOBS[m.kind||'benni'];
   m.hp-=dmg; m.hurtT=.22;
+  m.kx=(m.kx||0)+kx*cfg.kbTake; m.kz=(m.kz||0)+kz*cfg.kbTake;
   playSample('punch',.6);
   if(m.hp<=0){
+    const [id,lo,hi]=cfg.loot;
+    spawnDrop(id,rndi(lo,hi),m.x,m.y+.5,m.z,rnd(-1,1),1.8,rnd(-1,1));
     dropMob(m,-1);
     state.killed++;
     SND.mobDie();
@@ -1744,9 +1783,10 @@ function damageMob(m,dmg){
 // mobBlocked kommt aus shared/world.js (auch vom Server gebraucht).
 // surfaceAt() rastet auf ganze Blöcke ein: ungebremst springt ein Benni bei
 // jedem Zellwechsel und flackert an Kanten hin und her. Also nachziehen statt
-// setzen — nur bei großen Sprüngen (Respawn) sofort.
+// setzen — nur bei großen Sprüngen (Respawn) sofort. Der Fluch-Benni schwebt
+// FLY_H über demselben Bodenwert, statt auf ihm zu laufen.
 function mobY(m,dt){
-  const g=surfaceAt(m.x,m.z);
+  const g=surfaceAt(m.x,m.z)+(MOBS[m.kind||'benni'].fly?FLY_H:0);
   m.y=Math.abs(g-m.y)>2.5?g:lerp(m.y,g,Math.min(1,dt*11));
   return m.y;
 }
@@ -1756,11 +1796,21 @@ function updateMobs(dt){
     // die Liste schrumpft also mitten in der Schleife.
     const m=mobs[i];
     if(!m) continue;
+    const cfg=MOBS[m.kind||'benni'];
     if(m.hurtT>0) m.hurtT-=dt;
     m.mesh.material.color.setRGB(1,m.hurtT>0?.4:1,m.hurtT>0?.4:1);
+    // Stoß zuerst, vor der eigenen KI — sonst überschreibt der nächste
+    // Laufschritt ihn im selben Frame wieder.
+    if(m.kx||m.kz){
+      const nx=m.x+m.kx*dt, nz=m.z+m.kz*dt;
+      if(cfg.fly||!mobBlocked(nx,nz,m.y)){ m.x=clamp(nx,BOUND.x0,BOUND.x1); m.z=clamp(nz,BOUND.z0,BOUND.z1); }
+      else{ m.kx=0; m.kz=0; }
+      const f=Math.max(0,1-dt*KB_DRAG); m.kx*=f; m.kz*=f;
+      if(Math.hypot(m.kx,m.kz)<.05){ m.kx=0; m.kz=0; }
+    }
     const dx=player.x-m.x, dz=player.z-m.z, d=Math.hypot(dx,dz)||1;
     if(!state.night){                          // Tagesanbruch: sie verziehen sich
-      m.x-=dx/d*MOB_SPEED*1.6*dt; m.z-=dz/d*MOB_SPEED*1.6*dt;
+      m.x-=dx/d*cfg.speed*1.6*dt; m.z-=dz/d*cfg.speed*1.6*dt;
       m.mesh.material.opacity=Math.max(0,(m.mesh.material.opacity??1)-dt*.7);
       m.mesh.material.transparent=true;
       if(d>44||m.mesh.material.opacity<=.02){ dropMob(m,i); continue; }
@@ -1769,27 +1819,32 @@ function updateMobs(dt){
     }
     m.screamCd-=dt;
     if(d<14&&m.screamCd<=0){
-      playSample(pick(['benni1','benni2','benni3']),.7);
+      scream(m.kind);
       m.screamCd=rnd(8,14);
     }
     if(d>1.9){
-      const my=surfaceAt(m.x,m.z);
-      let nx=m.x+dx/d*MOB_SPEED*dt, nz=m.z+dz/d*MOB_SPEED*dt;
-      if(mobBlocked(nx,nz,my)){                // an Wänden und Steilhängen entlang
-        nx=m.x+(dz/d)*MOB_SPEED*dt; nz=m.z-(dx/d)*MOB_SPEED*dt;
-        if(mobBlocked(nx,nz,my)){ nx=m.x; nz=m.z; }
+      let nx=m.x+dx/d*cfg.speed*dt, nz=m.z+dz/d*cfg.speed*dt;
+      // Der Fluch-Benni fliegt: kein mobBlocked, keine Wand, kein Steilhang
+      // hält ihn auf. Eine Fackelwand rettet in der Blutmondnacht also
+      // niemanden mehr.
+      if(!cfg.fly){
+        const my=surfaceAt(m.x,m.z);
+        if(mobBlocked(nx,nz,my)){                // an Wänden und Steilhängen entlang
+          nx=m.x+(dz/d)*cfg.speed*dt; nz=m.z-(dx/d)*cfg.speed*dt;
+          if(mobBlocked(nx,nz,my)){ nx=m.x; nz=m.z; }
+        }
       }
       m.x=clamp(nx,BOUND.x0,BOUND.x1); m.z=clamp(nz,BOUND.z0,BOUND.z1);
-      m.bob+=dt*7;
+      m.bob+=dt*(cfg.fly?11:7);
     } else {
       m.atkCd-=dt;
       if(m.atkCd<=0){
-        m.atkCd=MOB_ATK_CD;
+        m.atkCd=cfg.atkCd;
         // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher.
-        if(Math.abs(surfaceAt(m.x,m.z)-player.y)<2.2) hurtPlayer(MOB_DMG);
+        if(Math.abs(surfaceAt(m.x,m.z)-player.y)<2.2) hurtPlayer(cfg.dmg);
       }
     }
-    m.mesh.position.set(m.x,mobY(m,dt)+.98+Math.abs(Math.sin(m.bob))*.06,m.z);
+    m.mesh.position.set(m.x,mobY(m,dt)+.98+Math.abs(Math.sin(m.bob))*(cfg.fly?.16:.06),m.z);
   }
 }
 // ---- Online (Server verbunden) — reines Rendern/Lerpen, exakt das Muster
@@ -1798,11 +1853,11 @@ function updateMobs(dt){
 // keinen `bob`-Hüpfwert mit (siehe mob-state weiter unten) — anders als
 // offline hüpfen vernetzte Bennis darum nicht beim Laufen, eine akzeptierte
 // kosmetische Vereinfachung.
-function ensureMob(id,x,y,z){
+function ensureMob(id,x,y,z,kind='benni'){
   let m=mobs.find(mm=>mm.id===id);
   if(m) return m;
-  const mesh=makeMobMesh(x,y,z);
-  m={id,x,y,z,hp:MOB_HP,hurtT:false,mesh,target:{x,y,z},screamCd:rnd(3,7)};
+  const mesh=makeMobMesh(x,y,z,kind);
+  m={id,x,y,z,kind,hp:MOBS[kind].hp,hurtT:false,mesh,target:{x,y,z},screamCd:rnd(3,7)};
   mobs.push(m);
   return m;
 }
@@ -1826,7 +1881,7 @@ function updateMobsOnline(dt){
     if(state.night){
       m.screamCd-=dt;
       if(Math.hypot(m.x-player.x,m.z-player.z)<14&&m.screamCd<=0){
-        playSample(pick(['benni1','benni2','benni3']),.7);
+        scream(m.kind);
         m.screamCd=rnd(8,14);
       }
     }
@@ -3482,7 +3537,7 @@ on('mob-state',msg=>{
   const seen=new Set();
   for(const e of msg.list||[]){
     seen.add(e.id);
-    const m=ensureMob(e.id,e.x,e.y,e.z);
+    const m=ensureMob(e.id,e.x,e.y,e.z,e.kind);
     m.target.x=e.x; m.target.y=e.y; m.target.z=e.z;
     m.hp=e.hp;
     m.hurtT=!!e.hurtT;
@@ -3496,8 +3551,20 @@ on('mob-state',msg=>{
 // which relies on snapshot-absence) — this is the ONLY place the death
 // sound/kill-count fires online. removeMob() is a safe no-op if the next
 // mob-state (which also won't list this id) tries to remove it again.
+//
+// Beute (Phase B1/Task 4): spawnDrop() broadcastet selbst (Phase 6) — würde
+// JEDER Client, der mob-dead empfängt, seinerseits spawnDrop() aufrufen, läge
+// derselbe Loot bis zu viermal auf dem Boden. Der Server kennt als einziger
+// den Schützen (killerPid, der letzte mob-hit vor dem Tod) und hat die Beute
+// schon serverseitig gewürfelt (msg.loot) — nur dieser eine Client spawnt sie
+// tatsächlich, alle anderen sehen sie über den ganz normalen drop-spawn-
+// Broadcast wieder. Sauberer als etwa "der am nächsten stehende Client
+// spawnt sie": das wäre nicht deterministisch und ließe sich nicht clientseitig
+// nachprüfen.
 on('mob-dead',msg=>{
   SND.mobDie(); state.killed++;
+  if(msg.killerPid===getPid()&&msg.loot)
+    spawnDrop(msg.loot.id,msg.loot.n,msg.x,msg.y+.5,msg.z,rnd(-1,1),1.8,rnd(-1,1));
   removeMob(msg.id);
 });
 // A Benni's attack only ever reaches the one player it actually hit (see the
@@ -3994,17 +4061,27 @@ let mobTimer=0, birdTimer=rnd(8,20);
 function updateNight(dt){
   const wasNight=state.night;
   state.night=state.dayT>=NIGHT_START&&state.dayT<NIGHT_END;
-  if(state.night&&!wasNight){ toast('🌙 Nacht '+state.day,'bad',2600); SND.night(); }
+  // 1 Nacht in 7 (bloodMoon() aus shared/world.js) — reine Funktion der
+  // Tageszahl, damit Client und Server ohne ein Wort miteinander dieselbe
+  // Nacht meinen.
+  const blood=bloodMoon(state.day);
+  if(state.night&&!wasNight){
+    if(blood){ toast('🩸 Blutmond über '+state.day+'. Heute schwebt etwas.','bad',3800); SND.bloodMoon(); }
+    else{ toast('🌙 Nacht '+state.day,'bad',2600); SND.night(); }
+  }
   if(!state.night&&wasNight){ toast('🌅 Morgen.','good',2200); SND.dawn(); }
   if(state.night){
     mobTimer-=dt;
     if(mobTimer<=0){
-      mobTimer=rnd(2.5,5);
+      // Blutmond: gut dreimal so oft, und doppelt so viele dürfen gleichzeitig
+      // unterwegs sein — siehe mobCap()/MOB_SPAWN_MIN/MAX aus shared/world.js.
+      mobTimer=rnd(MOB_SPAWN_MIN,MOB_SPAWN_MAX)/(blood?3:1);
+      const cap=mobCap(state.day)*(blood?2:1);
       // Online, spawning is entirely the server's job (see party/server.js
       // _startMobTimer) — this local trigger would otherwise fight it (and
       // every connected client would spawn its OWN extra Bennis on top of
       // the server's).
-      if(!isConnected()&&mobs.length<mobCap()) spawnMob();
+      if(!isConnected()&&mobs.length<cap) spawnMob();
     }
   } else {
     birdTimer-=dt;
@@ -4018,6 +4095,8 @@ const C={dayTop:new THREE.Color(0x3f86c8),evTop:new THREE.Color(0xd97b3a),nTop:n
   dayBot:new THREE.Color(0xbfe0ef),evBot:new THREE.Color(0xf0b070),nBot:new THREE.Color(0x141c38),
   sunDay:new THREE.Color(0xfff3d6),sunEv:new THREE.Color(0xffb070),moon:new THREE.Color(0x9fb4ff),
   water:new THREE.Color(0x1d5c8f),
+  // Blutmond: der Nachthimmel kippt zusätzlich Richtung Blut statt Blau.
+  bmTop:new THREE.Color(0x430109),bmBot:new THREE.Color(0x2a060f),
   top:new THREE.Color(),bot:new THREE.Color()};
 let _wasSub=false;
 function updateSky(){
@@ -4028,6 +4107,10 @@ function updateSky(){
   const warm=clamp(Math.max(dawn,dusk),0,1);
   const top=C.top.copy(C.dayTop).lerp(C.evTop,warm*.5).lerp(C.nTop,night);
   const bot=C.bot.copy(C.dayBot).lerp(C.evBot,warm*.55).lerp(C.nBot,night);
+  // Blutmond: zusätzlicher Zug Richtung Rot, mit demselben night-Faktor wie
+  // oben eingeblendet — sonst setzte die Farbe beim Nachtbeginn hart ein
+  // statt sich einzuschleichen.
+  if(bloodMoon(state.day)){ top.lerp(C.bmTop,night); bot.lerp(C.bmBot,night); }
   skyMat.uniforms.top.value.copy(top);
   skyMat.uniforms.bot.value.copy(bot);
   // Unter Wasser wird die Sicht kurz und blau, und ein Schleier liegt vor dem
@@ -4399,7 +4482,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   give:(id,n)=>give(id,n), take,countOf,
   get target(){return target;},
   get sel(){return heldId();},
-  openCraft,openChest,attack,spawnMob,hurtPlayer,updateHUD,breakBlock,updatePots,
+  openCraft,openChest,attack,spawnMob,damageMob,hurtPlayer,updateHUD,breakBlock,updatePots,
   learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,updatePotPanel,icon,iconSrc,
   clickCell,clickChestCell,takeAllFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
