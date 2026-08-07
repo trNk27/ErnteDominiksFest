@@ -575,22 +575,23 @@ function itemNote(id){
   const it=ITEMS[id]; if(!it) return '';
   if(it.mystery) return '???';                              // der Dünger erklärt sich nie
   const p=[];
-  if(it.food) p.push('🍗 sättigt um '+it.food);
-  if(it.dmg) p.push('⚔️ Schaden '+it.dmg);
+  if(it.food) p.push('🍗'+it.food);
+  if(it.dmg) p.push('⚔️'+it.dmg);
   if(it.axe) p.push('🪓 schnell bei Holz');
   if(it.pick) p.push('⛏️ schnell bei Stein');
   if(it.torch) p.push('🔥 hält Bennis fern');
   if(it.sign) p.push('🪧 beschreibbar');
   if(it.hoe) p.push('🧑‍🌾 macht Gras und Erde zu Acker');
-  if(it.seed) p.push('🌱 auf Acker säen — wird zu '+ITEMS[BLOCKS[it.seed.ripe].drop].nm);
-  if(it.boat) p.push('🛶 abstellen und einsteigen — trägt dich übers Wasser');
-  if(it.board) p.push('🛹 abstellen und einsteigen — doppelt so flott an Land');
-  if(it.glide) p.push('🪂 abstellen und einsteigen — lässt dich sanft herabsegeln');
-  if(PRICES[id]) p.push('💶 '+PRICES[id]+' € bei Manni');
+  if(it.seed) p.push('🌱→'+ITEMS[BLOCKS[it.seed.ripe].drop].ic);
+  // Schleuder feuert Dominiks, nicht Bolzen — das steht nirgends sonst.
+  if(it.sling) p.push('🏹→'+ITEMS[it.ammo].ic);
+  if(it.blast) p.push('💥'+it.blast);
+  if(it.boat||it.board||it.glide) p.push(it.ic);
+  if(PRICES[id]) p.push('💶'+PRICES[id]+' €');
   if(it.block) p.push('setzbar');
   const used=RECIPES.filter(r=>patRows(r).some(row=>row.includes(id)))
-    .filter(r=>known.has(r.id)).map(r=>ITEMS[r.out[0]].nm);
-  if(used.length) p.push('Zutat für '+used.slice(0,3).join(', ')+(used.length>3?' …':''));
+    .filter(r=>known.has(r.id)).map(r=>ITEMS[r.out[0]].ic);
+  if(used.length) p.push('Zutat für '+used.slice(0,4).join(''));
   return p.join(' · ');
 }
 function icon(id,cls=''){
@@ -1207,22 +1208,20 @@ function updatePotPanel(cell){
   box.innerHTML=`<h3>🍲 Kochtopf ${n}/${POT_CAP}</h3>
     <div class="inpot">${p&&p.cook>0?'kocht gerade …':inside}</div>`+
     (dishes.length?dishes.map(recCard).join('')
-      :'<p class="sidenote">Du kennst noch kein Gericht. Die Rezepte dafür haben die Jannessen.</p>')+
-    '<p class="sidenote">Zutaten hineinwerfen (Q), dann Rechtsklick.</p>';
+      :'<p class="sidenote">Du kennst noch kein Gericht. Die Rezepte dafür haben die Jannessen.</p>');
   box.classList.remove('hidden');
   potPanelOn=true;
 }
 // Am Fadenkreuz steht, wie voll der Topf ist — sonst müsste man raten.
 function potTip(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
-  const n=p?potCount(p):0;
-  return p&&p.cook>0 ? '🍲 Kochtopf — kocht …'
-       : n ? `🍲 Kochtopf ${n}/${POT_CAP} — Rechtsklick zum Kochen`
-           : '🍲 Kochtopf — wirf Zutaten hinein (Q)';
+  if(p&&p.cook>0) return '🍲 …';
+  if(!p||!p.items.length) return '🍲';
+  return '🍲 '+p.items.map(i=>ITEMS[i.id].ic+(i.n>1?i.n:'')).join(' ');
 }
 function usePot(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
-  if(!p||!p.items.length){ toast('🍲 Der Topf ist leer — wirf Zutaten hinein (Q).','warn',2600); return; }
+  if(!p||!p.items.length){ toast('🍲 Leer.','warn',2000); return; }
   if(p.cook>0){ toast('🍲 Es kocht schon.','',1400); return; }
   // p.cook ist nur noch ein 0/1-Kochflag, nicht mehr der Countdown selbst —
   // die eigentliche Zielzeit ist p.readyAt, eine absolute Wanduhrzeit, damit
@@ -1409,8 +1408,10 @@ function say(c,txt,ms=4200){
   c.bubble.visible=true; c.bubbleT=ms/1000;
 }
 // ------------------------------------------------------------------ Manni-Markt
-// Manni kauft, was man ihm über den Tresen wirft, und zahlt bar. Verkauft
-// wird nur, was sich nicht bauen lässt: Boot, Brett und Schirm.
+// Ein Fenster zum Ziehen, keins zum Lesen: Annahme und Auslage sind Zellen
+// wie im Rucksack auch, bedient von denselben clickCell-Nachbarn (s.u.).
+// MARKET_R bleibt für den alten Wurf-Radius stehen — Q wirft nach wie vor
+// vor Mannis Füße, nur landet es nicht mehr zwangsläufig im Verkauf.
 const MARKET_R=2.6;
 // Die Preise sind Stationen auf dem Weg zum Ziel: das Brett ist früh drin,
 // der Schirm bleibt eine Weile ein Wunsch. Alle drei bringen dich schneller
@@ -1449,35 +1450,50 @@ function buyFrom(id){
   if(isConnected()){ send({t:'buy',id}); return; }
   if(state.money<w.price){ SND.fail(); toast('💶 Dafür reicht es nicht.','warn',1800); return; }
   state.money-=w.price; state.bought++;
-  // Er reicht es über den Tresen, in die Richtung, in der man steht.
-  const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
-  spawnDrop(id,1,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.2,2.4,dz/l*2.2,.4);
+  // In die Hand, nicht vor die Füße — anders als beim Verkaufen liegt hier
+  // nichts, das erst noch am Boden landen müsste.
+  giveOrDrop(id,1);
   SND.craft();
   say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
   toast('🛒 '+ITEMS[id].ic+' '+ITEMS[id].nm+' gekauft.','good',2600);
   updateHUD();
-  openMarket(marketChar);
+  rerenderPanel();
 }
-function openMarket(c){
+// Das Fenster besteht nur noch aus dem, was man ohnehin schon kann: Zellen
+// anklicken. Namen, Preise und der Rätseltext (siehe fert) stehen nicht mehr
+// im Fließtext, sondern ausschließlich in der Schwebehilfe (itemUnder/
+// updateItemTip) — dafür tragen die Zellen data-want/data-shop/data-accept.
+function openMarket(c,keep){
+  panel='market';
   const buys=Object.entries(PRICES).map(([id,p])=>
     `<div class="pc" data-want="${id}">${icon(id)}<span class="n">${p}</span></div>`).join('');
-  const sells=SHOP.map(w=>{
+  const shop=SHOP.map(w=>{
     const can=state.money>=w.price;
-    return `<div class="recipe${can?'':' off'}"><div class="ico">${icon(w.id)}</div>
-      <div class="txt"><div class="nm">${ITEMS[w.id].nm} — ${w.price} €</div>
-      <div class="ds">${w.txt}</div></div>
-      <button data-buy="${w.id}"${can?'':' disabled'}>Kaufen</button></div>`;
+    return `<div class="cell${can?'':' off'}" data-shop="${w.id}">${icon(w.id)}<span class="n">${w.price}</span></div>`;
   }).join('');
-  showModal(`<h2>🛒 Manni-Markt</h2>
-    <p style="text-align:center;font-size:13px">Kasse <b>${state.money} €</b> ·
-    insgesamt verdient <b>${state.earned} €</b> von ${GOAL} €</p>
-    <h3>Manni kauft — wirf es ihm hin (Q)</h3>
+  showModal(`<h2>💶 ${state.money} €</h2>
+    <h3>Mannis Annahme</h3>
     <div class="patwrap"><div class="pat"
-      style="grid-template-columns:repeat(${Object.keys(PRICES).length},30px)">${buys}</div>
-      <div class="arrow">➜</div><div class="pc res">💶</div></div>
-    <h3>Manni verkauft — nichts davon lässt sich bauen</h3>
-    ${sells}
-    <div class="btnrow"><button class="primary" data-act="close">Weiter</button></div>`);
+      style="grid-template-columns:repeat(${Object.keys(PRICES).length},30px)">${buys}</div></div>
+    <div class="cell accept" data-accept>📥</div>
+    <h3>Mannis Auslage</h3>
+    <div class="invgrid" style="grid-template-columns:repeat(${SHOP.length},64px);justify-content:center">${shop}</div>
+    <h3>Rucksack</h3>${invGrid()}
+    <div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>`,keep);
+  drawCarry();
+  updateItemTip();
+}
+// Mannis Annahme: der Stapel am Zeiger fällt hinein und ist sofort verkauft
+// (sellTo() macht den Rest) — kauft Manni es nicht, bleibt er einfach in der
+// Hand hängen, genau wie ein abgelehnter Tausch anderswo im Spiel.
+function clickAccept(one){
+  if(!carry) return;
+  if(!PRICES[carry.id]){ SND.fail(); return; }
+  const n=one?1:carry.n;
+  sellTo(carry.id,n);
+  carry.n-=n; if(carry.n<=0) carry=null;
+  drawCarry();
+  rerenderPanel();
 }
 
 const _wp=new THREE.Vector3();
@@ -1771,7 +1787,7 @@ function respawn(){
   if(!isConnected())
     for(let i=mobs.length-1;i>=0;i--)
       if(Math.hypot(mobs[i].x-s.x,mobs[i].z-s.z)<10) dropMob(mobs[i],i);
-  toast('💀 Du bist gestorben. Dein Kram bleibt bei dir.','bad',3600);
+  toast('💀 Gestorben — Kram bleibt.','bad',3000);
   updateHUD();
 }
 
@@ -1834,12 +1850,14 @@ function updateTarget(){
   const b=target?BLOCKS[target.type]:null;
   const atPot=!aimed&&!aimedSign&&!aimedVehicle&&b&&b.use==='pot'?target.cell:null;
   updatePotPanel(atPot);
-  const txt=aimed?aimed.name+(aimed.trade&&!aimed.trade.done?' — Rechtsklick zum Tauschen':' — Rechtsklick')
-           :aimedSign?'🪧 '+(aimedSign.sign.text||'(leer)')+' — Rechtsklick zum Beschriften'
+  // Nur noch der Name — das goldene Fadenkreuz (#cross.hot) sagt längst,
+  // dass hier etwas geht; welche Taste, steht in der Tastenlegende.
+  const txt=aimed?aimed.name
+           :aimedSign?'🪧 '+(aimedSign.sign.text||'(leer)')
            :aimedVehicle?ITEMS[VEHICLES[aimedVehicle.kind].item].ic+' '+VEHICLES[aimedVehicle.kind].nm+
-             (aimedVehicle.rider!=null?' — besetzt':' — Rechtsklick zum Einsteigen, Schlag hebt auf')
+             (aimedVehicle.rider!=null?' 🔒':'')
            :atPot?potTip(atPot)
-           :b&&b.use?b.nm+' — Rechtsklick':'';
+           :b&&b.use?b.nm:'';
   if(tip.textContent!==txt) tip.textContent=txt;
   el('cross').classList.toggle('hot',!!aimed||!!aimedSign||!!aimedVehicle||(!!target&&!!BLOCKS[target.type].use));
 }
@@ -2100,6 +2118,7 @@ function openChest(cell){
   if(!c){ c={items:Array(24).fill(null),opened:false}; chests.set(k,c); }
   if(!c.opened){ c.opened=true; state.chests++; }
   openChestCell=cell;
+  panel='chest';
   SND.chest();
   renderChest();
 }
@@ -2120,7 +2139,7 @@ function renderChest(){
   const hasAny=c.items.some(Boolean);
   let h='<h2>🧰 Truhe</h2>'+chestGrid(c)+
     '<h3>Rucksack</h3>'+invGrid()+
-    '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
+    dragHint()+
     '<div class="btnrow">'+(hasAny?'<button data-act="takeall">Alles nehmen</button>':'')+
     '<button class="primary" data-act="close">Schließen</button></div>';
   showModal(h,true);
@@ -2412,6 +2431,15 @@ function winGame(){
 // ------------------------------------------------------------------ Fenster
 const modal=el('modal'), mbox=el('mbox'), mside=el('mside');
 let craftStation=null;
+// Welches der drei Fenster gerade offen ist — Raster (Rucksack/Werkbank),
+// Truhe oder Markt. clickCell() braucht das, um zu wissen, was es nach einem
+// Klick neu zeichnen muss (s.u.).
+let panel=null;
+function rerenderPanel(){
+  if(panel==='chest') renderChest();
+  else if(panel==='market') openMarket(marketChar,true);
+  else renderCraft();
+}
 // side ist die Rezeptleiste neben dem Fenster; ohne sie bleibt sie weg.
 function showModal(html,keep,side){
   const sc=mbox.scrollTop, ss=mside.scrollTop;
@@ -2426,7 +2454,7 @@ function hideModal(){
   clearGrid();                           // was im Raster liegt, gehört dem Spieler
   dropCarry();
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
-  tradePartner=null; mining=false; openSignCell=null;
+  tradePartner=null; mining=false; openSignCell=null; panel=null;
 }
 const modalOpen=()=>!modal.classList.contains('hidden');
 
@@ -2540,8 +2568,6 @@ function sideHTML(){
   return `<h3>📜 ${gridN===3?'An der Werkbank':'Im Rucksack'}</h3>`+
     (list.length?list.map(recCard).join('')
       :'<p class="sidenote">Hier lässt sich noch nichts bauen.</p>')+
-    (gridN===2?'<p class="sidenote">Alles, was breiter oder höher als zwei ist, '+
-      'geht nur an der 🛠️ Werkbank.</p>':'')+
     (unknown?'<p class="sidenote">'+unknown+' Rezept'+(unknown===1?'':'e')+
       ' kennst du noch nicht — die zeigen dir die Jannessen.</p>':'');
 }
@@ -2569,12 +2595,12 @@ function clickCell(ref,one){
   } else if(one) return;                 // getauscht wird nur mit voller Hand
   else { refSet(ref,carry); carry=cur; }
   SND.tap(); updateHUD();
-  // clickCell bedient das Rucksack-Gitter, das sowohl das Werkbank-/
-  // Rucksackfenster als auch (seit den Truhen) das Truhenfenster mitbenutzt —
-  // neu zeichnen muss darum das gerade offene Fenster, nicht blind das
-  // Werkbankfenster, sonst reißt ein Klick ins eigene Inventar bei offener
-  // Truhe die Ansicht auf die Werkbank um.
-  if(openChestCell) renderChest(); else renderCraft();
+  // clickCell bedient das Rucksack-Gitter, das Werkbank-/Rucksackfenster,
+  // Truhenfenster UND (seit dem Markt) das Marktfenster gemeinsam nutzen —
+  // neu zeichnen muss darum das gerade offene Fenster (panel), nicht blind
+  // eines der drei, sonst reißt ein Klick ins eigene Inventar bei offener
+  // Truhe oder offenem Markt die Ansicht auf die Werkbank um.
+  rerenderPanel();
 }
 function dropCarry(){                    // beim Schließen zurück in den Rucksack
   if(!carry) return;
@@ -2593,6 +2619,10 @@ function itemUnder(node){
   if(d.bar!=null) return slots[+d.bar]?.id||null;
   if(d.g!=null) return grid[+d.g]?.id||null;
   if(d.want) return d.want;
+  if(d.shop) return d.shop;
+  // Kein echter Gegenstand, aber Text nur auf Zuruf gibt es hier trotzdem —
+  // das Sonderzeichen fängt updateItemTip weiter unten ab.
+  if(d.accept!=null) return 'accept';
   if(d.chest!=null&&openChestCell){
     const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
     return c?.items[+d.chest]?.id||null;
@@ -2604,11 +2634,18 @@ function updateItemTip(){
   // Beim Tragen hängt der Stapel schon am Zeiger, da stört der Kasten nur.
   if(carry||document.pointerLockElement){ tipEl.style.display='none'; return; }
   const node=document.elementFromPoint?.(mouseX,mouseY);
-  const cell=node&&node.closest?.('[data-slot],[data-bar],[data-g],[data-chest],[data-want],[data-act]');
+  const cell=node&&node.closest?.(
+    '[data-slot],[data-bar],[data-g],[data-chest],[data-want],[data-act],[data-shop],[data-accept]');
   const id=itemUnder(cell);
   if(!id){ tipEl.style.display='none'; return; }
-  const note=itemNote(id);
-  tipEl.innerHTML=`<b>${ITEMS[id].nm}</b>`+(note?`<i>${note}</i>`:'');
+  if(id==='accept') tipEl.innerHTML='<b>Mannis Annahme</b><i>Stapel ablegen — verkauft sofort</i>';
+  else{
+    // Bei Manni zählt Preis und Beschreibung, nicht die Spielwerte-Notiz —
+    // die zwei Tooltipp-Arten teilen sich hier bewusst nur das Gerüst.
+    const shop=cell.dataset.shop&&SHOP.find(s=>s.id===id);
+    const note=shop?shop.price+' € · '+shop.txt:itemNote(id);
+    tipEl.innerHTML=`<b>${ITEMS[id].nm}</b>`+(note?`<i>${note}</i>`:'');
+  }
   tipEl.style.display='block';
   // An der rechten oder unteren Kante nach innen klappen
   const w=tipEl.offsetWidth, h=tipEl.offsetHeight;
@@ -2627,6 +2664,9 @@ function drawCarry(){
   moveCarry();
 }
 const stackHTML=s=>s?icon(s.id)+`<span class="n">${s.n>1?s.n:''}</span>`:'';
+// Eine Zeile für beide Fenster (Raster wie Truhe) — stand früher zweimal im
+// Text und drohte irgendwann auseinanderzudriften.
+const dragHint=()=>'<p class="hint">🖱️L Stapel · 🖱️R eins</p>';
 function craftHTML(){
   const r=matchRecipe();
   let h=`<div class="craft"><div class="cgrid c${gridN}">`;
@@ -2634,7 +2674,7 @@ function craftHTML(){
   h+='</div><div class="arrow">➜</div>';
   h+=`<div class="cell res${r?'':' empty'}" data-act="craft">`+
      (r?icon(r.out[0])+`<span class="n">${r.out[1]>1?r.out[1]:''}</span>`:'')+'</div></div>';
-  if(gridN===2) h+='<p class="hint">2×2 — Größeres geht nur an der 🛠️ Werkbank.</p>';
+  if(gridN===2) h+='<p class="hint">2×2 — Größeres nur an der 🛠️ Werkbank.</p>';
   return h;
 }
 function invGrid(){
@@ -2651,12 +2691,13 @@ function openCraft(station){
   clearGrid();                           // sonst stranden Zutaten in Zellen,
   craftStation=station||null;            // die das kleinere Raster nicht zeigt
   gridN=station?3:2;
+  panel='craft';
   renderCraft(false);
 }
 function renderCraft(keep=true){
   const title=craftStation==='bench'?'🛠️ Werkbank':'🎒 Inventar';
   showModal('<h2>'+title+'</h2>'+craftHTML()+'<h3>Rucksack</h3>'+invGrid()+
-    '<p class="hint">Links nimmt den ganzen Stapel, rechts genau einen.</p>'+
+    dragHint()+
     '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',
     keep,sideHTML());
   drawCarry();
@@ -2664,25 +2705,9 @@ function renderCraft(keep=true){
 }
 function openIntro(){
   showModal(`<h2>⛏️ ErnteDominiksFest</h2>
-  <p><b>Ziel: ${GOAL} €.</b> Ernte 🍑 Dominiks und wirf sie Manni über den Tresen — einen Euro
-  das Stück. Gekocht bringen sie ein Vielfaches: die 🍲 Dominik-Suppe zahlt <b>100 €</b>.</p>
-  <p>Nebenbei überleben: bau ab, bau auf, halte die Bennis aus der Nacht heraus.</p>
-  <p>Gebaut wird im <b>Raster</b>: Zutaten hineinlegen wie beim Vorbild, 2×2 im Rucksack,
-  3×3 an der <b>🛠️ Werkbank</b>. Wer ein Muster richtig legt, hat das Rezept entdeckt.</p>
-  <p>Abgebautes fällt als <b>Würfel</b> zu Boden — hingehen, aufheben. Mit <b>Q</b> wirfst du
-  selbst etwas heraus. So wird auch gekocht: Zutaten in den <b>🍲 Kochtopf</b> werfen,
-  Rechtsklick, warten. Passt es zusammen, kommt ein Gericht heraus; sonst Pampe.</p>
-  <p>Am <b>🛒 Manni-Markt</b> gibt es auch, was sich nicht bauen lässt: <b>🛹 Skateboard</b>,
-  <b>🛶 Boot</b>, <b>🪂 Gleitschirm</b>. Die <b>stellst du hin</b> (Rechtsklick), <b>steigst ein</b>
-  (nochmal Rechtsklick) und fährst los — <b>F</b> steigt aus, ein <b>Schlag</b> hebt sie wieder auf.
-  Beim Fahren siehst du dich selbst von hinten. Im <b>Wasser</b> schwimmst du — <b>␣</b> hoch,
-  <b>⇧</b> runter; hineinspringen tut nicht weh.</p>
-  <p><b>📜 Rezepte</b> gibt es bei den <b>Jannessen</b> — in den Dorfhäusern und draußen in der
-  Welt. Sie wollen Essen und zeigen dir dafür, wie das nächste geht; nach einer Weile fällt
-  ihnen etwas Neues ein. Der erste im Tal zeigt dir die <b>🧑‍🌾 Hacke</b>.</p>
-  <p>Damit legst du ein <b>Feld</b> an: Boden hacken, <b>Saatgut</b> säen (das fällt beim
-  Pflücken ab), warten, ernten. Was du nicht anbaust, findest du draußen —
-  🧂 Salz tief im Fels, 🌶️ Pfeffer hinter dem Fluss.</p>
+  <p><b>Ziel: ${GOAL} €.</b> Ernte 🍑 Dominiks, verkauf sie bei 🛒 Manni — gekocht bringen sie
+  ein Vielfaches, die 🍲 Suppe allein <b>100 €</b>.</p>
+  <p>Nachts kommen die 🌙 Bennis; Licht und eine Waffe halten sie fern.</p>
   <div class="kbd">
     <b>WASD</b> laufen &nbsp; <b>⇧</b> rennen &nbsp; <b>␣</b> springen<br>
     <b>LMB</b> abbauen / schlagen &nbsp; <b>RMB</b> setzen / benutzen / lesen / essen<br>
@@ -2695,12 +2720,8 @@ function openIntro(){
 function togglePause(){
   if(modalOpen()){ hideModal(); return; }
   showModal(`<h2>⏸️ Pause</h2>
-    <p style="font-size:13px">💶 <b>${state.money} €</b> in der Kasse ·
-    🎯 <b>${state.earned}</b> von ${GOAL} € verdient</p>
-    <p style="font-size:12.5px;opacity:.85">📜 ${known.size}/${RECIPES.length} Rezepte ·
-    🤝 ${state.trades} Handel · 🌱 ${state.planted} gepflanzt ·
-    🧰 ${state.chests} Truhen · ⛏️ ${state.mined} abgebaut · 🧱 ${state.placed} gesetzt ·
-    🌙 Tag ${state.day}</p>
+    <p style="font-size:13px">💶${state.money} · 🎯${state.earned}/${GOAL} ·
+    📜${known.size}/${RECIPES.length} · 🌙 Tag ${state.day}</p>
     <div class="btnrow">
       <button data-act="help">❓ Hilfe</button>
       <button class="primary" data-act="close">Weiter</button></div>`);
@@ -2708,21 +2729,22 @@ function togglePause(){
 // Zellen hören auf mousedown, sonst käme die rechte Maustaste nie an:
 // ein Rechtsklick löst gar kein click-Ereignis aus.
 mbox.addEventListener('mousedown',e=>{
-  const c=e.target.closest('[data-slot],[data-g],[data-chest]');
+  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-accept]');
   if(!c) return;
   e.preventDefault(); e.stopPropagation();
   ac();
   const one=e.button===2;
   if(c.dataset.chest!=null) clickChestCell(+c.dataset.chest,one);
   else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
+  else if(c.dataset.accept!=null) clickAccept(one);
   else clickCell({k:'g',i:+c.dataset.g},one);
 });
 mbox.addEventListener('click',e=>{
-  const b=e.target.closest('button,[data-act]');
+  const b=e.target.closest('button,[data-act],[data-shop]');
   if(!b) return;
   e.stopPropagation();
   ac();
-  if(b.dataset.buy){ buyFrom(b.dataset.buy); return; }
+  if(b.dataset.shop){ buyFrom(b.dataset.shop); return; }
   const act=b.dataset.act;
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='trade'){ doTrade(); return; }
@@ -2880,7 +2902,7 @@ function onMounted(){
   view=view||1;                            // Fahren zeigt man in dritter Person
   player.x=riding.x; player.z=riding.z; player.y=riding.y; player.vy=0;
   SND.chest();
-  toast('🚗 Eingestiegen — F steigt wieder aus.','',2200);
+  toast('🚗 Eingestiegen.','',1600);
 }
 function leaveVehicle(){
   if(!riding) return;
@@ -3565,8 +3587,7 @@ on('econ',msg=>{
   if(msg.won&&!state.won) winGame();
   if(msg.buyResult&&msg.buyResult.pid===getPid()){
     if(msg.buyResult.ok){
-      const dx=player.x-marketChar.x, dz=player.z-marketChar.z, l=Math.hypot(dx,dz)||1;
-      spawnDrop(msg.buyResult.id,1,marketChar.x,marketChar.y+1.5,marketChar.z,dx/l*2.2,2.4,dz/l*2.2,.4);
+      giveOrDrop(msg.buyResult.id,1);
       SND.craft();
       say(marketChar,ITEMS[msg.buyResult.id].nm+', bitte sehr!',3200);
       toast('🛒 '+ITEMS[msg.buyResult.id].ic+' '+ITEMS[msg.buyResult.id].nm+' gekauft.','good',2600);

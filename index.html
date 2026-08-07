@@ -163,6 +163,19 @@
   }
   #mbox h3{font-size:12px;opacity:.7;margin:10px 0 0;text-transform:uppercase;letter-spacing:.5px}
 
+  /* ---------- Manni-Markt ---------- */
+  /* Nichts Neues erfunden: Annahme und Auslage sind dieselben .cell/.pc-
+     Kästchen wie überall sonst im Fenster, nur zu zweien Reihen sortiert. */
+  #mbox .cell.accept{
+    width:72px;margin:8px auto;font-size:30px;border:2px dashed #4a774a;
+    background:rgba(255,215,106,.06)
+  }
+  #mbox .cell.accept:hover{border-color:#ffd76a;background:rgba(255,215,106,.16)}
+  /* Unbezahlbares in der Auslage bleibt sichtbar, aber blass — wie ein
+     Rezept ohne Zutaten (.rec.off/.recipe.off) blass bleibt. */
+  #mbox .cell.off{opacity:.4;cursor:default}
+  #mbox .cell.off:hover{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.05)}
+
   /* ---------- Gegenstandsbildchen ---------- */
   /* Ein Sprite füllt seine Zelle zu gut drei Vierteln; fehlt es, steht an
      seiner Stelle der alt-Text — dann greift die Schriftgröße der Zelle. */
