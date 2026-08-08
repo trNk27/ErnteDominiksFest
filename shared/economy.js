@@ -27,6 +27,15 @@ export const SHOP=[
   // ein Klotz — und wer damit gegen etwas fährt, muss nicht erst absteigen
   // und abbauen.
   {id:'truck', price:3000, txt:'Was im Weg steht, ist im Weg gewesen.'},
+  // Skins: kein Gegenstand für den Rucksack, sondern ein Aussehen für die
+  // Spielfigur — skin markiert das fürs Fenster (siehe game.js openMarket),
+  // skinIdx zeigt auf SKINS dort (Index 0 = der Standard-Look, unverkäuflich).
+  {id:'skin_dominik', price:400,  skin:true, skinIdx:1,
+   txt:'Pfirsichfarbener Kittel, wie frisch vom Strauch gepflückt.'},
+  {id:'skin_benni',   price:900,  skin:true, skinIdx:2,
+   txt:'Zottelig und dunkel — man erschreckt sich selbst im Spiegel.'},
+  {id:'skin_manni',   price:1800, skin:true, skinIdx:3,
+   txt:'Mannis eigener Arbeitskittel, waschecht vom Markt.'},
 ];
 
 // ------------------------------------------------------------------ Rezepte

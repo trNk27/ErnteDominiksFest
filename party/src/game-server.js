@@ -170,7 +170,12 @@ const MAX_PLAYERS = 4;
 // Storage key for the single JSON blob holding all persisted world edits and
 // torches. One blob (not per-key storage) is simplest and plenty fast for
 // the edit volume a 4-player casual game produces.
-const STORAGE_KEY = "world";
+// Bumped from "world" to "world2" to deliberately abandon the old save: the
+// projectile/monstertruck/skin round wanted a clean slate (see the README's
+// "Die Welt" section). The old blob is simply orphaned rather than deleted —
+// a Durable Object keeps it at the old key for free, so a bad surprise after
+// the reset can still be dug back out by pointing this constant back.
+const STORAGE_KEY = "world2";
 // How long to wait after the last edit before writing to storage — avoids a
 // storage.put() per dig/place while someone is rapidly mining.
 const FLUSH_DEBOUNCE_MS = 2000;
