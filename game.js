@@ -254,10 +254,18 @@ renderer.domElement.addEventListener('webglcontextrestored',()=>{
   glLost=false;
   toast('🧊 Grafik ist wieder da.','good',2500);
 });
-// autoClear aus, weil frame() nach der Hauptszene noch die Hand-Szene
-// obendrauf rendert (siehe Abschnitt "Hand") — wir übernehmen das Löschen
-// dort von Hand (renderer.clear() vor der Hauptszene, clearDepth() davor).
-renderer.autoClear=false;
+// autoClear bleibt AN. Es stand hier eine Weile auf false, weil frame() nach
+// der Weltszene noch die Hand obendrauf rendert und beides sich ein Bild
+// teilen muss — das Löschen übernahm dann ein eigenes renderer.clear().
+// Das war ein Griff daneben: damit hing das Löschen des GANZEN Bildes an
+// einer einzelnen Zeile in frame(), und wo die nicht ankommt, lädt eine
+// Handy-Grafik (die rechnen kachelweise und heben das vorige Bild auf) das
+// alte Bild einfach wieder hoch. Sichtbar wird das als Schlieren: ein
+// laufender Benni oder ein fliegender Basketball hinterlässt eine ganze Kette
+// von Abzügen quer über den Bildschirm, während Gelände und Bedienung sauber
+// bleiben (die stehen ja still und werden jedes Bild neu darübergemalt).
+// Jetzt löscht wieder three.js selbst, auf dem ausgetretenen Pfad, und nur
+// für den einen Moment des Hand-Durchgangs wird es abgeschaltet (s. frame()).
 document.body.insertBefore(renderer.domElement,document.body.firstChild);
 
 scene=new THREE.Scene();
@@ -5410,14 +5418,23 @@ function frame(now){
     // wiederherstellen zu können (siehe die contextlost-Zuhörer oben). Das
     // Spiel selbst rechnet weiter, es malt nur nicht.
     if(glLost) return;
-    renderer.clear();                    // autoClear ist aus, siehe Renderer-Setup oben
+    // Die Weltszene löscht wieder ganz gewöhnlich selbst (autoClear, s.
+    // Renderer-Setup) — genau ein Aufruf, und das Bild ist in jedem Fall
+    // sauber, auch wenn danach etwas schiefgeht.
+    renderer.autoClear=true;
     renderer.render(scene,camera);
     // Hand: nur in der Ich-Sicht, nicht bei Pause und nicht hinter einem
     // offenen Fenster/Modal (Anforderung 4). Im Fahrzeug bleibt sie sichtbar
     // — riding hat auf view keinen Einfluss, siehe updateSelfModel.
+    // Für diesen einen Durchgang MUSS das Löschen aus bleiben, sonst wischte
+    // er die eben gezeichnete Welt weg; direkt danach steht es wieder an, und
+    // zwar auch dann, wenn dazwischen etwas wirft (deshalb finally).
     if(view===0&&!state.paused&&!modalOpen()){
-      renderer.clearDepth();             // eigene Tiefe, damit nichts aus der Welt reinragt
-      renderer.render(handScene,handCam);
+      try{
+        renderer.autoClear=false;
+        renderer.clearDepth();           // eigene Tiefe, damit nichts aus der Welt reinragt
+        renderer.render(handScene,handCam);
+      }finally{ renderer.autoClear=true; }
     }
   }catch(e){
     if(++frameErrs<4) console.error(e);
