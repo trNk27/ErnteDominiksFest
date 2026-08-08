@@ -574,11 +574,11 @@ jedem Start dieselbe, kein Speicherstand nötig.
   der Oberfläche, inzwischen gut anderthalbmal so dicht gesät wie früher. Eine Lage
   höher, schon ab vier Blöcken Tiefe, liegen dunklere **⚫ Kohleadern**. Ohne ⛏️
   Spitzhacke wird bei beiden nichts.
-- **Drei Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
+- **Sechs Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
   steht eine Truhe, im zweiten wohnt ein **Jannes**.
 - Wild wachsende **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** kommen **nicht wieder** —
   wer dauerhaft ernten will, legt sich ein 🧑‍🌾 **Feld** an.
-- **8 Truhen**, drei davon in Dörfern; **8 Jannessen**, die umherstreifen.
+- **18 Truhen**, sechs davon in Dörfern; **11 Jannessen**, die umherstreifen.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen, und
   darin der **🛒 Manni-Markt**.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
