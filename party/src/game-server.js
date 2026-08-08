@@ -200,6 +200,15 @@ const VEHICLE_KINDS = new Set(["boat", "board", "glider", "truck"]);
 // A cap so a room full of forgotten boats can't grow the persisted blob
 // without bound; placing past it retires the oldest one (see `vehicle-place`).
 const MAX_VEHICLES = 64;
+// Player skins (cosmetic-only, see the `pos` handler): index into the
+// client's SKINS table (game.js), where 0 is the always-free default look
+// and 1..MAX_SKIN are Manni's purchasable ones. The server holds no
+// per-player records to check real ownership against (see the class-level
+// comment on lastPos) — skin ownership is entirely client-side by design —
+// so this constant only bounds the field against garbage/malicious values,
+// same rationale as VEHICLE_KINDS/SIGN_TEXT_MAX above. Bump it in lockstep
+// with SKINS.length-1 whenever a skin is added.
+const MAX_SKIN = 3;
 
 // WebSocket close codes in the 4000-4999 range are reserved for application use
 // (RFC 6455 7.4.2). We define our own small protocol here.
@@ -479,7 +488,7 @@ export class GameServer extends DurableObject {
     this.connByPid = new Map();
     /** @type {Set<number>} pids currently assigned (pool is 1..MAX_PLAYERS) */
     this.usedPids = new Set();
-    /** @type {Map<number, {x:number,y:number,z:number,yaw:number,pitch:number,hp:number,food:number,sel:number}>} pid -> last known position/pose */
+    /** @type {Map<number, {x:number,y:number,z:number,yaw:number,pitch:number,hp:number,food:number,sel:number,skin:number}>} pid -> last known position/pose */
     this.lastPos = new Map();
     // Phase 3b: growing crops and cooking pots have no equivalent in
     // shared/world.js (unlike chests, which createWorld() already builds
@@ -1392,7 +1401,16 @@ export class GameServer extends DurableObject {
       if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) {
         return; // reject the whole message rather than half-apply it
       }
-      const pos = { x, y, z, yaw, pitch, hp, food, sel };
+      // skin is the one OPTIONAL field here, and deliberately so: a client
+      // still running a cached pre-skin game.js sends no `skin` at all, and
+      // rejecting its whole message would freeze that player on everyone
+      // else's screen until they hard-reloaded. Missing simply means the
+      // default look. Present, it only ever indexes a table (see MAX_SKIN),
+      // so it must be a small non-negative integer — anything else is
+      // garbage and falls back to 0 rather than dropping the position with it.
+      const skin =
+        Number.isInteger(msg.skin) && msg.skin >= 0 && msg.skin <= MAX_SKIN ? msg.skin : 0;
+      const pos = { x, y, z, yaw, pitch, hp, food, sel, skin };
       this.lastPos.set(pid, pos);
       this._broadcast({ t: "pos", pid, ...pos }, [connId]);
     } else if (msg.t === "block") {

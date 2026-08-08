@@ -133,26 +133,44 @@ const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
 
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
-  bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0};
+  bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0,
+  // Besitz und Wahl der Skins von Manni (siehe SKINS) — gehören zum
+  // Spielerzustand, NICHT zu slots: ein Skin ist kein Gegenstand, der aus
+  // dem Rucksack fallen oder weggeworfen werden könnte. Index 0 (Standard)
+  // ist immer "gekauft".
+  skins:[0], skin:0};
 
 // ------------------------------------------------------------------ Speichern
 // Nur die sinnvollen Felder sichern; transiente Pro-Frame-Physik (vy,
 // onGround,wet,bob,stepT,atkCd,hurtT,invT,fallFrom) soll beim Laden neu
 // starten statt in einem seltsamen Zwischenzustand aufzutauchen.
+// Die Schlüssel tragen eine 2, seit die Welt einmal zurückgesetzt wurde
+// (Wurfweiten, Monstertruck, Skins — der Server hat dazu passend seinen
+// Speicherschlüssel auf "world2" gehoben, siehe STORAGE_KEY dort). Rucksack
+// und Standort fangen damit von vorn an, statt dass jemand mit vollen Taschen
+// in einer nagelneuen Welt aufwacht. Das Passwort (edf_pw) und der gesehene
+// Willkommensgruß (edf_seen) hängen nicht an der Welt und bleiben, wo sie sind.
 function savePersist(){
   try{
-    const{x,y,z,yaw,pitch,hp,food}=player;
-    localStorage.setItem('edf_player',JSON.stringify({x,y,z,yaw,pitch,hp,food}));
-    localStorage.setItem('edf_slots',JSON.stringify(slots));
+    const{x,y,z,yaw,pitch,hp,food,skins,skin}=player;
+    localStorage.setItem('edf_player2',JSON.stringify({x,y,z,yaw,pitch,hp,food,skins,skin}));
+    localStorage.setItem('edf_slots2',JSON.stringify(slots));
   }catch(e){}
 }
 function loadPersist(){
   try{
-    const p=JSON.parse(localStorage.getItem('edf_player'));
+    const p=JSON.parse(localStorage.getItem('edf_player2'));
     if(p) Object.assign(player,p);
   }catch(e){}
+  // Ein beschädigter oder älterer Speicherstand darf nie zu einem Index
+  // außerhalb SKINS oder einer leeren Besitzliste führen — sonst bliebe die
+  // eigene Figur unsichtbar oder mit einem falschen Skin gebaut.
+  if(!Array.isArray(player.skins)) player.skins=[0];
+  player.skins=player.skins.filter(i=>Number.isInteger(i)&&i>=0&&i<SKINS.length);
+  if(!player.skins.includes(0)) player.skins.push(0);
+  if(!Number.isInteger(player.skin)||!player.skins.includes(player.skin)) player.skin=0;
   try{
-    const s=JSON.parse(localStorage.getItem('edf_slots'));
+    const s=JSON.parse(localStorage.getItem('edf_slots2'));
     if(Array.isArray(s)) for(let i=0;i<NSLOT;i++) slots[i]=s[i]||null;
   }catch(e){}
 }
@@ -646,6 +664,9 @@ function icon(id,cls=''){
   return src?`<img class="ic ${cls}" src="${src}" alt="${it.ic}" draggable="false">`
             :`<span class="ic ${cls}">${it.ic}</span>`;
 }
+// Wie icon(), aber für einen Skin (siehe SKINS) — kein ITEMS-Eintrag, also
+// auch kein Bildchen, nur dessen Emoji.
+function skinIcon(idx,cls=''){ return `<span class="ic ${cls}">${SKINS[idx].ic}</span>`; }
 
 // Die zwei offensichtlichen kennt man von zu Hause, der Rest will gefunden
 // oder ausprobiert werden.
@@ -1580,6 +1601,23 @@ function sellTo(id,n){
   if(isConnected()) send({t:'sell',id,n});
   else{ state.sold+=n; earn(sum); }
 }
+// Skins gehören zu player (siehe dort), nicht zu slots — anziehen ist rein
+// kosmetisch und komplett lokal, ohne die gemeinsame Kasse zu berühren. Die
+// eigene Figur baut sich von selbst neu (siehe updateSelfModel), Mitspieler
+// erfahren es über das skin-Feld der nächsten 'pos'-Nachricht.
+function equipSkin(idx){
+  if(player.skin===idx) return;
+  player.skin=idx;
+  savePersist();
+}
+// Ein gekaufter Skin gehört dauerhaft zu player.skins (siehe dort) — anders
+// als ein Rucksack-Gegenstand kann er weder rausfallen noch weggeworfen
+// werden.
+function unlockSkin(idx){
+  if(!player.skins.includes(idx)) player.skins.push(idx);
+  equipSkin(idx);
+  SND.craft();
+}
 // Kaufen dagegen ist ein echtes Wettrennen um die gemeinsame Kasse — zwei
 // Mitspieler dürfen niemals beide den letzten knapp leistbaren Artikel
 // bekommen. Also NICHT optimistisch: der Server entscheidet allein, ob es
@@ -1589,15 +1627,32 @@ function sellTo(id,n){
 function buyFrom(id){
   const w=SHOP.find(s=>s.id===id);
   if(!w||!marketChar) return;
+  // Ein Skin, den man schon hat, ist kein Kauf mehr, sondern nur noch ein
+  // Anziehen — dafür braucht es weder Server noch Kasse.
+  if(w.skin&&player.skins.includes(w.skinIdx)){
+    equipSkin(w.skinIdx);
+    SND.craft();
+    toast(SKINS[w.skinIdx].ic+' '+SKINS[w.skinIdx].nm+' angezogen.','good',2200);
+    rerenderPanel();
+    return;
+  }
   if(isConnected()){ send({t:'buy',id}); return; }
   if(state.money<w.price){ SND.fail(); toast('💶 Dafür reicht es nicht.','warn',1800); return; }
   state.money-=w.price; state.bought++;
-  // In die Hand, nicht vor die Füße — anders als beim Verkaufen liegt hier
-  // nichts, das erst noch am Boden landen müsste.
-  giveOrDrop(id,1);
-  SND.craft();
-  say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
-  toast('🛒 '+ITEMS[id].ic+' '+ITEMS[id].nm+' gekauft.','good',2600);
+  if(w.skin){
+    // Kein Gegenstand für den Rucksack — giveOrDrop bräuchte einen
+    // ITEMS-Eintrag, den es für einen Skin nicht gibt (siehe unlockSkin).
+    unlockSkin(w.skinIdx);
+    say(marketChar,SKINS[w.skinIdx].nm+', bitte sehr!',3200);
+    toast('🛒 '+SKINS[w.skinIdx].ic+' '+SKINS[w.skinIdx].nm+' gekauft.','good',2600);
+  }else{
+    // In die Hand, nicht vor die Füße — anders als beim Verkaufen liegt hier
+    // nichts, das erst noch am Boden landen müsste.
+    giveOrDrop(id,1);
+    SND.craft();
+    say(marketChar,ITEMS[id].nm+', bitte sehr!',3200);
+    toast('🛒 '+ITEMS[id].ic+' '+ITEMS[id].nm+' gekauft.','good',2600);
+  }
   updateHUD();
   rerenderPanel();
 }
@@ -1610,6 +1665,16 @@ function openMarket(c,keep){
   const buys=Object.entries(PRICES).map(([id,p])=>
     `<div class="pc" data-want="${id}">${icon(id)}<span class="n">${p}</span></div>`).join('');
   const shop=SHOP.map(w=>{
+    if(w.skin){
+      // Ein Skin bleibt nach dem Kauf stehen, statt aus der Auslage zu
+      // verschwinden — angewählt zeigt er sich wie ein aktives Leistenfach
+      // (.sel, siehe #hotbar .slot.sel), sonst nur ohne den "off"-Blasseffekt.
+      const owned=player.skins.includes(w.skinIdx), active=player.skin===w.skinIdx;
+      const cls=active?' sel':owned?'':(state.money>=w.price?'':' off');
+      const badge=active?'✓':owned?'':w.price;
+      return `<div class="cell${cls}" data-shop="${w.id}">${skinIcon(w.skinIdx)}`+
+             (badge!==''?`<span class="n">${badge}</span>`:'')+'</div>';
+    }
     const can=state.money>=w.price;
     return `<div class="cell${can?'':' off'}" data-shop="${w.id}">${icon(w.id)}<span class="n">${w.price}</span></div>`;
   }).join('');
@@ -2875,8 +2940,17 @@ function updateItemTip(){
     // Bei Manni zählt Preis und Beschreibung, nicht die Spielwerte-Notiz —
     // die zwei Tooltipp-Arten teilen sich hier bewusst nur das Gerüst.
     const shop=cell.dataset.shop&&SHOP.find(s=>s.id===id);
-    const note=shop?shop.price+' € · '+shop.txt:itemNote(id);
-    tipEl.innerHTML=`<b>${ITEMS[id].nm}</b>`+(note?`<i>${note}</i>`:'');
+    if(shop&&shop.skin){
+      // Kein ITEMS-Eintrag, also auch keine ITEMS[id].nm weiter unten —
+      // Name/Emoji kommen stattdessen aus SKINS (siehe skinIcon/openMarket).
+      const sk=SKINS[shop.skinIdx], owned=player.skins.includes(shop.skinIdx);
+      const active=player.skin===shop.skinIdx;
+      const note=active?'Angezogen':owned?'Gekauft — anklicken zum Anziehen':shop.price+' € · '+shop.txt;
+      tipEl.innerHTML=`<b>${sk.ic} ${sk.nm}</b><i>${note}</i>`;
+    }else{
+      const note=shop?shop.price+' € · '+shop.txt:itemNote(id);
+      tipEl.innerHTML=`<b>${ITEMS[id].nm}</b>`+(note?`<i>${note}</i>`:'');
+    }
   }
   tipEl.style.display='block';
   // An der rechten oder unteren Kante nach innen klappen
@@ -3360,7 +3434,7 @@ function makePlayerModel(pid,skinIdx=0){
     head.add(fp);
   }
   g.add(legL,legR,armL,armR,torso,head);
-  return Object.assign(g,{parts:{legL,legR,armL,armR,torso,head},gait:0});
+  return Object.assign(g,{parts:{legL,legR,armL,armR,torso,head},gait:0,skin:skinIdx});
 }
 // Haltung: 'walk' schwingt Arme und Beine gegengleich, 'sit' klappt die Beine
 // nach vorn (Boot), 'hang' hängt die Arme nach oben (Gleitschirm). Der Kopf
@@ -3502,19 +3576,32 @@ function updateHand(dt){
 // serverseitiges Zurückkorrigieren).
 const PLAYER_COLORS=['#e0555f','#4fa8e0','#e0c04f','#7bcf6a'];
 const remotePlayers=new Map();              // pid -> {group, target:{x,y,z,yaw}}
-function ensureRemotePlayer(pid){
+function ensureRemotePlayer(pid,skinIdx=0){
   let rp=remotePlayers.get(pid);
   if(rp) return rp;
   const color=PLAYER_COLORS[(pid-1)%4];
   const g=new THREE.Group();
-  const body=makePlayerModel(pid);
+  const body=makePlayerModel(pid,skinIdx);
   g.add(body);
   const label=makeLabel(['Spieler '+pid],color,.35);
   label.position.y=2.1; g.add(label);
   scene.add(g);
-  rp={group:g,body,label,target:{x:0,y:0,z:0,yaw:0},gait:0,moving:0};
+  rp={pid,group:g,body,label,target:{x:0,y:0,z:0,yaw:0},gait:0,moving:0,skin:skinIdx};
   remotePlayers.set(pid,rp);
   return rp;
+}
+// Modell neu bauen, wenn sich der Skin eines Mitspielers geändert hat — das
+// Modell wird sonst nur einmal gebaut (siehe ensureRemotePlayer oben), Skin-
+// Wechsel gehören anders als Position/Blickrichtung nicht zum Lerp-Ziel.
+// disposeModel() vor dem Austausch, sonst bleiben Geometrie/Material des
+// alten Körpers hängen (three.js räumt das nicht von selbst weg).
+function setRemoteSkin(rp,skinIdx){
+  if(rp.skin===skinIdx) return;
+  rp.skin=skinIdx;
+  rp.group.remove(rp.body);
+  disposeModel(rp.body);
+  rp.body=makePlayerModel(rp.pid,skinIdx);
+  rp.group.add(rp.body);
 }
 function removeRemotePlayer(pid){
   const rp=remotePlayers.get(pid);
@@ -3717,7 +3804,8 @@ on('welcome',msg=>{
     updateHUD();
   }
   for(const p of msg.positions||[]){
-    const rp=ensureRemotePlayer(p.pid);
+    const rp=ensureRemotePlayer(p.pid,p.skin||0);
+    setRemoteSkin(rp,p.skin||0);           // ein Nachzügler sieht den Skin sofort, ohne Lerp
     Object.assign(rp.target,{x:p.x,y:p.y,z:p.z,yaw:p.yaw});
     rp.group.position.set(p.x,p.y,p.z);
     rp.group.rotation.y=p.yaw;
@@ -3749,7 +3837,8 @@ on('welcome',msg=>{
   }
 });
 on('pos',msg=>{
-  const rp=ensureRemotePlayer(msg.pid);
+  const rp=ensureRemotePlayer(msg.pid,msg.skin||0);
+  setRemoteSkin(rp,msg.skin||0);
   Object.assign(rp.target,{x:msg.x,y:msg.y,z:msg.z,yaw:msg.yaw});
 });
 // Phase 5a: laufende Positions-Ticks der Jannessen/Manni vom Server — nur das
@@ -4003,10 +4092,19 @@ on('econ',msg=>{
   if(msg.won&&!state.won) winGame();
   if(msg.buyResult&&msg.buyResult.pid===getPid()){
     if(msg.buyResult.ok){
-      giveOrDrop(msg.buyResult.id,1);
-      SND.craft();
-      say(marketChar,ITEMS[msg.buyResult.id].nm+', bitte sehr!',3200);
-      toast('🛒 '+ITEMS[msg.buyResult.id].ic+' '+ITEMS[msg.buyResult.id].nm+' gekauft.','good',2600);
+      const w=SHOP.find(s=>s.id===msg.buyResult.id);
+      if(w&&w.skin){
+        // Kein Gegenstand für den Rucksack — giveOrDrop bräuchte einen
+        // ITEMS-Eintrag, den es für einen Skin nicht gibt (siehe unlockSkin).
+        unlockSkin(w.skinIdx);
+        say(marketChar,SKINS[w.skinIdx].nm+', bitte sehr!',3200);
+        toast('🛒 '+SKINS[w.skinIdx].ic+' '+SKINS[w.skinIdx].nm+' gekauft.','good',2600);
+      }else{
+        giveOrDrop(msg.buyResult.id,1);
+        SND.craft();
+        say(marketChar,ITEMS[msg.buyResult.id].nm+', bitte sehr!',3200);
+        toast('🛒 '+ITEMS[msg.buyResult.id].ic+' '+ITEMS[msg.buyResult.id].nm+' gekauft.','good',2600);
+      }
       if(modalOpen()) openMarket(marketChar);      // Preise/Kasse im offenen Fenster auffrischen
     }else{
       SND.fail();
@@ -4149,15 +4247,17 @@ function camFree(ox,oy,oz,dx,dy,dz,want){
   }
   return want;
 }
-let selfModel=null, selfPid=null, selfGait=0, selfMove=0;
+let selfModel=null, selfPid=null, selfSkin=null, selfGait=0, selfMove=0;
 function updateSelfModel(dt,speed){
   const pid=getPid()??1;
-  // Das eigene Gesicht hängt an der Spielernummer — die kommt erst mit der
-  // Anmeldung, also den Körper neu bauen, wenn sie sich ändert.
-  if(selfModel&&selfPid!==pid){ scene.remove(selfModel); disposeModel(selfModel); selfModel=null; }
+  // Das eigene Gesicht hängt an der Spielernummer, Torso/Hose/Haut am
+  // gewählten Skin — die kommt erst mit der Anmeldung bzw. ändert sich erst
+  // beim Kauf/Anziehen, also den Körper neu bauen, wenn eins von beiden nicht
+  // mehr zum stehenden Modell passt.
+  if(selfModel&&(selfPid!==pid||selfSkin!==player.skin)){ scene.remove(selfModel); disposeModel(selfModel); selfModel=null; }
   if(!selfModel){
     if(!view) return;                      // in der Ich-Sicht gar nicht erst bauen
-    selfModel=makePlayerModel(pid); selfPid=pid; scene.add(selfModel);
+    selfModel=makePlayerModel(pid,player.skin); selfPid=pid; selfSkin=player.skin; scene.add(selfModel);
   }
   selfModel.visible=!!view;
   if(!view) return;
@@ -4633,7 +4733,7 @@ function update(dt){
   netSendT+=dt;
   if(netSendT>=.1){
     netSendT=0;
-    if(isConnected()) send({t:'pos',x:player.x,y:player.y,z:player.z,yaw:player.yaw,pitch:player.pitch,hp:player.hp,food:player.food,sel:player.sel});
+    if(isConnected()) send({t:'pos',x:player.x,y:player.y,z:player.z,yaw:player.yaw,pitch:player.pitch,hp:player.hp,food:player.food,sel:player.sel,skin:player.skin});
   }
   state.checkT+=dt;
   if(state.checkT>=.5){
@@ -4772,6 +4872,7 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
   POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,SHOP,PRICES,GOAL,
   openMarket,sellTo,buyFrom,earn,growing,updateGrow,GROW,SEED_OF,till,plantSeed,
+  SKINS,equipSkin,unlockSkin,
   makeOffer,offerAsk,offerHint,updateChars,wander,REFRESH,
   get marketChar(){return marketChar;},
   get dayEpoch0(){return dayEpoch0;},
@@ -4821,10 +4922,10 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   // Nur über die Konsole erreichbar: keine Taste, kein Knopf, kein Eintrag
   // im Menü — wer nicht danach sucht, stolpert auch nicht hinein.
   dev:{
-    // Geld in die Kasse, ohne dafür ernten zu müssen. Voreinstellung ist
-    // genau die Summe für alle drei Waren bei Manni (Brett 250 + Boot 750 +
-    // Schirm 1500, siehe SHOP) — also ein Aufruf, dann einmal einkaufen und
-    // alle drei Fahrzeuge liegen zum Ausprobieren bereit.
+    // Geld in die Kasse, ohne dafür ernten zu müssen. Voreinstellung ist die
+    // Summe über Mannis komplette Auslage (Fahrzeuge, Dünger und die drei
+    // Skins, siehe SHOP) — ein Aufruf, dann einmal einkaufen, und alles liegt
+    // zum Ausprobieren bereit.
     //
     // Online entscheidet der Server allein über die gemeinsame Kasse (jede
     // 'econ'-Nachricht überschreibt state.money, ein lokales += wäre also
@@ -4841,15 +4942,23 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
       state.money=Math.max(0,state.money+n); updateHUD();
       return 'Kasse: '+state.money+' €';
     },
-    // Die drei Waren direkt in den Rucksack, ganz ohne Markt — praktisch,
-    // wenn nur das Fahren selbst dran ist und nicht der Einkauf davor.
+    // Die Waren direkt in den Rucksack, ganz ohne Markt — praktisch, wenn nur
+    // das Fahren selbst dran ist und nicht der Einkauf davor. Skins zählen
+    // nicht dazu (kein Rucksack-Gegenstand, siehe dev.skin unten).
     vehicles(){
-      for(const w of SHOP) give(w.id,1);
+      for(const w of SHOP) if(!w.skin) give(w.id,1);
       updateHUD();
-      return 'Im Rucksack: '+SHOP.map(w=>ITEMS[w.id].nm).join(', ');
+      return 'Im Rucksack: '+SHOP.filter(w=>!w.skin).map(w=>ITEMS[w.id].nm).join(', ');
+    },
+    // Einen Skin freischalten und sofort anziehen, ohne erst bei Manni
+    // einzukaufen (siehe unlockSkin/equipSkin, SKINS für die Liste).
+    skin(i){
+      if(!Number.isInteger(i)||i<0||i>=SKINS.length) return 'skin(i): i muss 0..'+(SKINS.length-1)+' sein';
+      unlockSkin(i);
+      return 'Skin: '+SKINS[i].ic+' '+SKINS[i].nm;
     },
   },
 };
 // Ein Hinweis in der Konsole, sonst weiß niemand, dass es das gibt.
 console.info('%cErntedominiksfest','font-weight:bold',
-  '— Entwicklerhilfen: game.dev.money() für die Kasse, game.dev.vehicles() für Brett/Boot/Schirm.');
+  '— Entwicklerhilfen: game.dev.money() für die Kasse, game.dev.vehicles() für Brett/Boot/Schirm, game.dev.skin(i) für einen Skin.');

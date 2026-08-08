@@ -111,9 +111,10 @@ Zum Ausprobieren muss niemand erst stundenlang Dominiks pflücken. In der
 Browser-Konsole (F12) gibt es:
 
 ```js
-game.dev.money()        // 2500 € in die Kasse — genau Brett + Boot + Schirm
+game.dev.money()        // genug für Mannis ganze Auslage auf einmal
 game.dev.money(500)     // oder ein eigener Betrag; negativ nimmt wieder weg
-game.dev.vehicles()     // alle drei direkt in den Rucksack, ohne Umweg über Manni
+game.dev.vehicles()     // alle Fahrzeuge in den Rucksack, ohne Umweg über Manni
+game.dev.skin(2)        // Skin anziehen (0 = Standard), ohne ihn zu kaufen
 ```
 
 Das Geld landet **nur** in der Kasse, nicht bei 💶 verdient — die 🎯
@@ -140,6 +141,13 @@ danach sucht, stolpert auch nicht hinein.
 Eine Stufe steigst du automatisch hoch, ab zwei Blöcken ist es eine Wand — für dich
 wie für die Bennis.
 
+**Unten rechts hältst du sichtbar, was gewählt ist.** Ein Block liegt als Würfel mit
+seiner echten Textur in der Hand, alles andere als Plättchen; ohne Auswahl bleibt die
+bloße Faust. Die Hand schwingt beim Schlagen und Abbauen mit, wippt beim Laufen und
+duckt sich kurz weg, wenn du den Platz wechselst — so siehst du am Bildrand, was du
+gleich benutzt, ohne den Blick auf die Leiste zu senken. In der Verfolgeransicht, bei
+Pause und hinter einem offenen Fenster verschwindet sie.
+
 ## Überleben
 
 - **❤️ Leben** — Bennis schlagen zu, tiefe Stürze und Hunger auch. Bis **vier Blöcke**
@@ -156,6 +164,13 @@ wie für die Bennis.
   elf statt zweieinhalb bis fünf Sekunden. **🔥 Fackeln** halten sie in weitem Umkreis vom
   Auftauchen ab, eine zwei Blöcke hohe Mauer sperrt sie aus. Erledigt, lassen sie jetzt auch
   etwas fallen:
+
+  **Eine Wand schützt wieder.** Bisher stellte sich ein Benni vor eine ein Block dicke
+  Mauer und schlug einfach hindurch, solange er nur auf ähnlicher Höhe stand — ein
+  Schlafhaus half gegen alles außer gegen den Schlag durch die eigene Wand. Jetzt zählt
+  die Sichtlinie: liegt zwischen Benni und dir ein voller Block, kommt der Schlag nicht
+  an. Das gilt auch für den fliegenden Fluch-Benni — über deine Mauer kommt er weiterhin,
+  hindurch nicht mehr.
 
   | Sorte | Leben · Schaden | Fällt beim Tod |
   |---|---|---|
@@ -175,11 +190,16 @@ wie für die Bennis.
   verbrauchen; der **🏀 Basketball** fliegt im Bogen; der **🧨 Knaller** zündet nach kurzer
   Lunte und stößt alles im Umkreis weg, ohne dabei Blöcke zu zerlegen.
 
-  | Waffe | Schaden | Stoß |
-  |---|---|---|
-  | 🏹 Schleuder | 4 | 2 |
-  | 🏀 Basketball | 5 | 4 |
-  | 🧨 Knaller | 7 | 7 |
+  Die beiden ersten reichen jetzt **weit**: die Schleuder schießt flach und schnell fast
+  geradeaus, der Basketball geht in hohem Bogen über eine halbe Lichtung. Beide treffen
+  damit einen Benni, lange bevor er bei dir ist — der Knaller bleibt bewusst eine Waffe
+  für den Nahbereich, sonst wirft man ihn sich selbst nicht mehr vor die Füße.
+
+  | Waffe | Schaden | Stoß | Reichweite |
+  |---|---|---|---|
+  | 🏹 Schleuder | 4 | 2 | weit, flach |
+  | 🏀 Basketball | 5 | 4 | weit, im Bogen |
+  | 🧨 Knaller | 7 | 7 | kurz |
 
 ## Abbauen und Bauen
 
@@ -364,16 +384,38 @@ fache wert — **kochen lohnt sich**, und deshalb lohnen sich die Rezepte der Ja
 **Kaufen**: in der Auslage anklicken, und es landet direkt im Rucksack statt vor seinen
 Füßen. Verkaufen tut er nur, was sich **nicht bauen lässt**:
 
-| Ware | Preis | Wirkung (in der Hand gehalten) |
+| Ware | Preis | Wirkung |
 |---|---|---|
 | 🛹 Skateboard | 250 € | An Land fast doppelt so flott unterwegs |
 | 🛶 Boot | 750 € | Setzt dich **oben aufs** Wasser statt hinein, und schnell |
 | 🪂 Gleitschirm | 1500 € | Im Fallen segelst du sanft hinab statt zu stürzen |
+| 🚚 **Monstertruck** | **3000 €** | Rast an Land — und **bricht durch, was im Weg steht** |
 | 🧪 Aquariendünger | 120 € | ??? |
 
-Die ersten drei wirken, solange du sie in der Hand hältst — sie kosten also den Platz für
-Hacke oder Schwert. Alle drei bringen dich schneller zur nächsten Ernte und zahlen sich
-damit selbst zurück. Was der Dünger tut, verrät Manni nicht — und dabei bleibt es.
+Die Fahrzeuge stellst du ab und steigst ein (Rechtsklick), statt sie in der Hand zu
+halten. Sie bringen dich schneller zur nächsten Ernte und zahlen sich damit selbst
+zurück. Was der Dünger tut, verrät Manni nicht — und dabei bleibt es.
+
+**🚚 Der Monstertruck** ist das teuerste Stück im Sortiment und das einzige, das die
+Landschaft verändert: Wer damit gegen eine Wand fährt, fährt hindurch. Die Blöcke fallen
+dabei ganz normal heraus und lassen sich aufsammeln — der Truck ist im Grunde eine
+Spitzhacke, die beim Fahren zuschlägt. **Grundgestein** bremst ihn wie jedes andere
+Fahrzeug, und im **Wasser** ist er ein Klotz: dafür bleibt das Boot. Im Stand zerlegt er
+nichts, es braucht wirklich Fahrt.
+
+**🙂 Skins** — drei Kostüme für die eigene Figur, ebenfalls bei Manni:
+
+| Skin | Preis |
+|---|---|
+| 🍑 Dominik-Kostüm | 400 € |
+| 👹 Benni-Kostüm | 900 € |
+| 🦺 Mannis Arbeitskittel | 1800 € |
+
+Ein Skin ist **kein Gegenstand**: er kostet keinen Platz im Rucksack, kann nicht
+herausfallen und geht beim Sterben nicht verloren. Gekauft gehört er dir dauerhaft; im
+Laden klickst du zwischen den gekauften hin und her, um dich umzuziehen. **Deine
+Mitspieler sehen, was du anhast** — das Aussehen läuft in derselben Nachricht mit wie
+deine Position.
 
 Oben links steht, wieviel in der Kasse liegt (💶) und wieviel du **insgesamt verdient**
 hast (🎯). Einkaufen mindert das Verdiente nicht — das Ziel ist der Umsatz, nicht der
@@ -449,6 +491,20 @@ jedem Start dieselbe, kein Speicherstand nötig.
 Gezeichnet wird nicht Würfel für Würfel, sondern **chunkweise nur die freiliegenden
 Flächen**. Ein abgebauter oder gesetzter Block vernetzt genau seinen Chunk neu, nicht
 die ganze Welt.
+
+### Die Welt wurde einmal zurückgesetzt
+
+Mit den Wurfweiten, dem Monstertruck und den Skins fängt alles von vorn an: gesetzte und
+abgebaute Blöcke, Truhen, Felder, Fackeln, Schilder, Fahrzeuge, die gemeinsame Kasse und
+das Rezeptbuch auf dem Server, dazu Rucksack und Standort in jedem Browser. Die
+Landschaft selbst ist dieselbe — sie kommt ja aus der festen Zufallsformel —, nur eben
+wieder unberührt.
+
+Technisch hängt das an zwei umgestellten Schlüsseln: der Server speichert unter
+`world2` statt `world` (siehe `STORAGE_KEY` in `party/src/game-server.js`), der Browser
+unter `edf_player2`/`edf_slots2` (siehe `savePersist` in `game.js`). Der alte Stand ist
+damit **nicht gelöscht**, sondern liegengelassen — wer den Reset bereut, zeigt beide
+Schlüssel zurück und hat die alte Welt wieder.
 
 ## Dateien
 
