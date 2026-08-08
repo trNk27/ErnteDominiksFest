@@ -192,6 +192,10 @@ try{
 renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.75));
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFShadowMap;
+// autoClear aus, weil frame() nach der Hauptszene noch die Hand-Szene
+// obendrauf rendert (siehe Abschnitt "Hand") — wir übernehmen das Löschen
+// dort von Hand (renderer.clear() vor der Hauptszene, clearDepth() davor).
+renderer.autoClear=false;
 document.body.insertBefore(renderer.domElement,document.body.firstChild);
 
 scene=new THREE.Scene();
@@ -3307,6 +3311,104 @@ function disposeModel(g){
   });
 }
 
+// ------------------------------------------------------------------ Hand
+// Der gehaltene Gegenstand unten rechts im Bild, wie beim Vorbild. Läuft in
+// einer komplett eigenen THREE.Scene mit eigener Kamera, die in frame() NACH
+// der Hauptszene gerendert wird (renderer.autoClear=false + clearDepth
+// dazwischen, siehe dort) — dadurch hat die Hand gar keine Tiefen-Beziehung
+// zur Welt und kann folglich auch nie in einer Wand stecken oder von
+// Gelände verdeckt werden. Eigene Szene heißt auch: eigenes Licht, sonst
+// bleiben die Lambert-Materialien schwarz.
+const handScene=new THREE.Scene();
+const handCam=new THREE.PerspectiveCamera(45,1,.05,4);
+handScene.add(new THREE.AmbientLight(0xffffff,.9));
+const handSun=new THREE.DirectionalLight(0xfff3d6,1.1);
+handSun.position.set(1,1.4,1.2);
+handScene.add(handSun);
+// handRoot sitzt fix in der Bildecke (siehe resizeHand), handSwing schwingt
+// und wippt darin — zwei getrennte Gruppen, damit Eckposition und Animation
+// sich nicht gegenseitig überschreiben.
+const handRoot=new THREE.Group(); handScene.add(handRoot);
+const handSwing=new THREE.Group(); handRoot.add(handSwing);
+let handRig=null;                          // aktuelles Modell (Unterarm + Gegenstand)
+const HAND_PLANE=new THREE.PlaneGeometry(.42,.42);   // geteilte Geometrie für Plättchen-Items
+const HAND_Z=-.85;                         // Abstand vor der Hand-Kamera
+// Baut Unterarm + gehaltenen Gegenstand neu. Blöcke (ITEMS[id].block) werden
+// als kleiner Würfel mit dropMat(id) gezeigt — genau das Material, mit dem
+// auch am Boden liegende Blöcke gezeichnet werden (siehe dropMat weiter
+// oben), macht also ohne neue Assets die richtige Blocktextur. Alles andere
+// bekommt ein schräg gehaltenes Plättchen mit dem Item-Sprite, ebenfalls
+// über dropMat. Nichts gewählt ⇒ nur die leere Faust.
+function buildHandRig(id){
+  const g=new THREE.Group();
+  const arm=box(.26,.62,.26,SKIN);
+  arm.position.y=-.31;                     // Gruppenursprung = Handgelenk oben
+  g.add(arm);
+  const it=id?ITEMS[id]:null;
+  if(it?.block){
+    const cube=new THREE.Mesh(BLOCKGEO,dropMat(id));
+    cube.scale.setScalar(.32);
+    cube.position.set(.04,.06,.22);          // vors Armvorderteil, sonst steckt der Würfel im Arm
+    cube.rotation.set(.5,.6,.15);
+    g.add(cube);
+  }else if(it){
+    const plate=new THREE.Mesh(HAND_PLANE,dropMat(id));
+    plate.position.set(.03,.05,.2);          // dito für das Plättchen
+    plate.rotation.set(-.25,.7,.2);
+    g.add(plate);
+  }
+  return g;
+}
+// Der Arm ist bei jedem Aufbau eine frische, einzigartige Geometrie/Material
+// (box() baut immer neu) — das Item-Mesh dagegen teilt sich BLOCKGEO/
+// HAND_PLANE und dropMat(id) mit dem Rest des Spiels (Drops, Geschosse).
+// Beim Wegwerfen daher NUR den Arm entsorgen, sonst reißt man Material unter
+// am Boden liegenden Gegenständen weg.
+function disposeHandRig(g){
+  const arm=g.children[0];
+  if(arm){ arm.geometry.dispose(); arm.material.dispose(); }
+}
+let handHeldId;                            // undefined ⇒ erster Aufruf baut garantiert
+let handSwitchT=0;                         // Countdown fürs Wechsel-Dip (Anforderung 3)
+const HAND_SWITCH_DUR=.22;
+let handMineT=0;                           // Phase des Hack-Schwungs, läuft nur solange mining
+// Reine Blickfeld-Geometrie statt fixer Pixel: bei jedem Seitenverhältnis
+// (schmales Handyhochformat bis Ultrawide) sitzt die Hand im selben
+// Bruchteil des sichtbaren Bereichs unten rechts (Anforderung 7).
+function resizeHand(){
+  handCam.aspect=innerWidth/innerHeight; handCam.updateProjectionMatrix();
+  const halfH=Math.tan(handCam.fov*Math.PI/360)*Math.abs(HAND_Z);
+  const halfW=halfH*handCam.aspect;
+  handRoot.position.set(halfW*.62,-halfH*.66,HAND_Z);
+}
+resizeHand();
+// Schwung, Wippen, Wechsel-Dip. Läuft aus update() heraus (nach
+// updateSelfModel, siehe dort), damit player.spd für den Frame schon steht.
+// Modell wird NUR bei geänderter heldId() neu gebaut, nicht jedes Bild —
+// dasselbe Muster wie hudCache/potPanelSig für "nur bei Änderung neu bauen".
+function updateHand(dt){
+  const id=heldId();
+  if(id!==handHeldId){
+    handHeldId=id;
+    if(handRig){ handSwing.remove(handRig); disposeHandRig(handRig); }
+    handRig=buildHandRig(id);
+    handSwing.add(handRig);
+    handSwitchT=HAND_SWITCH_DUR;
+  }
+  if(handSwitchT>0) handSwitchT=Math.max(0,handSwitchT-dt);
+  if(mining) handMineT+=dt*9; else handMineT=0;
+  const mineSwing=mining?Math.abs(Math.sin(handMineT))*.55:0;
+  // atkCd zählt von .45 (Nahkampf) bzw. .35 (Fahrzeug aufheben) auf 0 herunter
+  // (siehe attack()) — ein Sinusbogen über die Restzeit ergibt einen einzigen
+  // Schwung: 0 beim Auslösen, Höhepunkt in der Mitte, wieder 0 beim Abklingen.
+  const atkSwing=player.atkCd>0?Math.sin(Math.PI*clamp(player.atkCd/.45,0,1))*.8:0;
+  const swing=Math.max(mineSwing,atkSwing);
+  const bobY=Math.sin(player.bob*2)*((player.spd||0)>.4&&player.onGround?.03:.008);
+  const dipY=handSwitchT>0?-Math.sin(Math.PI*(1-handSwitchT/HAND_SWITCH_DUR))*.16:0;
+  handSwing.position.set(0,bobY+dipY,0);
+  handSwing.rotation.set(-swing*.85,swing*.3,swing*.35);
+}
+
 // ------------------------------------------------------------------ Mitspieler (Phase 2)
 // Andere verbundene Spieler bekommen die Klötzchen-Figur von oben und ein
 // Namensschild; beides lerpt zur zuletzt empfangenen Position/Blickrichtung
@@ -4380,6 +4482,7 @@ function update(dt){
   updatePlayer(dt);
   updateVehicles(dt);
   updateSelfModel(dt,player.spd||0);
+  updateHand(dt);
   updateTarget();
   updateMining(dt);
   flushChunks();
@@ -4411,7 +4514,15 @@ function frame(now){
   dt*=(window.__speed||1);
   try{
     update(dt);
+    renderer.clear();                    // autoClear ist aus, siehe Renderer-Setup oben
     renderer.render(scene,camera);
+    // Hand: nur in der Ich-Sicht, nicht bei Pause und nicht hinter einem
+    // offenen Fenster/Modal (Anforderung 4). Im Fahrzeug bleibt sie sichtbar
+    // — riding hat auf view keinen Einfluss, siehe updateSelfModel.
+    if(view===0&&!state.paused&&!modalOpen()){
+      renderer.clearDepth();             // eigene Tiefe, damit nichts aus der Welt reinragt
+      renderer.render(handScene,handCam);
+    }
   }catch(e){
     if(++frameErrs<4) console.error(e);
   }
@@ -4420,6 +4531,7 @@ function resize(){
   const w=innerWidth,h=innerHeight;
   renderer.setSize(w,h,false);
   camera.aspect=w/h; camera.updateProjectionMatrix();
+  resizeHand();
 }
 addEventListener('resize',resize);
 addEventListener('beforeunload',savePersist);
