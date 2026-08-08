@@ -390,8 +390,17 @@ function stepMob(m, dt, world, players, night) {
     m.atkCd -= dt;
     if (m.atkCd <= 0) {
       m.atkCd = cfg.atkCd;
-      // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher.
-      if (Math.abs(world.surfaceAt(m.x, m.z) - nearest.y) < 2.2) {
+      // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher. And only
+      // with a clear line of sight at chest height (+1.1 above the feet, not
+      // at ground level — the ground under the mob would otherwise block
+      // every attack on its own) — a one-block-thick wall should still
+      // protect, even for the flying curse Benni (cfg.fly), which can cross
+      // walls but must not hit through them. Mirrors updateMobs in game.js.
+      const my = world.surfaceAt(m.x, m.z);
+      if (
+        Math.abs(my - nearest.y) < 2.2 &&
+        world.losClear(m.x, my + 1.1, m.z, nearest.x, nearest.y + 1.1, nearest.z)
+      ) {
         attack = { pid: nearest.pid, dmg: cfg.dmg };
       }
     }
@@ -1347,6 +1356,9 @@ export class GameServer extends DurableObject {
    *     `mob-attack` (server -> everyone / a single targeted player) are
    *     never received here, only sent — see _startMobTimer and the
    *     class-level comment.
+   *     `grav` (per-item gravity multiplier — sling vs. throw arc, see the
+   *     ITEMS table in game.js) rides along unchanged so every client
+   *     renders the same trajectory, not just the same start velocity.
    *   - `shot` (thrown/shot projectiles — Dominik, ball, cracker): a plain,
    *     unarbitrated relay, exactly like `drop-spawn` — the sender already
    *     simulates and shows its own projectile locally, so this only lets
@@ -1886,11 +1898,11 @@ export class GameServer extends DurableObject {
       // through `mob-hit`, arbitrated exactly as before; a forged/duplicated
       // `shot` can make phantom projectiles fly but can never itself deal
       // damage or grant loot.
-      const { id, x, y, z, vx, vy, vz } = msg;
+      const { id, x, y, z, vx, vy, vz, grav } = msg;
       if (typeof id !== "string" || !id) return;
-      const nums = [x, y, z, vx, vy, vz];
+      const nums = [x, y, z, vx, vy, vz, grav];
       if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return;
-      this._broadcast({ t: "shot", id, x, y, z, vx, vy, vz }, [connId]);
+      this._broadcast({ t: "shot", id, x, y, z, vx, vy, vz, grav }, [connId]);
     }
   }
 

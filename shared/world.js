@@ -332,6 +332,29 @@ export function createWorld(){
     const s=surfaceAt(x,z);
     return s-fromY>1.001||s<SEA-1;
   }
+  // Sichtlinie zwischen zwei Punkten frei? Gemeinsam für Client (updateMobs)
+  // und Server (stepMob) — ein Benni darf nicht durch eine ein Block dicke
+  // Mauer angreifen, nur weil er auf ähnlicher Höhe steht. In ~0.2-Block-
+  // Schritten vom Start- zum Zielpunkt marschieren, sobald eine Zelle dazwi-
+  // schen voll ist (fillsAt) abbrechen. Start- und Zielzelle selbst zählen
+  // nicht mit — sonst würde der Block, in dem Angreifer oder Opfer gerade
+  // stehen, sich selbst die Sicht versperren.
+  function losClear(x0,y0,z0,x1,y1,z1){
+    const dx=x1-x0, dy=y1-y0, dz=z1-z0;
+    const dist=Math.hypot(dx,dy,dz);
+    if(dist<1e-6) return true;
+    const steps=Math.ceil(dist/.2);
+    const sx0=Math.round(x0), sy0=Math.floor(y0), sz0=Math.round(z0);
+    const sx1=Math.round(x1), sy1=Math.floor(y1), sz1=Math.round(z1);
+    for(let i=1;i<steps;i++){
+      const t=i/steps;
+      const cx=Math.round(x0+dx*t), cy=Math.floor(y0+dy*t), cz=Math.round(z0+dz*t);
+      if(cx===sx0&&cy===sy0&&cz===sz0) continue;
+      if(cx===sx1&&cy===sy1&&cz===sz1) continue;
+      if(fillsAt(cx,cy,cz)) return false;
+    }
+    return true;
+  }
   const litAt=(x,z,r=14)=>torches.some(t=>Math.hypot(t.x-x,t.z-z)<r);
   // Reine Datenmutation — das Neuvernetzen des Chunk-Meshs (markDirty) ist
   // Sache des Aufrufers, der hat kein Rendering-Wissen hier drin.
@@ -504,6 +527,6 @@ export function createWorld(){
   return {
     scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
     K, terrainType, saltVein, coalVein,
-    blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, litAt, setBlock,
+    blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, losClear, litAt, setBlock,
   };
 }

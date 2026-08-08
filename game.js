@@ -121,7 +121,7 @@ const world=createWorld();
 const {
   scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
   K, terrainType, saltVein,
-  blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, litAt,
+  blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, losClear, litAt,
   setBlock: setBlockData,
 }=world;
 
@@ -508,8 +508,13 @@ const ITEMS={
   string  :{ic:'🧵',nm:'Schnur'},
   coal    :{ic:'⚫',nm:'Kohle'},
   fert    :{ic:'🧪',nm:'Aquariendünger', mystery:true},
-  sling   :{ic:'🏹',nm:'Schleuder',      sling:true, ammo:'dominik', dmg:4, kb:2},
-  ball    :{ic:'🏀',nm:'Basketball',     throw:'ball',    dmg:5, kb:4},
+  // sp/lift/grav bestimmen die Flugbahn (s. "Wurfgeschosse" unten) — Schleuder
+  // schießt schnell und flach (kaum Schwerkraft), Basketball fliegt im hohen
+  // Bogen weit, der Knaller bleibt bei seinen alten Werten (Defaults im
+  // Abschuss-Code) und damit bewusst eine Nahbereichswaffe. `far` ist nur ein
+  // Hinweis für itemNote unten, keine Spielmechanik.
+  sling   :{ic:'🏹',nm:'Schleuder',      sling:true, ammo:'dominik', dmg:4, kb:2, sp:34, grav:.45, far:true},
+  ball    :{ic:'🏀',nm:'Basketball',     throw:'ball',    dmg:5, kb:4, sp:17, lift:4.5, grav:.75, far:true},
   cracker :{ic:'🧨',nm:'Knaller',        throw:'cracker', dmg:7, kb:7, blast:3.5, fuse:1.1},
 };
 
@@ -601,6 +606,7 @@ function itemNote(id){
   if(it.seed) p.push('🌱→'+ITEMS[BLOCKS[it.seed.ripe].drop].ic);
   // Schleuder feuert Dominiks, nicht Bolzen — das steht nirgends sonst.
   if(it.sling) p.push('🏹→'+ITEMS[it.ammo].ic);
+  if(it.far) p.push('🎯 weit');                             // Schleuder/Basketball, s. sp/grav in ITEMS
   if(it.blast) p.push('💥'+it.blast);
   if(it.boat||it.board||it.glide) p.push(it.ic);
   if(PRICES[id]) p.push('💶'+PRICES[id]+' €');
@@ -1172,8 +1178,11 @@ function updateDrops(dt){
 // ein Boden-Drop (geteilte Geometrie/Materialien, dasselbe lokal-bauen-und-
 // broadcasten-Muster, s. spawnDrop/spawnDropRemote oben) — nur bleibt er
 // nicht liegen. Er fliegt, bis er trifft, ans Gelände stößt oder verpufft.
-const shots=[];   // {id,x,y,z,vx,vy,vz,mesh,life,dmg,kb,fuse,blast,mine}
-const SHOT_S=.22, SHOT_CAP=60, SHOT_LIFE=4;
+const shots=[];   // {id,x,y,z,vx,vy,vz,mesh,life,dmg,kb,fuse,blast,grav,mine}
+// SHOT_LIFE war mit 4s auf den alten, kurzen Schuss zugeschnitten — Schleuder
+// und Basketball fliegen jetzt spürbar weiter (s. sp/grav in ITEMS) und
+// brauchten sonst länger als erlaubt, um überhaupt anzukommen.
+const SHOT_S=.22, SHOT_CAP=60, SHOT_LIFE=7;
 function removeShot(s){
   const i=shots.indexOf(s);
   if(i<0) return;
@@ -1192,26 +1201,28 @@ function _mkShot(id,x,y,z,vx,vy,vz,mine,opts){
   mesh.position.set(x,y,z);
   scene.add(mesh);
   const s={id,x,y,z,vx,vy,vz,mesh,spin:rnd(0,6.28),life:SHOT_LIFE,
-           dmg:opts.dmg||0,kb:opts.kb||0,fuse:opts.fuse??0,blast:opts.blast??0,mine};
+           dmg:opts.dmg||0,kb:opts.kb||0,fuse:opts.fuse??0,blast:opts.blast??0,
+           grav:opts.grav??1,mine};
   shots.push(s);
   return s;
 }
 // Wie spawnDrop: lokal bauen und — sofern verbunden — an alle ANDEREN Clients
-// melden (Empfänger s. on('shot',...) unten). Der Server relayt den Typ nach
-// heutigem Stand nicht (er kennt nur die fest verdrahteten t-Werte, s.
-// _onMessage dort) — verbunden bleibt das Fliegen für alle Mitspieler also
-// vorerst unsichtbar, bis das dort nachgezogen wird. Für DIESEN Client ändert
-// das nichts: Schaden lief noch nie über diese Nachricht (s. mine unten).
+// melden (Empfänger s. on('shot',...) unten, Relay s. party/src/game-server.js
+// _onMessage). `grav` muss mit in die Nachricht — ohne ihn würde die
+// Schleuder bei Mitspielern mit der Basketball-Flugbahn fliegen (und
+// umgekehrt), weil der Server den Faktor unverändert nur weiterreicht. Für
+// DIESEN Client ändert das nichts: Schaden lief noch nie über diese
+// Nachricht (s. mine unten).
 function spawnShot(id,x,y,z,vx,vy,vz,opts={}){
   const s=_mkShot(id,x,y,z,vx,vy,vz,true,opts);
-  if(isConnected()) send({t:'shot',id,x,y,z,vx,vy,vz});
+  if(isConnected()) send({t:'shot',id,x,y,z,vx,vy,vz,grav:opts.grav??1});
   return s;
 }
 // Für eine ankommende shot-Nachricht: baut denselben Würfel nach, aber ohne
 // Schaden (mine:false) und ohne erneut zu broadcasten — reines Anschauungs-
 // material für andere Clients, exakt das Muster von spawnDropRemote.
-function spawnShotRemote(id,x,y,z,vx,vy,vz){
-  return _mkShot(id,x,y,z,vx,vy,vz,false,{});
+function spawnShotRemote(id,x,y,z,vx,vy,vz,grav){
+  return _mkShot(id,x,y,z,vx,vy,vz,false,{grav});
 }
 // Der Knaller zündet — eigener Name statt inline, weil zwei Stellen unten
 // dorthin verzweigen (Lunte abgelaufen, Gelände getroffen). Nur eigene
@@ -1239,7 +1250,7 @@ function updateShots(dt){
       if(s.fuse<=0){ detonate(s); removeShot(s); continue; }
     }
     if(s.life<=0){ removeShot(s); continue; }
-    s.vy-=DROP_GRAV*dt;                 // keine Reibung — es fliegt, es rollt nicht
+    s.vy-=DROP_GRAV*s.grav*dt;          // keine Reibung — es fliegt, es rollt nicht; grav s. ITEMS
     const nx=s.x+s.vx*dt, ny=s.y+s.vy*dt, nz=s.z+s.vz*dt;
     // Ein Benni geht vor Gelände. Der Knaller schlägt bei Berührung nicht
     // ein — er will die Lunte oder den Boden, s. detonate — und nur eigene
@@ -1869,8 +1880,15 @@ function updateMobs(dt){
       m.atkCd-=dt;
       if(m.atkCd<=0){
         m.atkCd=cfg.atkCd;
-        // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher.
-        if(Math.abs(surfaceAt(m.x,m.z)-player.y)<2.2) hurtPlayer(cfg.dmg);
+        // Nur auf ähnlicher Höhe: von einem Turm aus bist du sicher. Und nur
+        // bei freier Sicht auf Brusthöhe (+1.1 über den Füßen, nicht am
+        // Boden — sonst würde der Boden unter dem Benni selbst jeden Angriff
+        // blockieren): eine ein Block dicke Mauer schützt sonst nicht, auch
+        // der fliegende Fluch-Benni (cfg.fly) darf nicht hindurchschlagen,
+        // auch wenn er über die Mauer hinwegfliegen kann.
+        const my=surfaceAt(m.x,m.z);
+        if(Math.abs(my-player.y)<2.2
+          &&losClear(m.x,my+1.1,m.z,player.x,player.y+1.1,player.z)) hurtPlayer(cfg.dmg);
       }
     }
     m.mesh.position.set(m.x,mobY(m,dt)+.98+Math.abs(Math.sin(m.bob))*(cfg.fly?.16:.06),m.z);
@@ -2180,8 +2198,9 @@ function useRight(){
   if(it&&it.sling){
     if(!take(it.ammo,1)){ SND.fail(); return; }
     updateEyeRay();
-    const sp=20;                        // flach und schnell, eine Schleuder ist kein Wurf
-    spawnShot(it.ammo,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp,eyeDir.z*sp,{dmg:it.dmg,kb:it.kb});
+    const sp=it.sp??20, lift=it.lift??0;   // flach und schnell, eine Schleuder ist kein Wurf (s. ITEMS)
+    spawnShot(it.ammo,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp+lift,eyeDir.z*sp,
+      {dmg:it.dmg,kb:it.kb,grav:it.grav});
     playSample('dominik_break',.6,rnd(1.8,2.2));   // ein Dominik quietscht anders als er zerplatzt
     updateHUD();
     return;
@@ -2189,9 +2208,9 @@ function useRight(){
   if(it&&it.throw){
     consumeHeld();
     updateEyeRay();
-    const sp=9;                         // langsamer als die Schleuder, dafür mit Bogen
-    spawnShot(it.throw,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp+3,eyeDir.z*sp,
-      {dmg:it.dmg,kb:it.kb,fuse:it.fuse,blast:it.blast});
+    const sp=it.sp??9, lift=it.lift??3;    // langsamer als die Schleuder, dafür mit Bogen (s. ITEMS)
+    spawnShot(it.throw,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp+lift,eyeDir.z*sp,
+      {dmg:it.dmg,kb:it.kb,fuse:it.fuse,blast:it.blast,grav:it.grav});
     SND.place();
     updateHUD();
     return;
@@ -3757,12 +3776,10 @@ on('drop-spawn',msg=>{
 // Ein von einem anderen Client abgefeuertes Geschoss — rein kosmetisch nach-
 // gebaut (spawnShotRemote setzt mine:false, s. dort), Schaden läuft für
 // diesen Client ausschließlich über 'mob-hit', nie über diese Nachricht.
-// Stand heute relayt der Server unbekannte t-Werte gar nicht (s. Kommentar
-// bei spawnShot) — dieser Handler feuert online also erst, sobald der
-// Server um 'shot' erweitert wurde, und ist bis dahin totes, aber
-// harmloses Gleis.
+// `grav` reicht der Server unverändert durch (s. _onMessage dort) — ohne ihn
+// bekäme jeder Mitspieler für jedes Geschoss dieselbe Flugbahn zu sehen.
 on('shot',msg=>{
-  spawnShotRemote(msg.id,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz);
+  spawnShotRemote(msg.id,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz,msg.grav);
 });
 // Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs um einen
 // Boden-Drop (s. updateDrops: sell/pickup/pot melden sich dort per
