@@ -202,7 +202,13 @@ function toast(msg,type='',ms=3000){
 // ohnehin im Dunst liegt. Gemessen (Chromium, Startpunkt): 534 Zeichenaufrufe
 // bei 145, 413 bei 125, vorher 187. Wer eine kräftige Grafikkarte hat, kann
 // hier bedenkenlos wieder hochdrehen — es sind nur diese zwei Zahlen.
-const CHUNK=24, VIEW=125, FOG_FAR=120;
+// Am Handy sieht man deutlich kürzer. Nicht aus Geschmack, sondern weil eine
+// Telefongrafik sonst aussteigt: bei voller Sichtweite hängen rund 930 Netze
+// mit gut einer halben Million Dreiecken in der Szene, und wenn Chrome dabei
+// den Grafikprozess verliert, bleibt eine WEISSE Fläche zurück, auf der die
+// Bedienung weiterläuft (siehe den contextlost-Zuhörer beim Renderer). Kürzer
+// sehen heißt weniger Chunks, weniger Geometrie, weniger Speicher.
+const CHUNK=24, VIEW=TOUCH?78:125, FOG_FAR=TOUCH?74:120;
 // Zum Start wird nur der engere Kreis vernetzt; der Rest wächst in den ersten
 // Sekunden nach (cullChunks) statt den Ladebildschirm zu verlängern.
 const BOOT_VIEW=72;
@@ -221,8 +227,28 @@ try{
 // Ruckeln dagegen sofort. 1.25 ist der Punkt, an dem die Pixelschrift auf
 // einem kleinen Bildschirm noch sauber steht.
 renderer.setPixelRatio(Math.min(devicePixelRatio||1,TOUCH?1.25:1.75));
-renderer.shadowMap.enabled=true;
+// Schatten kosten einen zweiten Durchgang durch die ganze sichtbare Geometrie.
+// Am Schreibtisch ist das keine Rede wert, auf dem Telefon ist es der teuerste
+// einzelne Posten — und ohne Schatten sieht die Klötzchenwelt zwar flacher,
+// aber immer noch richtig aus. Lieber flach als weiß (siehe VIEW oben).
+renderer.shadowMap.enabled=!TOUCH;
 renderer.shadowMap.type=THREE.PCFShadowMap;
+// Verliert das Telefon den Grafikkontext (Speichernot, App im Hintergrund,
+// abgestürzter Grafikprozess), hört WebGL einfach auf zu zeichnen: die
+// Bedienung läuft weiter, das Bild bleibt WEISS stehen. Ohne diesen Zuhörer
+// sieht das aus wie ein kaputtes Spiel, ohne einen Hinweis, was los ist.
+// preventDefault() ist Pflicht, sonst versucht der Browser gar nicht erst,
+// den Kontext wiederherzustellen.
+let glLost=false;
+renderer.domElement.addEventListener('webglcontextlost',e=>{
+  e.preventDefault();
+  glLost=true;
+  toast('🧊 Grafik verloren — versuche neu zu starten …','warn',6000);
+});
+renderer.domElement.addEventListener('webglcontextrestored',()=>{
+  glLost=false;
+  toast('🧊 Grafik ist wieder da.','good',2500);
+});
 // autoClear aus, weil frame() nach der Hauptszene noch die Hand-Szene
 // obendrauf rendert (siehe Abschnitt "Hand") — wir übernehmen das Löschen
 // dort von Hand (renderer.clear() vor der Hauptszene, clearDepth() davor).
@@ -638,7 +664,14 @@ const _drawn={};
 function drawnSrc(id){
   if(_drawn[id]!==undefined) return _drawn[id];
   const c=TEX[id]?.image;                // geladene PNG-Texturen sind <img>, die können das nicht
-  return _drawn[id]=c&&c.toDataURL?c.toDataURL():null;
+  let s=null;
+  // toDataURL kann unter Speichernot fehlschlagen und dabei eine leere
+  // Adresse ("data:," o.ä.) zurückgeben statt zu werfen. Die ist wahr genug
+  // für ein <img>, zeigt aber nur das Kaputt-Bild-Symbol des Browsers. Lieber
+  // gar keine Adresse: dann fällt icon() sauber auf das Emoji zurück.
+  try{ if(c&&c.toDataURL) s=c.toDataURL(); }catch(e){}
+  if(!s||s.length<32) s=null;
+  return _drawn[id]=s;
 }
 const iconSrc=id=>ICONS.has(id)?'./sprites/items/'+(ICON_ALT[id]||id)+'.png':drawnSrc(id);
 // Was ein Gegenstand kann, in einer Zeile — für die Schwebehilfe.
@@ -5027,6 +5060,11 @@ function frame(now){
   dt*=(window.__speed||1);
   try{
     update(dt);
+    // Ohne Grafikkontext hat das Zeichnen keinen Sinn: jeder Aufruf liefe in
+    // WebGL-Fehler, und der Browser braucht Ruhe, um den Kontext überhaupt
+    // wiederherstellen zu können (siehe die contextlost-Zuhörer oben). Das
+    // Spiel selbst rechnet weiter, es malt nur nicht.
+    if(glLost) return;
     renderer.clear();                    // autoClear ist aus, siehe Renderer-Setup oben
     renderer.render(scene,camera);
     // Hand: nur in der Ich-Sicht, nicht bei Pause und nicht hinter einem

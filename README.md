@@ -179,10 +179,24 @@ ist die Handysteuerung auf **Android Chrome**; auf dem iPhone funktioniert sie
 ebenfalls, nur das erzwungene Vollbild kann dort am Browser scheitern, weshalb der Weg
 über den Startbildschirm dort der bessere ist.
 
-Auf dem Handy rechnet das Spiel außerdem mit etwas weniger Bildpunkten als am
-Schreibtisch — ein Telefon meldet gern die dreifache Auflösung, und das kostet dieselbe
-Grafik dreimal so viel Arbeit. Beim Klötzchenbild sieht man den Unterschied kaum, das
-Ruckeln dagegen sofort.
+**Am Handy nimmt sich das Spiel deutlich zurück** — nicht aus Geschmack, sondern weil
+eine Telefongrafik sonst aussteigt. Bei voller Sichtweite hängen rund 930 Netze mit
+gut einer halben Million Dreiecken in der Szene; verliert der Browser darüber seinen
+Grafikprozess, bleibt eine **weiße Fläche** zurück, auf der die Bedienung munter
+weiterläuft. Also am Finger:
+
+- **kürzere Sicht** (78 statt 125 Blöcke) — das halbiert Netze und Dreiecke,
+- **keine Schatten** — der teuerste einzelne Posten, ein zweiter Durchgang durch die
+  ganze sichtbare Geometrie; die Welt sieht flacher aus, aber richtig,
+- **weniger Bildpunkte** — ein Telefon meldet gern die dreifache Auflösung, und die
+  kostet dieselbe Grafik dreimal so viel Arbeit.
+
+Zusammen: statt 930 Netzen und 550 000 Dreiecken noch 430 und 225 000, und ein knappes
+Drittel weniger Speicher. Am Schreibtisch bleibt alles wie es war.
+
+Geht der Grafikkontext trotzdem verloren, sagt das Spiel es jetzt (🧊 *Grafik
+verloren*) und hört auf zu zeichnen, bis der Browser ihn zurückgibt — statt
+wortlos weiß zu bleiben.
 
 **Unten rechts hältst du sichtbar, was gewählt ist.** Ein Block liegt als Würfel mit
 seiner echten Textur in der Hand, alles andere als Plättchen; ohne Auswahl bleibt die
