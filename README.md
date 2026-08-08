@@ -132,7 +132,7 @@ danach sucht, stolpert auch nicht hinein.
 | `⇧ Shift` | im Wasser **abtauchen** |
 | Maus | umsehen |
 | **Linke Maustaste** | Block abbauen (halten) · Benni schlagen |
-| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · **hacken / säen** · Truhe/Werkbank benutzen · **Kochtopf aufsetzen** · **Schleuder abfeuern / Wurfwaffe werfen** · Essen |
+| **Rechte Maustaste** | **Jannes ansprechen** · Block setzen · **hacken / säen** · Truhe/Werkbank/**Kochtopf** öffnen · **Schleuder abfeuern / Wurfwaffe werfen** · Essen |
 | `Q` | Gegenstand einen Block weit vor sich werfen · `⇧Q` den ganzen Stapel |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
@@ -258,6 +258,26 @@ Pause und hinter einem offenen Fenster verschwindet sie.
   | 🏀 Basketball | 5 | 4 | weit, im Bogen |
   | 🧨 Knaller | 7 | 7 | kurz |
 
+## 🐔 Hühner
+
+Tagsüber wie nachts laufen **Hühner** durch die Landschaft — die ersten Lebewesen im
+Spiel, die einem nichts wollen. Sie greifen nicht an, fliehen nicht bei Sonnenaufgang
+und verschwinden auch nicht wie die Bennis, wenn es hell wird.
+
+- **🥚 Eier** legen sie von Zeit zu Zeit einfach dort ab, wo sie gerade stehen. Aufheben
+  und mitnehmen, mehr ist nicht zu tun.
+- **🍖 Rohes Hähnchen** gibt es, wenn man eines erschlägt. Roh sättigt es kaum — in den
+  Topf gehört es.
+- **Anlocken mit 🍑 Dominiks**: wirf einen vor dich hin (`Q`), und das nächste Huhn in
+  der Nähe kommt darauf zu und frisst ihn auf. So bringt man sie dorthin, wo man sie
+  haben will, statt hinterherzulaufen.
+
+Beides zusammen — Ei und Fleisch — ist die Grundlage der neuen Gerichte (siehe
+[Kochen](#kochen)): ohne Huhn kein Bauernomelett, kein Brathähnchen, kein Hühnereintopf.
+
+Hühner zählen **nicht** gegen die Zahl der Bennis, die nachts unterwegs sein dürfen —
+ein Hof voller Hühner macht die Nacht also nicht ruhiger.
+
 ## Abbauen und Bauen
 
 Linke Maustaste **halten**: im Block bilden sich **Risse**, die von der Mitte nach außen
@@ -378,14 +398,22 @@ Strecke zwischen Ernte und Kasse.
 
 ## Kochen
 
-Der **🍲 Kochtopf** ist kein Raster, sondern ein Topf. Stell ihn hin und **wirf die
-Zutaten hinein** — `Q`, während du davorstehst. Am Fadenkreuz steht, wie voll er ist;
-zwölf Sachen passen hinein. Ein **Rechtsklick** setzt ihn auf; nach ein paar Sekunden
-springt oben heraus, was daraus geworden ist.
+Stell den **🍲 Kochtopf** hin und öffne ihn mit einem **Rechtsklick** — er hat jetzt
+sein eigenes Fenster. Darin **ziehst du die Zutaten** aus dem Rucksack in zwölf Felder,
+genau wie in eine Truhe. Daneben zeigt ein **Pfeil mit der Aufschrift „Kochen"** auf das
+**Ergebnisfeld**: darin steht schon vorher, was daraus wird — sofern die Zutaten zu
+einem Gericht passen **und** du das Rezept kennst. Ein Klick, ein paar Sekunden, und das
+Gericht springt oben aus dem Topf.
 
-Stehst du davor und **siehst ihn an**, erscheint **rechts am Bildrand** die Liste der
-Gerichte, die du kochen kannst — mit ihren Zutaten und dem, was gerade im Topf liegt.
-Du musst also nicht ins Menü, um nachzusehen, was noch fehlt.
+Danach heißt derselbe Knopf **„Nochmal"**: er holt dieselben Zutaten noch einmal aus
+deinem Rucksack und kocht sie durch, ohne dass du sie wieder einzeln hineinziehen musst.
+Fehlt etwas davon, bleibt der Knopf grau und sagt dir, was nicht reicht.
+
+Rechts im Fenster stehen die Gerichte, die du schon kennst, mit ihren Zutaten — du musst
+also nicht woandershin, um nachzusehen, was noch fehlt.
+
+**Hineinwerfen gibt es nicht mehr.** Früher warf man die Zutaten mit `Q` gegen den Topf
+und hoffte, dass sie hineinfielen; das Fenster kann dasselbe, nur ohne Zielen.
 
 Im Topf liegt alles durcheinander, es zählt also nur **was** hineinkommt und **wieviel** —
 keine Reihenfolge, kein Muster.
