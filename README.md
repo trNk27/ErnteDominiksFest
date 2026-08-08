@@ -141,6 +141,49 @@ danach sucht, stolpert auch nicht hinein.
 Eine Stufe steigst du automatisch hoch, ab zwei Blöcken ist es eine Wand — für dich
 wie für die Bennis.
 
+## 📱 Am Handy spielen
+
+Das Spiel merkt selbst, ob es mit dem Finger bedient wird (es fragt nicht nach der
+Bildschirmbreite, sondern danach, wie genau gezeigt werden kann — ein schmales Fenster
+am Schreibtisch bleibt also ein Schreibtisch). Ist ein Finger im Spiel, erscheinen
+Steuerkreuz und Daumenknöpfe; an der Maus bleibt das Bild frei wie bisher.
+
+| Geste | Wirkung |
+|---|---|
+| **Steuerkreuz unten links** | laufen · ganz ausgeschlagen **rennen** |
+| **Ziehen** irgendwo sonst | umsehen |
+| **Kurz tippen** | setzen · benutzen · ansprechen · essen (die rechte Maustaste) |
+| **Lang drücken** | schlagen und **abbauen**, solange der Finger liegt (die linke) |
+| ⤒ / ⤓ | springen · abtauchen und schleichen |
+| 🗑️ | wegwerfen — kurz eins, lang den ganzen Stapel |
+| 🚪 | aussteigen (nur sichtbar, wenn du in etwas sitzt) |
+| Fach in der Leiste antippen | Platz wählen |
+
+Gezielt wird mit dem **Fadenkreuz in der Bildmitte**, nicht mit der Fingerspitze — du
+drehst dich also auf einen Block und drückst dann, wie am Schreibtisch auch. Deshalb
+gelten Reichweite, Blockname und Bruchbild unverändert.
+
+**Im Rucksack** hat der Finger keine zweite Maustaste, dafür drei Gesten:
+
+| Geste | Wirkung |
+|---|---|
+| tippen | ganzen Stapel nehmen bzw. ablegen |
+| lang drücken | genau eins |
+| ziehen | Stapel aufnehmen und woandershin fallen lassen |
+| aus dem Fenster hinausziehen | vor die Füße werfen |
+
+**Vollbild**: der Knopf ⛶ oben rechts, und beim ersten „Weiter" fragt das Spiel von
+selbst danach. Am zuverlässigsten wird es aber, wenn du die Seite über das Browsermenü
+**zum Startbildschirm hinzufügst** — dann startet sie ganz ohne Browserleiste. Getestet
+ist die Handysteuerung auf **Android Chrome**; auf dem iPhone funktioniert sie
+ebenfalls, nur das erzwungene Vollbild kann dort am Browser scheitern, weshalb der Weg
+über den Startbildschirm dort der bessere ist.
+
+Auf dem Handy rechnet das Spiel außerdem mit etwas weniger Bildpunkten als am
+Schreibtisch — ein Telefon meldet gern die dreifache Auflösung, und das kostet dieselbe
+Grafik dreimal so viel Arbeit. Beim Klötzchenbild sieht man den Unterschied kaum, das
+Ruckeln dagegen sofort.
+
 **Unten rechts hältst du sichtbar, was gewählt ist.** Ein Block liegt als Würfel mit
 seiner echten Textur in der Hand, alles andere als Plättchen; ohne Auswahl bleibt die
 bloße Faust. Die Hand schwingt beim Schlagen und Abbauen mit, wippt beim Laufen und

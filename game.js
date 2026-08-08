@@ -23,6 +23,14 @@ const pick=a=>a[Math.floor(Math.random()*a.length)];
 const el=id=>document.getElementById(id);
 function mulberry(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);
   t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+// Wird das Gerät mit dem Finger bedient? Gefragt ist nicht "ist es ein Handy"
+// (Bildschirmbreite lügt: ein schmales Fenster am Schreibtisch ist keins),
+// sondern wie genau gezeigt werden kann. `pointer:coarse` ist genau das —
+// ein Finger trifft ungenauer als ein Mauszeiger. maxTouchPoints daneben
+// fängt die Geräte mit beidem ab. Steht ganz oben, weil schon der Renderer
+// weiter unten davon abhängt (weniger Pixel auf einer Handy-Grafik).
+const TOUCH=(matchMedia?.('(pointer:coarse)').matches)||navigator.maxTouchPoints>0;
+document.body.classList.toggle('touch',TOUCH);
 
 // ------------------------------------------------------------------ Ton
 let AC=null;
@@ -207,7 +215,12 @@ try{
   el('boot').innerHTML='😢 Dein Browser kann kein WebGL.';
   throw e;
 }
-renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.75));
+// Auf dem Handy weniger Pixel: ein Telefon meldet gern devicePixelRatio 3,
+// und drei mal so viele Bildpunkte kosten dieselbe Grafik dreimal so viel
+// Arbeit — bei diesem Klötzchenbild sieht man den Unterschied kaum, das
+// Ruckeln dagegen sofort. 1.25 ist der Punkt, an dem die Pixelschrift auf
+// einem kleinen Bildschirm noch sauber steht.
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,TOUCH?1.25:1.75));
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFShadowMap;
 // autoClear aus, weil frame() nach der Hauptszene noch die Hand-Szene
@@ -2905,6 +2918,19 @@ function dropCarry(){                    // beim Schließen zurück in den Rucks
   carry=null;
   drawCarry();
 }
+// Am Finger aus dem Fenster hinausgezogen und losgelassen: der Stapel fliegt
+// vor die Füße, statt in den Rucksack zurückzuwandern (siehe touchCellUp).
+// Dieselbe Flugbahn wie beim Wegwerfen mit Q — dort steht sie ausführlich
+// erklärt (dropHeld), hier nur nachgefahren, weil der Stapel nicht aus einem
+// Leistenfach kommt, sondern vom Daumen.
+function dropCarryToWorld(){
+  if(!carry) return;
+  updateEyeRay(); _rd.copy(eyeDir);
+  const l=Math.hypot(_rd.x,_rd.z)||1, fx=_rd.x/l, fz=_rd.z/l;
+  spawnDrop(carry.id,carry.n,player.x+fx*.55,player.y+1.15,player.z+fz*.55,fx*3,1.1,fz*3,1.6);
+  carry=null;
+  drawCarry(); SND.place(); updateHUD(); rerenderPanel();
+}
 // ------------------------------------------------------------------ Schwebehilfe
 // Der Name kommt nicht aus dem Markup, sondern beim Zeigen frisch aus den
 // Daten — sonst müsste jede Zelle ihn doppelt führen und könnte veralten.
@@ -2972,7 +2998,11 @@ function drawCarry(){
 const stackHTML=s=>s?icon(s.id)+`<span class="n">${s.n>1?s.n:''}</span>`:'';
 // Eine Zeile für beide Fenster (Raster wie Truhe) — stand früher zweimal im
 // Text und drohte irgendwann auseinanderzudriften.
-const dragHint=()=>'<p class="hint">🖱️L Stapel · 🖱️R eins</p>';
+// Am Finger gibt es keine zwei Maustasten — dort steht die Geste, die statt
+// ihrer gilt (siehe mbox.pointerdown und touchCellUp im Abschnitt "Finger").
+const dragHint=()=>TOUCH
+  ?'<p class="hint">Tippen Stapel · Halten eins · Ziehen verschieben · hinaus werfen</p>'
+  :'<p class="hint">🖱️L Stapel · 🖱️R eins</p>';
 function craftHTML(){
   const r=matchRecipe();
   let h=`<div class="craft"><div class="cgrid c${gridN}">`;
@@ -3034,16 +3064,38 @@ function togglePause(){
 }
 // Zellen hören auf mousedown, sonst käme die rechte Maustaste nie an:
 // ein Rechtsklick löst gar kein click-Ereignis aus.
-mbox.addEventListener('mousedown',e=>{
-  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-accept]');
-  if(!c) return;
-  e.preventDefault(); e.stopPropagation();
-  ac();
-  const one=e.button===2;
+// Eine Zelle bedienen — von Maus wie Finger aus derselben Stelle heraus.
+function useCell(c,one){
   if(c.dataset.chest!=null) clickChestCell(+c.dataset.chest,one);
   else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
   else if(c.dataset.accept!=null) clickAccept(one);
   else clickCell({k:'g',i:+c.dataset.g},one);
+}
+// pointerdown statt mousedown: dasselbe Ereignis deckt Maus und Finger ab.
+// Die Maus behält ihre zwei gewohnten Tasten. Am Finger gibt es die rechte
+// nicht, dafür drei Gesten — und welche es war, weiß man erst hinterher,
+// darum merkt sich der Druck hier nur, wo er anfing (Auflösung in
+// touchCellMove/touchCellUp im Abschnitt "Finger"):
+//
+//   tippen        ganzer Stapel, genau wie ein Linksklick
+//   lang drücken  genau eins, die Vertretung für den Rechtsklick
+//   ziehen        aufnehmen und woandershin fallen lassen — und wer über den
+//                 Fensterrand hinauszieht, wirft in die Welt
+let cellHoldT=0, cellHeld=null, cellDidHold=false, cellDrag=false, cellX=0, cellY=0;
+mbox.addEventListener('pointerdown',e=>{
+  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-accept]');
+  if(!c) return;
+  e.preventDefault(); e.stopPropagation();
+  ac();
+  if(e.pointerType!=='touch'){ useCell(c,e.button===2); return; }
+  cellHeld=c; cellDidHold=false; cellDrag=false;
+  cellX=cellY=0; cellX=e.clientX; cellY=e.clientY;
+  mouseX=e.clientX; mouseY=e.clientY;      // damit der Stapel gleich am Daumen hängt
+  cellHoldT=setTimeout(()=>{
+    if(cellDrag) return;                   // das Ziehen war schneller
+    cellDidHold=true; useCell(c,true);
+    drawCarry();
+  },HOLD_MS+90);
 });
 mbox.addEventListener('click',e=>{
   const b=e.target.closest('button,[data-act],[data-shop]');
@@ -3057,7 +3109,13 @@ mbox.addEventListener('click',e=>{
   if(act==='close') hideModal();
   else if(act==='takeall'){ takeAllFromChest(); }
   else if(act==='help') openIntro();
-  else if(act==='start'){ localStorage.setItem('edf_seen','1'); hideModal(); state.started=true; }
+  // Am Finger geht es gleich ins Vollbild: der Klick auf "Weiter" ist die
+  // echte Fingerbewegung, die der Browser dafür verlangt, und einen zweiten
+  // günstigen Moment gibt es später kaum noch (siehe goFullscreen).
+  else if(act==='start'){
+    localStorage.setItem('edf_seen','1'); hideModal(); state.started=true;
+    if(TOUCH) goFullscreen();
+  }
   else if(act==='pwsubmit') submitPassword();
   else if(act==='signsave') saveSignEditor();
   else if(act==='signremove') removeSignEditor();
@@ -4301,7 +4359,11 @@ function updatePlayer(dt){
   const onBoat=!!rv?.float&&wet;
   const gliding=!!rv?.glide&&!wet&&!player.onGround;
   player.gliding=gliding;
-  const sprint=(keys.ShiftLeft||keys.ShiftRight)?1.42:1;
+  // touchSprint kommt vom voll ausgeschlagenen Steuerkreuz und steht bewusst
+  // neben den Shift-Tasten statt in ihnen: unter Wasser ist Shift das
+  // Abtauchen, und wer am Handy nur zügig laufen will, soll dabei nicht
+  // absacken (siehe stickSet im Abschnitt "Finger").
+  const sprint=(keys.ShiftLeft||keys.ShiftRight||touchSprint)?1.42:1;
   const sp=rv?(wet?rv.water:rv.land)         // das Fahrzeug gibt das Tempo vor
           :wet?3.0                           // Wasser bremst
           :4.8*sprint;
@@ -4595,9 +4657,13 @@ const canvas=renderer.domElement;
 // Capture-Phase, sonst schlüpft das Menü über der Inventarleiste, den Knöpfen
 // und den Fenstern durch — die liegen über dem Canvas.
 addEventListener('contextmenu',e=>{e.preventDefault();return false;},{capture:true});
-canvas.addEventListener('mousedown',e=>{
+canvas.addEventListener('pointerdown',e=>{
   ac();
   if(modalOpen()) return;
+  // Der Finger geht seinen eigenen Weg (siehe Abschnitt "Finger" unten): kein
+  // Pointer-Lock, sondern Ziehen zum Umsehen und eine Geste, die erst beim
+  // Loslassen entscheidet, ob sie Tippen oder langer Druck war.
+  if(e.pointerType==='touch'){ touchLookStart(e); return; }
   if(document.pointerLockElement!==canvas){ canvas.requestPointerLock?.(); return; }
   if(e.button===0){ if(!attack()) mining=true; }
   else if(e.button===2){ e.preventDefault(); useRight(); }
@@ -4614,7 +4680,11 @@ addEventListener('blur',()=>{ mining=false; for(const k in keys) keys[k]=false; 
 // seit der letzten Position mitbringt.
 let lockFresh=false;
 function lookSpike(){ return Math.max(400,Math.min(innerWidth,innerHeight)*.5); }
-document.addEventListener('mousemove',e=>{
+// pointermove statt mousemove: dasselbe Ereignis deckt Maus UND Finger ab, und
+// damit hängt der aufgenommene Stapel (carry/moveCarry) im Rucksack auch am
+// Daumen, ohne dass es dafür einen zweiten Weg bräuchte. Ein PointerEvent ist
+// ein MouseEvent, movementX/Y unter Pointer-Lock funktionieren unverändert.
+document.addEventListener('pointermove',e=>{
   if(document.pointerLockElement===canvas){
     const dx=e.movementX||0, dy=e.movementY||0;
     if(lockFresh){ lockFresh=false; return; }
@@ -4624,6 +4694,9 @@ document.addEventListener('mousemove',e=>{
     player.pitch=clamp(player.pitch-dy*.0022,-1.45,1.45);
     return;
   }
+  // Der Finger, der gerade die Landschaft dreht, ist kein Mauszeiger über
+  // einem Fenster — sonst rechnete jede Drehung sinnlos elementFromPoint mit.
+  if(touchLookId!==null&&e.pointerId===touchLookId) return;
   mouseX=e.clientX; mouseY=e.clientY;
   if(carry) moveCarry();
   updateItemTip();
@@ -4632,6 +4705,204 @@ document.addEventListener('pointerlockchange',()=>{
   if(document.pointerLockElement!==canvas) mining=false;
   else lockFresh=true;
 });
+
+// ------------------------------------------------------------------ Finger
+// Am Handy gibt es keinen Pointer-Lock (auf manchen Geräten gar nicht, und wo
+// es ihn gibt, hilft er nichts: ein Finger hat keine Bewegung, die man
+// einfangen könnte). Also die Steuerung ein zweites Mal, für den Daumen:
+//
+//   linker Daumen   Steuerkreuz unten links — läuft, rennt bei vollem Ausschlag
+//   rechter Daumen  irgendwo sonst aufs Bild:
+//                     ziehen        umsehen
+//                     kurz tippen   setzen/benutzen (die rechte Maustaste)
+//                     lang drücken  schlagen und abbauen (die linke)
+//
+// Gezielt wird wie am Schreibtisch mit dem Fadenkreuz in der Bildmitte, nicht
+// mit der Fingerspitze: updateTarget() schießt seinen Strahl ohnehin aus der
+// Kameramitte, und derselbe Zielblock unter demselben Kreuz heißt, dass sich
+// Reichweite, Blockname und Bruchbild kein zweites Mal erklären müssen.
+//
+// Die drei Gesten teilen sich einen Anfang, darum entscheidet nicht das
+// Herunterdrücken, sondern die Zeit: wer weiter als TAP_MOVE zieht, sieht sich
+// um; wer HOLD_MS lang liegen bleibt, fängt an abzubauen; wer vorher wieder
+// loslässt, hat getippt.
+const TAP_MOVE=14;         // Pixel, darüber ist es ein Umsehen und kein Tippen
+const HOLD_MS=250;         // so lange liegenbleiben heißt: abbauen
+const LOOK_SENS=.0042;     // Bogenmaß je Pixel — ein Wisch quer dreht gut halb herum
+let touchLookId=null, tlX=0, tlY=0, tlMoved=0, tlHold=0, tlMining=false;
+function touchLookEnd(){
+  clearTimeout(tlHold);
+  if(tlMining){ mining=false; mineT=0; }
+  tlMining=false; touchLookId=null;
+}
+function touchLookStart(e){
+  if(touchLookId!==null) return;          // ein zweiter Finger dreht nicht mit
+  e.preventDefault();
+  touchLookId=e.pointerId; tlX=e.clientX; tlY=e.clientY; tlMoved=0; tlMining=false;
+  // Das Einfangen ist Bequemlichkeit, keine Bedingung: es hält die weiteren
+  // Ereignisse auch dann beim Bild, wenn der Finger über die Inventarleiste
+  // wandert. Manche Browser werfen dabei (ein Finger, den sie schon losgelassen
+  // haben, lässt sich nicht mehr einfangen) — das darf die Geste nicht
+  // mitreißen, gedreht wird notfalls auch ohne.
+  try{ canvas.setPointerCapture?.(e.pointerId); }catch(err){}
+  // Liegenbleiben heißt abbauen — und zwar über genau denselben Weg wie die
+  // linke Maustaste: erst zuschlagen (attack() trifft Benni oder Fahrzeug und
+  // meldet das), und nur wenn da nichts war, in den Block beißen.
+  tlHold=setTimeout(()=>{
+    if(touchLookId===null||tlMoved>TAP_MOVE) return;
+    tlMining=true;
+    if(!attack()) mining=true;
+  },HOLD_MS);
+}
+canvas.addEventListener('pointermove',e=>{
+  if(e.pointerId!==touchLookId) return;
+  e.preventDefault();
+  const dx=e.clientX-tlX, dy=e.clientY-tlY;
+  tlX=e.clientX; tlY=e.clientY;
+  tlMoved+=Math.hypot(dx,dy);
+  // Beim Abbauen darf man weiter nachzielen; nur der noch unentschiedene
+  // Druck verliert durch das Ziehen seine Chance, ein Abbauen zu werden.
+  if(tlMoved>TAP_MOVE&&!tlMining) clearTimeout(tlHold);
+  player.yaw-=dx*LOOK_SENS;
+  player.pitch=clamp(player.pitch-dy*LOOK_SENS,-1.45,1.45);
+});
+canvas.addEventListener('pointerup',e=>{
+  if(e.pointerId!==touchLookId) return;
+  e.preventDefault();
+  // Kurz und still: das war ein Tippen — setzen, benutzen, ansprechen, essen.
+  if(!tlMining&&tlMoved<=TAP_MOVE) useRight();
+  touchLookEnd();
+});
+canvas.addEventListener('pointercancel',e=>{ if(e.pointerId===touchLookId) touchLookEnd(); });
+
+// ---- Steuerkreuz. Es schreibt in dasselbe keys{}, das auch die Tastatur
+// füllt (siehe updatePlayer) — die Bewegungsrechnung erfährt damit nie, ob
+// gerade ein Daumen oder eine Taste unterwegs ist.
+// Rennen hängt NICHT an ShiftLeft, obwohl das die Renntaste ist: unter Wasser
+// ist dieselbe Taste das Abtauchen, und ein voll ausgeschlagenes Steuerkreuz
+// würde einen dann ungewollt in die Tiefe ziehen. Darum ein eigenes Flag,
+// das updatePlayer neben den Tasten mitliest.
+let touchSprint=false;
+const stickEl=el('stick'), knobEl=stickEl?.querySelector('i');
+let stickId=null, stickCx=0, stickCy=0, stickR=1;
+function stickSet(nx,ny){
+  keys.KeyW=ny<-.32; keys.KeyS=ny>.32;
+  keys.KeyA=nx<-.32; keys.KeyD=nx>.32;
+  touchSprint=Math.hypot(nx,ny)>.86;
+  if(knobEl) knobEl.style.transform=`translate(calc(-50% + ${nx*38}%),calc(-50% + ${ny*38}%))`;
+}
+function stickReset(){
+  stickId=null;
+  keys.KeyW=keys.KeyS=keys.KeyA=keys.KeyD=false;
+  touchSprint=false;
+  if(knobEl) knobEl.style.transform='translate(-50%,-50%)';
+}
+stickEl?.addEventListener('pointerdown',e=>{
+  e.preventDefault(); e.stopPropagation(); ac();
+  stickId=e.pointerId;
+  const r=stickEl.getBoundingClientRect();
+  stickCx=r.left+r.width/2; stickCy=r.top+r.height/2; stickR=r.width/2;
+  try{ stickEl.setPointerCapture?.(e.pointerId); }catch(err){}
+  stickSet(0,0);
+});
+stickEl?.addEventListener('pointermove',e=>{
+  if(e.pointerId!==stickId) return;
+  e.preventDefault(); e.stopPropagation();
+  let nx=(e.clientX-stickCx)/stickR, ny=(e.clientY-stickCy)/stickR;
+  const m=Math.hypot(nx,ny);
+  if(m>1){ nx/=m; ny/=m; }               // der Knopf bleibt im Ring
+  stickSet(nx,ny);
+});
+for(const ev of ['pointerup','pointercancel'])
+  stickEl?.addEventListener(ev,e=>{ if(e.pointerId===stickId){ e.preventDefault(); stickReset(); } });
+
+// ---- Daumenknöpfe. Springen und Abtauchen halten ihre Taste gedrückt,
+// solange der Finger liegt; die beiden anderen lösen einmal aus.
+function holdButton(id,code){
+  const b=el(id); if(!b) return;
+  b.addEventListener('pointerdown',e=>{
+    e.preventDefault(); e.stopPropagation(); ac();
+    keys[code]=true; b.classList.add('on');
+  });
+  for(const ev of ['pointerup','pointercancel','pointerleave'])
+    b.addEventListener(ev,()=>{ keys[code]=false; b.classList.remove('on'); });
+}
+holdButton('btnJump','Space');
+holdButton('btnDive','ShiftLeft');
+// Wegwerfen wie am Schreibtisch: kurz ist eins, lang der ganze Stapel (⇧Q).
+let dropHoldT=0;
+el('btnDrop')?.addEventListener('pointerdown',e=>{
+  e.preventDefault(); e.stopPropagation(); ac();
+  dropHoldT=setTimeout(()=>{ dropHoldT=0; if(!modalOpen()&&!state.paused) dropHeld(true); },420);
+});
+for(const ev of ['pointerup','pointercancel'])
+  el('btnDrop')?.addEventListener(ev,e=>{
+    e.preventDefault();
+    if(!dropHoldT) return;                // der lange Druck hat schon geworfen
+    clearTimeout(dropHoldT); dropHoldT=0;
+    if(!modalOpen()&&!state.paused) dropHeld(false);
+  });
+el('btnExit')?.addEventListener('pointerdown',e=>{
+  e.preventDefault(); e.stopPropagation(); ac();
+  if(!modalOpen()&&riding) leaveVehicle();
+});
+
+// ---- Rucksack am Finger: die Auflösung der drei Gesten, deren Anfang
+// mbox.pointerdown weiter oben gemerkt hat. Beide Zuhörer hängen am Dokument
+// und nicht am Fenster, denn beim Ziehen verlässt der Finger das Fenster ja
+// gerade — ein Zuhörer an #mbox bekäme genau den interessanten Fall nie zu
+// sehen.
+document.addEventListener('pointermove',e=>{
+  if(!cellHeld||e.pointerType!=='touch'||cellDidHold||cellDrag) return;
+  if(Math.hypot(e.clientX-cellX,e.clientY-cellY)<TAP_MOVE) return;
+  clearTimeout(cellHoldT);
+  cellDrag=true;
+  if(!carry) useCell(cellHeld,false);     // aufnehmen — ab jetzt hängt er am Daumen
+  drawCarry();
+});
+function touchCellUp(e){
+  if(!cellHeld) return;
+  clearTimeout(cellHoldT);
+  const from=cellHeld, drag=cellDrag, held=cellDidHold;
+  cellHeld=null; cellDrag=false; cellDidHold=false;
+  if(e.pointerType!=='touch'||held) return;   // der lange Druck hat schon gehandelt
+  if(!drag){ useCell(from,false); return; }   // schlichtes Tippen
+  // Gezogen: worüber wurde losgelassen? elementFromPoint statt e.target, weil
+  // der Finger den Zielknopf nie "betreten" hat — er war die ganze Zeit auf
+  // demselben aufgenommenen Element.
+  const node=document.elementFromPoint(e.clientX,e.clientY);
+  const tgt=node?.closest?.('[data-slot],[data-g],[data-chest],[data-accept]');
+  if(tgt){ useCell(tgt,false); return; }
+  // Außerhalb des Fensters losgelassen heißt: weg damit.
+  if(carry&&!node?.closest?.('#mwrap')) dropCarryToWorld();
+}
+document.addEventListener('pointerup',touchCellUp);
+document.addEventListener('pointercancel',e=>{
+  clearTimeout(cellHoldT); cellHeld=null; cellDrag=false; cellDidHold=false;
+});
+
+// ---- Vollbild. Auf dem Handy ist die Browserleiste ein Drittel der Sicht;
+// weg damit. Ein Knopf statt automatisch, weil der Browser Vollbild nur auf
+// eine echte Fingerbewegung hin erlaubt — und weil niemand ungefragt in den
+// Vollbildmodus geworfen werden will. Beim ersten "Weiter" im Willkommens-
+// fenster fragen wir zusätzlich, da liegt der Finger ohnehin schon (siehe den
+// 'start'-Zweig weiter oben).
+function goFullscreen(){
+  try{
+    if(document.fullscreenElement||document.webkitFullscreenElement){
+      (document.exitFullscreen||document.webkitExitFullscreen)?.call(document);
+      return;
+    }
+    const r=document.documentElement;
+    const req=r.requestFullscreen||r.webkitRequestFullscreen;
+    // Manche Browser liefern kein Promise zurück — .then blind anzuhängen
+    // wäre also ein Fehler, und ein abgelehntes Vollbild darf nie das Spiel
+    // mitreißen (iPhone-Safari kann es für andere Elemente als Video nicht).
+    const p=req?.call(r,{navigationUI:'hide'});
+    p?.catch?.(()=>{});
+  }catch(e){}
+}
+el('btnFull')?.addEventListener('click',e=>{ e.stopPropagation(); ac(); goFullscreen(); });
 canvas.addEventListener('wheel',e=>{
   if(modalOpen()) return;
   e.preventDefault();
@@ -4717,6 +4988,12 @@ function update(dt){
   }
   updatePlayer(dt);
   updateVehicles(dt);
+  // Der Aussteigen-Knopf am Handy zeigt sich nur, wenn man auch wirklich in
+  // etwas sitzt (body.riding, siehe #btnExit im CSS). Hier statt in
+  // enterVehicle/leaveVehicle, weil man auch auf anderen Wegen aus einem
+  // Fahrzeug kommt — beim Sterben etwa (siehe respawn) oder wenn der Server
+  // einen anderen Fahrer meldet.
+  document.body.classList.toggle('riding',!!riding);
   updateSelfModel(dt,player.spd||0);
   updateHand(dt);
   updateTarget();

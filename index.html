@@ -2,8 +2,19 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover schiebt das Bild unter Notch und Gestenbalken, damit auf
+     dem Handy kein grauer Streifen bleibt; die HUD-Ecken halten sich mit
+     env(safe-area-inset-*) selbst davon frei (siehe #hud/#hotbar/#touch unten).
+     Zoomen ist aus: ein Doppeltipp beim Abbauen soll den Block treffen und
+     nicht die Seite vergrößern. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1">
 <meta name="theme-color" content="#1d331d">
+<!-- Vom Startbildschirm aus startet das Spiel ohne Browserleiste — auf dem
+     Handy der zuverlässigste Weg zum echten Vollbild, unabhängig davon, ob
+     die Fullscreen-Schnittstelle mitspielt (siehe goFullscreen in game.js). -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="data:,">
 <title>ErnteDominiksFest</title>
 <style>
@@ -16,7 +27,10 @@
   }
 
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body{height:100%;overflow:hidden;background:#0e1a0e}
+  /* 100dvh statt 100%: auf dem Handy wächst und schrumpft die Browserleiste
+     beim Scrollen, und eine an 100vh gehängte Leiste rutscht dann unter den
+     Bildrand. dvh misst, was gerade wirklich zu sehen ist. */
+  html,body{height:100%;height:100dvh;overflow:hidden;background:#0e1a0e}
   body{
     font-family:'Pixelify Sans',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;
     user-select:none;-webkit-user-select:none;
@@ -25,13 +39,29 @@
   #hud,#vitals,#toasts,#tip,#mbox h2,#mbox h3,.recipe .nm,#hotbar .slot .n{
     text-shadow:2px 2px 0 rgba(0,0,0,.5)
   }
-  canvas{display:block;position:absolute;inset:0;width:100%;height:100%}
+  /* touch-action:none nimmt dem Browser das Wischen, Wippen und Doppeltipp-
+     Zoomen ab — sonst scrollt beim Umsehen die Seite statt der Blick, und ein
+     langer Druck aufs Bild öffnet das Auswahlmenü statt abzubauen. */
+  canvas{display:block;position:absolute;inset:0;width:100%;height:100%;touch-action:none}
   button{font-family:inherit;color:inherit}
 
+  /* Hier ausdrücklich KEIN touch-action:none: die Regel gälte auch für alles
+     darin, und #mbox/#mside sind scrollbar (overflow-y:auto) — das Rezeptbuch
+     ließe sich sonst am Finger nicht mehr durchblättern. Das Wischen abwürgen
+     müssen nur die Stellen, die selbst eine Geste tragen: das Bild (canvas),
+     das Steuerkreuz und die Daumenknöpfe. */
   #ui{position:absolute;inset:0;pointer-events:none;z-index:10}
+  /* Nichts im Spiel ist Text zum Markieren, und der lange Druck (Abbauen!)
+     darf nirgends die Lupe des Systems aufrufen. */
+  #ui,#ui *{-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 
   /* ---------- Kopfzeile: nur Ziel-Fortschritt und Pause ---------- */
-  #hud{position:absolute;top:8px;left:10px;right:10px;display:flex;align-items:flex-start;gap:8px}
+  #hud{
+    position:absolute;display:flex;align-items:flex-start;gap:8px;
+    top:calc(8px + env(safe-area-inset-top));
+    left:calc(10px + env(safe-area-inset-left));
+    right:calc(10px + env(safe-area-inset-right))
+  }
   #book{
     background:rgba(12,22,12,.72);border:1px solid rgba(255,255,255,.14);border-radius:11px;
     padding:5px 10px;font-size:13px;font-weight:800;backdrop-filter:blur(6px);
@@ -108,7 +138,10 @@
   }
 
   /* ---------- Inventarleiste ---------- */
-  #hotbar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:4px}
+  #hotbar{
+    position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:4px;
+    bottom:calc(10px + env(safe-area-inset-bottom))
+  }
   #hotbar .slot{
     position:relative;width:44px;height:44px;border:2px solid rgba(255,255,255,.3);
     background:rgba(12,22,12,.6);border-radius:6px;display:flex;align-items:center;
@@ -344,6 +377,82 @@
   }
   .page b{color:#ffd76a}
 
+  /* ---------- Handysteuerung ---------- */
+  /* Alles hier drin gibt es nur auf Geräten, die mit dem Finger bedient
+     werden (body.touch, gesetzt in game.js). Am Schreibtisch bleibt der
+     Bildschirm frei — eine Maus braucht kein Steuerkreuz. */
+  #touch{display:none}
+  body.touch #touch{display:block}
+  /* Der linke Daumen läuft, der rechte sieht sich um: das Steuerkreuz sitzt
+     fest in der unteren linken Ecke, der Rest des Bildes ist Blickfeld
+     (siehe die Gestenerkennung in game.js). */
+  /* Unten am Bildrand liegt schon ein voller Streifen: Inventarleiste (ganz
+     unten) und darüber Herzen und Hunger. Steuerkreuz und Knöpfe fangen
+     deshalb erst oberhalb davon an — säßen sie tiefer, verdeckte der linke
+     Daumen genau die Fächer, aus denen er gleich etwas wählen will. */
+  #stick{
+    position:absolute;pointer-events:auto;
+    left:calc(18px + env(safe-area-inset-left));
+    bottom:calc(92px + env(safe-area-inset-bottom));
+    width:min(34vw,132px);height:min(34vw,132px);border-radius:50%;
+    background:rgba(12,22,12,.42);border:2px solid rgba(255,255,255,.22);
+    backdrop-filter:blur(3px);touch-action:none
+  }
+  #stick i{
+    position:absolute;left:50%;top:50%;width:42%;height:42%;border-radius:50%;
+    background:rgba(255,255,255,.55);border:2px solid rgba(255,255,255,.75);
+    transform:translate(-50%,-50%);pointer-events:none;
+    box-shadow:0 2px 8px rgba(0,0,0,.5)
+  }
+  /* Die Knöpfe für den rechten Daumen. Sie liegen über der Inventarleiste,
+     nicht daneben: quer gehalten ist unten in der Mitte kein Platz mehr. */
+  #tbtns{
+    position:absolute;display:flex;flex-direction:column;gap:8px;align-items:flex-end;
+    right:calc(16px + env(safe-area-inset-right));
+    bottom:calc(92px + env(safe-area-inset-bottom))
+  }
+  #tbtns button{
+    pointer-events:auto;width:min(15vw,62px);height:min(15vw,62px);border-radius:50%;
+    background:rgba(12,22,12,.6);border:2px solid rgba(255,255,255,.28);
+    font-size:min(6.5vw,25px);display:flex;align-items:center;justify-content:center;
+    backdrop-filter:blur(4px);cursor:pointer;touch-action:none
+  }
+  #tbtns button:active,#tbtns button.on{background:rgba(90,90,60,.75);border-color:#fff}
+  /* Aussteigen zeigt sich nur, wenn man wirklich in etwas sitzt. Der Wähler
+     muss den von "#tbtns button" oben schlagen (eine ID plus ein Element),
+     ein schlichtes "#btnExit" wäre schwächer und der Knopf stünde immer da. */
+  #tbtns #btnExit{display:none}
+  body.riding #tbtns #btnExit{display:flex}
+  /* Am Finger bedient darf die Leiste ruhig etwas größer sein — und die
+     Herzen rutschen entsprechend höher, damit sie nicht darunterliegen. */
+  /* Neun Fächer plus acht Fugen müssen nebeneinander auf den Bildschirm
+     passen — ein glatter vw-Anteil je Fach vergisst die Fugen und schiebt die
+     Leiste am Handy über den Rand hinaus. Darum die Breite aus dem, was nach
+     Fugen und Sicherheitsrändern übrig bleibt, und nach oben bei 46px gedeckelt,
+     damit sie auf dem Tablet nicht ins Alberne wächst. */
+  body.touch #hotbar{gap:3px}
+  body.touch #hotbar .slot{
+    width:min(calc((100vw - 36px - env(safe-area-inset-left) - env(safe-area-inset-right))/9),46px);
+    height:min(calc((100vw - 36px - env(safe-area-inset-left) - env(safe-area-inset-right))/9),46px);
+    touch-action:none
+  }
+  body.touch #vitals{bottom:calc(66px + env(safe-area-inset-bottom))}
+  /* Quer gehalten ist die Höhe knapp: Steuerkreuz und Knöpfe schrumpfen mit,
+     sonst decken sie die halbe Landschaft zu. */
+  @media (max-height:460px){
+    #stick{width:min(22vh,100px);height:min(22vh,100px)}
+    #tbtns{gap:6px}
+    #tbtns button{width:min(11vh,52px);height:min(11vh,52px);font-size:min(5vh,21px)}
+  }
+  /* Fenster am Finger. KEINE Mindestbreite für die Zellen: das Rucksackraster
+     hat neun Spalten (repeat(9,1fr)), und neun mal irgendeine feste Breite
+     sprengt ein Handy im Hochformat sofort — die rechten Fächer lägen außerhalb
+     des Fensters. Die Zellen sind ohnehin quadratisch (aspect-ratio:1) und
+     teilen sich die Breite; mehr Fläche für den Daumen holt man hier also
+     nicht über eine Mindestgröße, sondern indem Rand und Fugen schrumpfen. */
+  body.touch #mbox{padding:10px 8px}
+  body.touch #mbox .invgrid{gap:3px}
+
   /* ---------- Ladebildschirm ---------- */
   #boot{
     position:absolute;inset:0;z-index:40;background:#142614;display:flex;flex-direction:column;
@@ -361,6 +470,7 @@
       <span class="goal">🎯<b id="hEarn">0</b>/<span id="hGoal">0</span></span>
     </div>
     <div id="topbtns">
+      <button id="btnFull" title="Vollbild">⛶</button>
       <button id="btnView" title="Sicht wechseln (V)">🎥</button>
       <button id="btnBag" title="Inventar (E)"><img src="./sprites/ui/icon_bag.png" alt="🎒"></button>
       <button id="btnPause" title="Pause (P)"><img src="./sprites/ui/icon_pause.png" alt="⏸️"></button>
@@ -376,6 +486,18 @@
   <div id="toasts"></div>
 
   <div id="hotbar"></div>
+
+  <!-- Steuerkreuz und Daumenknöpfe. Stehen immer im Markup, zeigen sich aber
+       nur mit body.touch (siehe CSS oben und die Erkennung in game.js). -->
+  <div id="touch">
+    <div id="stick"><i></i></div>
+    <div id="tbtns">
+      <button id="btnExit" title="Aussteigen (F)">🚪</button>
+      <button id="btnDrop" title="Wegwerfen (Q)">🗑️</button>
+      <button id="btnDive" title="Abtauchen / Schleichen">⤓</button>
+      <button id="btnJump" title="Springen">⤒</button>
+    </div>
+  </div>
 
   <div id="potrec" class="hidden"></div>
 
