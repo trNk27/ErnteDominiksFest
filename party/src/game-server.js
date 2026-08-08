@@ -186,12 +186,12 @@ const CLOCK_CHECKPOINT_MS = 60000;
 // defense-in-depth character cap the client's own <input maxlength> already
 // enforces — never trust the client alone.
 const SIGN_TEXT_MAX = 80;
-// Vehicles: the three market goods that are now placed and ridden instead of
-// held (see the `vehicle-*` handlers and this.vehicles). The kind list
-// mirrors the client's own VEHICLES table — kept as a literal here for the
-// same reason SIGN_TEXT_MAX is: it is an inventory-shape constant, not world
-// or economy data, and the server must not trust the client's word for it.
-const VEHICLE_KINDS = new Set(["boat", "board", "glider"]);
+// Vehicles: the market goods that are now placed and ridden instead of held
+// (see the `vehicle-*` handlers and this.vehicles). The kind list mirrors
+// the client's own VEHICLES table — kept as a literal here for the same
+// reason SIGN_TEXT_MAX is: it is an inventory-shape constant, not world or
+// economy data, and the server must not trust the client's word for it.
+const VEHICLE_KINDS = new Set(["boat", "board", "glider", "truck"]);
 // A cap so a room full of forgotten boats can't grow the persisted blob
 // without bound; placing past it retires the oldest one (see `vehicle-place`).
 const MAX_VEHICLES = 64;
@@ -1263,7 +1263,7 @@ export class GameServer extends DurableObject {
    *     stack for another stays a single arbitrated step instead of an
    *     un-atomic take-then-put.
    *   - `vehicle-place` / `vehicle-move` / `vehicle-enter` / `vehicle-leave` /
-   *     `vehicle-remove`: boat/board/glider are placed in the world and
+   *     `vehicle-remove`: boat/board/glider/truck are placed in the world and
    *     ridden now instead of taking effect in the hand. Placing and moving
    *     are apply-and-broadcast (a vehicle only ever moves under its one
    *     rider — nothing to race over, and `vehicle-move` deliberately does
@@ -1775,10 +1775,10 @@ export class GameServer extends DurableObject {
     } else if (msg.t === "dev-money") {
       // Developer cheat, reachable only from the browser console via
       // game.dev.money() (see game.js's debug API — no key, no button, so a
-      // player can't stumble into it). It exists because the three market
-      // wares are the most expensive things in the game (2500 € for all of
-      // them, see SHOP) and testing a boat should not require an afternoon
-      // of picking Dominiks first.
+      // player can't stumble into it). It exists because the market wares
+      // are among the most expensive things in the game (see SHOP — the
+      // monster truck alone is 3000 €) and testing a boat should not require
+      // an afternoon of picking Dominiks first.
       //
       // Money only — deliberately NOT `earned`. That is the number the 🎯
       // goal counts (see GOAL/winGame), so crediting it here would let a

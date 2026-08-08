@@ -23,6 +23,10 @@ export const SHOP=[
   {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
   {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
   {id:'fert',  price:120,  txt:'???'},
+  // Das teuerste Stück im Sortiment: rasend schnell an Land, dafür im Wasser
+  // ein Klotz — und wer damit gegen etwas fährt, muss nicht erst absteigen
+  // und abbauen.
+  {id:'truck', price:3000, txt:'Was im Weg steht, ist im Weg gewesen.'},
 ];
 
 // ------------------------------------------------------------------ Rezepte

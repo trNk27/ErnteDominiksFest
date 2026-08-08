@@ -405,6 +405,20 @@ const TEX={
     g.fillStyle='#8f2fb0'; g.fillRect(7,9,1,1); g.fillRect(9,11,1,1); // ein Schimmer, der so nicht sein sollte
     g.fillStyle='#213331'; g.fillRect(5,13,6,1);
   }),
+  // Monstertruck: von oben gezeichnet, weil bei 16×16 Pixeln eine Seitenansicht
+  // kaum vier Räder zeigen könnte — so stehen sie deutlich als dicke, dunkle
+  // Klötze an den vier Ecken der Karosserie heraus, mit Frontscheibe und
+  // Chromleiste dazwischen. Freigestellt wie die übrigen gezeichneten Bildchen.
+  truck  :pixTex(g=>{
+    g.fillStyle='#c8371f'; g.fillRect(4,2,8,12);                      // Karosserie
+    g.fillStyle='#8f2411'; g.fillRect(4,2,8,1); g.fillRect(4,13,8,1);  // Kanten
+    g.fillStyle='#1c232c'; g.fillRect(5,3,6,3);                       // Frontscheibe, dunkel
+    g.fillStyle='#e8dfc4'; g.fillRect(5,7,6,1);                       // Chromleiste
+    g.fillStyle='#151515';
+    for(const [x,y] of [[1,2],[12,2],[1,10],[12,10]]) g.fillRect(x,y,3,4); // vier dicke Räder
+    g.fillStyle='#4a4a4a';
+    for(const [x,y] of [[2,3],[13,3],[2,11],[13,11]]) g.fillRect(x,y,1,2); // Nabenglanz
+  }),
 };
 
 // ------------------------------------------------------------------ Bruchbilder
@@ -505,6 +519,7 @@ const ITEMS={
   boat    :{ic:'🛶',nm:'Boot',        boat:true},
   board   :{ic:'🛹',nm:'Skateboard',  board:true},
   glider  :{ic:'🪂',nm:'Gleitschirm', glide:true},
+  truck   :{ic:'🚚',nm:'Monstertruck',monster:true},
   // Was aus dem Topf kommt, wenn die Zutaten nicht zusammenpassen. Essbar
   // ist es gerade noch.
   junk    :{ic:'🤢',nm:'Angebrannte Pampe',food:1},
@@ -612,7 +627,11 @@ function itemNote(id){
   if(it.sling) p.push('🏹→'+ITEMS[it.ammo].ic);
   if(it.far) p.push('🎯 weit');                             // Schleuder/Basketball, s. sp/grav in ITEMS
   if(it.blast) p.push('💥'+it.blast);
-  if(it.boat||it.board||it.glide) p.push(it.ic);
+  if(it.boat||it.board||it.glide||it.monster) p.push(it.ic);
+  // Der Truck fährt nicht nur schnell — er räumt sich seinen Weg selbst frei
+  // (siehe truckSmash). Das gehört in die Schwebehilfe, sonst wundert man
+  // sich beim ersten Zusammenstoß, wohin der Block verschwunden ist.
+  if(it.monster) p.push('🚚 rasend an Land · bricht Blöcke im Weg');
   if(PRICES[id]) p.push('💶'+PRICES[id]+' €');
   if(it.block) p.push('setzbar');
   const used=RECIPES.filter(r=>patRows(r).some(row=>row.includes(id)))
@@ -2988,8 +3007,16 @@ const VEHICLES={
   boat  :{item:'boat',  nm:'Boot',        pose:'sit', seat:-.45, water:8.0, land:1.6, float:true},
   board :{item:'board', nm:'Skateboard',  pose:'ride',seat:.19, water:1.4, land:8.6},
   glider:{item:'glider',nm:'Gleitschirm', pose:'hang',seat:.25, water:2.2, land:5.0, glide:true},
+  // Das teuerste Stück im Laden: an Land außer Konkurrenz (mehr als anderthalb
+  // Skateboards), im Wasser dagegen ein Klotz — kein float, er sackt einfach
+  // durch, statt zu schwimmen. seat sitzt hoch, weil die Figur oben aus der
+  // offenen Kabine herausragen soll statt darin zu verschwinden (siehe
+  // makeVehicleModel). Das Zerlegen von Blöcken im Weg steckt nicht hier,
+  // sondern in updatePlayer (siehe truckSmash) — genau dort, wo die
+  // Kollision sonst jedes Fahrzeug ausbremst.
+  truck :{item:'truck', nm:'Monstertruck', pose:'sit', seat:.55, water:1.0, land:13},
 };
-const VEH_OF_ITEM={boat:'boat',board:'board',glider:'glider'};
+const VEH_OF_ITEM={boat:'boat',board:'board',glider:'glider',truck:'truck'};
 const vehicles=new Map();                 // id -> {id,kind,x,y,z,yaw,rider,group,canopy}
 let riding=null;                          // das Fahrzeug, auf dem man selbst sitzt
 let vehSeq=0, vehSendT=0;
@@ -3014,6 +3041,20 @@ function makeVehicleModel(kind){
     const tail=box(.42,.07,.26,'#2f3140'); tail.position.set(0,.21,.62); tail.rotation.x=-.45; g.add(tail);
     for(const x of [-.19,.19]) for(const z of [-.36,.36]){
       const w=box(.08,.11,.11,'#e8dfc4'); w.position.set(x,.07,z); g.add(w);
+    }
+  }else if(kind==='truck'){
+    // Kastenkarosserie mit hochgezogener Kabine vorn (an -Z, wie beim Boot der
+    // Bug) und vier dicken Rädern an den Ecken — schlichte dunkle Kästen statt
+    // Zylinder, das passt besser zum eckigen Look der übrigen Fahrzeuge/Figur.
+    // Bewusst wuchtiger als Boot und Brett, aber die Kabine bleibt niedrig
+    // genug, dass die Figur (seat:.55) oben sichtbar herausragt statt zu
+    // verschwinden.
+    const chassis=box(1.3,.5,2.2,'#c8371f'); chassis.position.y=.62; g.add(chassis);
+    const cab=box(1.1,.55,.9,'#a82c16'); cab.position.set(0,1.0,-.55); g.add(cab);
+    const glass=box(.9,.32,.06,'#1c232c'); glass.position.set(0,1.05,-.97); g.add(glass);
+    for(const [x,z] of [[-.62,-.85],[.62,-.85],[-.62,.85],[.62,.85]]){
+      const w=box(.34,.62,.62,'#191919'); w.position.set(x,.34,z); g.add(w);
+      const hub=box(.06,.24,.24,'#666'); hub.position.set(x+(x>0?.16:-.16),.34,z); g.add(hub);
     }
   }else{
     // Am Boden ein zusammengelegtes Bündel, in der Luft die aufgespannte
@@ -4005,6 +4046,44 @@ function collides(px,py,pz){
     }
   return false;
 }
+// Monstertruck: hält ihn ein Block auf, bricht der lieber weg, statt den
+// Wagen zu bremsen — geprüft wird genau die Zelle, die collides() gerade als
+// Blockade gemeldet hat (Boden- UND Kopfhöhe, siehe dort), also exakt die
+// zwei Felder, die sonst auch einen zu Fuß gehenden Spieler aufhielten.
+// smashCd ist eine kurze, gemeinsame Abklingzeit (kein Fahrzeug fährt zwei
+// Richtungen gleichzeitig), damit nicht sechzigmal pro Bild derselbe Block
+// "gebrochen" wird, während der Truck noch dagegensteht.
+// Über breakBlock() statt setBlock(): nur so laufen Drop, Sound und der
+// Netzwerk-Sync (send({t:'block',...}), siehe setBlock) exakt wie beim
+// Abbau von Hand — der Truck ist ja im Grunde eine automatische Spitzhacke,
+// die beim Fahren zuschlägt, kein Sonderfall mit eigenem Draht zum Server.
+let smashCd=0;
+function truckSmash(px,pz){
+  if(smashCd>0) return false;
+  const y0=Math.floor(player.y+EPS), y1=Math.floor(player.y+PH-EPS);
+  let smashed=false;
+  // Genau dasselbe Zellenraster abklappern wie collides() (siehe dort) und
+  // nicht bloß die eine gerundete Zelle: der Truck ist so breit wie der
+  // Spieler, und wer schräg gegen eine Wand fährt, wird von einer Nachbar-
+  // zelle aufgehalten. Nur die Mittelzelle aufzubrechen ließe ihn genau dort
+  // grundlos abprallen, wo man am ehesten gegen etwas fährt.
+  for(let bx=Math.round(px-PR);bx<=Math.round(px+PR);bx++)
+    for(let bz=Math.round(pz-PR);bz<=Math.round(pz+PR);bz++){
+      if(Math.abs(px-bx)>=.5+PR||Math.abs(pz-bz)>=.5+PR) continue;
+      for(let y=y0;y<=y1;y++){
+        const t=blockAt(bx,y,bz);
+        // Grundgestein & Co. bleiben stehen (b.noBreak) — dann bremst der
+        // Truck wie jedes andere Fahrzeug auch ganz normal an ihnen ab.
+        // Durchlässiges (b.pass, die gekreuzten Flächen) hält ihn ohnehin
+        // nicht auf, das braucht er auch nicht niederzuwalzen.
+        if(!t||BLOCKS[t].pass||BLOCKS[t].noBreak) continue;
+        breakBlock(bx,y,bz,t);
+        smashed=true;
+      }
+    }
+  if(smashed){ smashCd=.12; SND.boom(); }
+  return smashed;
+}
 const keys={};
 
 // ------------------------------------------------------------------ Sicht
@@ -4085,20 +4164,32 @@ function updatePlayer(dt){
   const sin=Math.sin(player.yaw), cos=Math.cos(player.yaw);
   const dx=(mx*cos+mz*sin)*sp*dt;
   const dz=(-mx*sin+mz*cos)*sp*dt;
+  // Der Truck bricht sich seinen Weg frei — aber nur an Land: rv.water ist
+  // für ihn absichtlich lahm (er schwimmt nicht), damit reißt im Wasser
+  // nichts durch. sp ist hier schon die tatsächlich gefahrene Geschwindigkeit
+  // (Fahrzeuge kennen kein Anfahren/Bremsen); steht der Truck (keine Taste),
+  // ist dx=dz=0, also entsteht unten gar keine neue Kollision — "im Stand
+  // zerlegt er nichts" ergibt sich damit von selbst.
+  const truckDriving=riding&&riding.kind==='truck'&&sp>5;
 
   // Waagerecht, Achse für Achse — mit automatischer Stufe von einem Block.
   // Die Stufe geht auch im Wasser: sonst klebt man an der Böschung fest.
   const canStep=player.onGround||wet;
   let nx=clamp(player.x+dx,BOUND.x0-.4,BOUND.x1+.4);
   if(collides(nx,player.y,player.z)){
-    if(canStep&&!collides(nx,player.y+1,player.z)&&!collides(player.x,player.y+1,player.z))
+    // truckSmash() baut über breakBlock() ab (Drop/Sound/Netzwerk-Sync wie
+    // von Hand) — klappt es, ist die Bahn meist schon in diesem Bild wieder
+    // frei, statt erst einen Ruckler lang zu stehen.
+    if(truckDriving&&truckSmash(nx,player.z)&&!collides(nx,player.y,player.z)){ /* durchgebrochen */ }
+    else if(canStep&&!collides(nx,player.y+1,player.z)&&!collides(player.x,player.y+1,player.z))
       { player.y+=1; player.x=nx; }
     else nx=player.x;
   }
   if(nx!==player.x) player.x=nx;
   let nz=clamp(player.z+dz,BOUND.z0-.4,BOUND.z1+.4);
   if(collides(player.x,player.y,nz)){
-    if(canStep&&!collides(player.x,player.y+1,nz)&&!collides(player.x,player.y+1,player.z))
+    if(truckDriving&&truckSmash(player.x,nz)&&!collides(player.x,player.y,nz)){ /* durchgebrochen */ }
+    else if(canStep&&!collides(player.x,player.y+1,nz)&&!collides(player.x,player.y+1,player.z))
       { player.y+=1; player.z=nz; }
     else nz=player.z;
   }
@@ -4187,6 +4278,7 @@ function updatePlayer(dt){
   player.spd=speed;
   if(player.atkCd>0) player.atkCd-=dt;
   if(player.invT>0) player.invT-=dt;
+  if(smashCd>0) smashCd-=dt;              // Abklingzeit des Monstertrucks, siehe truckSmash
   if(player.hurtT>0){ player.hurtT-=dt; el('hurt').style.opacity=Math.max(0,player.hurtT); }
   else el('hurt').style.opacity=0;
 }
