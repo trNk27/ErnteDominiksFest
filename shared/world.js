@@ -41,10 +41,20 @@ const NB4=[[1,0],[-1,0],[0,1],[0,-1]];
 // Kampfwerte, ihre Fluggabe und ihre Beute selbst statt sie über eine
 // wachsende Zahl loser Konstanten zu verstreuen — MOB_HP & Co. bleiben als
 // Aliase erhalten, damit nichts, was sie schon importiert, bricht.
+// Hühner sind die erste FRIEDLICHE Spielart: peaceful:true markiert das für
+// jede Stelle, die zwischen Angreifern und Mitläufern unterscheiden muss
+// (siehe updateMobs/stepMob — beide biegen dort komplett aus der Kampf-KI
+// aus). dmg:0 und atkCd sind darum reine Füllwerte, nie wirklich gelesen.
+// w:0 hält sie aus pickMobKind() heraus, genau wie den Fluch-Benni außerhalb
+// der Blutmondnacht — Hühner brauchen aber, anders als der, überhaupt keinen
+// Blutmond-Bonus, sie kommen über einen eigenen, tagsüber laufenden
+// Populationspfad in die Welt (Client: maintainChickens in game.js, Server:
+// _spawnChicken in game-server.js — siehe CHICKEN_CAP/CHICKEN_NEAR_R unten).
 export const MOBS={
-  benni :{hp:10,speed:2.35,dmg:3,atkCd:1.4,h:1.95,kbTake:1,  fly:false,w:1,   loot:['ball',1,2]},
-  spider:{hp:14,speed:1.9, dmg:4,atkCd:1.6,h:1.5, kbTake:.7, fly:false,w:.28, loot:['string',1,2]},
-  cursed:{hp:7, speed:3.1, dmg:2,atkCd:1.0,h:1.5, kbTake:1.4,fly:true, w:0,   loot:['string',1,1]},
+  benni  :{hp:10,speed:2.35,dmg:3,atkCd:1.4,h:1.95,kbTake:1,  fly:false,w:1,   loot:['ball',1,2]},
+  spider :{hp:14,speed:1.9, dmg:4,atkCd:1.6,h:1.5, kbTake:.7, fly:false,w:.28, loot:['string',1,2]},
+  cursed :{hp:7, speed:3.1, dmg:2,atkCd:1.0,h:1.5, kbTake:1.4,fly:true, w:0,   loot:['string',1,1]},
+  chicken:{hp:4, speed:.85, dmg:0,atkCd:99, h:.7,  kbTake:1,  fly:false,w:0,   loot:['meat',1,2], peaceful:true},
 };
 export const MOB_HP=MOBS.benni.hp, MOB_SPEED=MOBS.benni.speed,
              MOB_DMG=MOBS.benni.dmg, MOB_ATK_CD=MOBS.benni.atkCd;
@@ -56,6 +66,17 @@ export const KB_DRAG=6, KB_MAX=10, FLY_H=2.2;
 // mit den Tagen, aber nur bis sieben, sonst erstickt man im eigenen Erfolg.
 export const mobCap=day=>Math.min(7,2+Math.floor(day*.6));
 export const MOB_SPAWN_MIN=6, MOB_SPAWN_MAX=11;
+// Hühner zählen NICHT gegen mobCap (sie sind kein Nachtdruck, sie sollen
+// einfach da sein) — beide Seiten filtern sie vor jedem mobCap-Vergleich
+// eigens heraus (Client: die spawnMob-Wache in update(), Server: der
+// night-Zweig in _startMobTimer). CHICKEN_CAP begrenzt ihre eigene, kleine
+// Population stattdessen direkt: höchstens so viele gleichzeitig in
+// Spielernähe (CHICKEN_NEAR_R), egal ob Tag oder Nacht. EGG_MIN/EGG_MAX ist
+// der Abstand zwischen zwei Eiern je Huhn — kurz gehalten (90–180s statt der
+// im Auftrag genannten 3–6 Minuten), damit man das Legen beim Testen nicht
+// ewig abwarten muss.
+export const CHICKEN_CAP=7, CHICKEN_NEAR_R=40;
+export const EGG_MIN=90, EGG_MAX=180;
 
 // ------------------------------------------------------------------ Geländeform
 export function hash2(x,z,s){

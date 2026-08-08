@@ -161,6 +161,12 @@
 
   /* ---------- Inventarfenster ---------- */
   #mbox .invgrid{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin:6px 0}
+  /* Kochtopf-Zutatenraster: POT_CAP=12 Fächer, 4 breit statt der 9 des
+     Rucksacks — sonst bleibt alles wie beim Rucksack/der Truhe (repeat(N,1fr)
+     plus aspect-ratio:1 von #mbox .cell oben), bewusst OHNE feste Zellbreite,
+     damit im Handy-Hochformat nichts über den Fensterrand hinausläuft (s.
+     Auftragsnotiz zum Kochfenster). */
+  #mbox .invgrid.potgrid{grid-template-columns:repeat(4,1fr)}
   #mbox .cell{
     position:relative;aspect-ratio:1;border:1px solid rgba(255,255,255,.16);border-radius:7px;
     background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;
@@ -244,6 +250,27 @@
   .craft .cell.res.empty{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.04);box-shadow:none}
   .hint{font-size:11px;opacity:.6;text-align:center;margin:-4px 0 4px}
 
+  /* ---------- Kochtopf-Fenster ---------- */
+  /* Zutatenraster (.invgrid.potgrid) steht oben für sich (s. dort); dieser
+     Streifen darunter trägt nur den Pfeil-Knopf "Kochen"/"Nochmal" und die
+     Ergebniszelle, genau wie .craft das für die Werkbank tut — wenige feste
+     Größen sind hier unproblematisch, weil nie mehr als drei Elemente
+     nebeneinanderstehen (kein repeat(N,1fr)-Raster, das im Hochformat
+     umbrechen müsste). */
+  .potcook{display:flex;align-items:center;justify-content:center;gap:10px;margin:8px 0}
+  .potbtn{
+    padding:9px 16px;border-radius:10px;border:1px solid #4a774a;background:#213b21;
+    color:#eaffea;font-weight:800;font-size:13px;letter-spacing:.3px;cursor:pointer
+  }
+  .potbtn:hover{border-color:#ffd76a;background:#2b4a2b}
+  .potbtn.off{opacity:.42;cursor:default;pointer-events:none}
+  .potcook .cell.res{
+    width:54px;height:54px;aspect-ratio:auto;font-size:26px;border-color:#b0722a;
+    background:rgba(176,114,42,.22);box-shadow:0 0 0 2px rgba(255,215,106,.2)
+  }
+  .potcook .cell.res.empty{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.04);box-shadow:none}
+  .potcook .arrow{font-size:20px;opacity:.6}
+
   /* Muster in Rezeptkarten */
   .patwrap{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0}
   .patwrap .pat{display:grid;gap:3px}
@@ -309,21 +336,8 @@
     background:#16281a;border:2px solid #4a774a;border-radius:16px;padding:10px 11px;
     box-shadow:0 12px 40px rgba(0,0,0,.6)
   }
-  #mside.hidden,#potrec.hidden{display:none}
+  #mside.hidden{display:none}
   #mside h3{margin-top:0}
-
-  /* ---------- Rezepte am Kochtopf ---------- */
-  #potrec{
-    position:absolute;right:10px;top:50%;transform:translateY(-50%);
-    width:216px;max-height:78vh;overflow:hidden;
-    background:rgba(12,22,12,.84);border:1px solid rgba(255,255,255,.16);border-radius:12px;
-    padding:8px 10px;backdrop-filter:blur(6px);pointer-events:none
-  }
-  #potrec h3{font-size:12px;opacity:.75;margin:0 0 4px;text-transform:uppercase;letter-spacing:.5px}
-  #potrec .inpot{
-    font-size:11.5px;opacity:.85;margin-bottom:6px;display:flex;align-items:center;
-    gap:2px;flex-wrap:wrap
-  }
 
   /* ---------- Ein Rezept als Muster ---------- */
   /* Kein Knopf: das Muster steht da, hinlegen muss man es selbst. */
@@ -498,8 +512,6 @@
       <button id="btnJump" title="Springen">⤒</button>
     </div>
   </div>
-
-  <div id="potrec" class="hidden"></div>
 
   <div id="modal" class="hidden">
     <div id="mwrap">

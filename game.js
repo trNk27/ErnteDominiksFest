@@ -10,6 +10,7 @@ import {
   WATER_Y, BEDROCK, SPAWN, MARKET, hash2, vnoise, riverAt, beyondRiver, rawHeight,
   VILLAGES, VILL_R, VILL_FADE, terrainH, surfaceTex, BLOCKS, TREE_TOP, TRUNK_MIN, FRUIT_OFF, treeSpot,
   MOBS, mobCap, bloodMoon, KB_DRAG, FLY_H, MOB_SPAWN_MIN, MOB_SPAWN_MAX,
+  CHICKEN_CAP, CHICKEN_NEAR_R, EGG_MIN, EGG_MAX,
 } from './shared/world.js';
 import {GOAL, SEED_OF, PRICES, SHOP, RECIPES, REFRESH, RAW, offerWant} from './shared/economy.js';
 import {PARTY_URL, connect, on, send, isConnected, getPid} from './net.js';
@@ -94,6 +95,10 @@ const SND={
   hit:()=>{tone(140,.09,'square',.1);tone(90,.12,'square',.08,.05);},
   hurt:()=>{tone(180,.2,'sawtooth',.13);tone(120,.25,'sawtooth',.1,.1);},
   mobDie:()=>{tone(400,.1,'square',.08);tone(200,.18,'square',.07,.09);},
+  // Ein kurzes Gackern-Zwitschern, wenn ein Huhn ein Ei legt (siehe
+  // updateChicken/stepChicken) — zwei helle, schnell aufeinander folgende
+  // Töne statt eines echten Sample, genau wie pop/craft oben.
+  egg:()=>{tone(880,.05,'sine',.06);tone(1180,.06,'sine',.05,.055);},
   night:()=>{tone(160,.5,'sine',.09);tone(120,.6,'sine',.08,.2);},
   // Ein tiefes, lang ausklingendes Anschwellen statt der kurzen Nacht-Töne —
   // dieselben drei Oszillatoren, nur tiefer und länger gehalten.
@@ -462,6 +467,31 @@ const TEX={
     g.fillStyle='#8f2fb0'; g.fillRect(7,9,1,1); g.fillRect(9,11,1,1); // ein Schimmer, der so nicht sein sollte
     g.fillStyle='#213331'; g.fillRect(5,13,6,1);
   }),
+  // Ei: klassische Eiform (oben schmaler als unten, keine reine Ellipse),
+  // freigestellt wie die übrigen gezeichneten Bildchen.
+  egg    :pixTex(g=>{
+    const cols=['#f7ecd8','#efe0c2','#fff6e6'], r=mulberry(151);
+    const cx=8,cy=9,rx=4,ry=5.2;
+    for(let y=2;y<15;y++) for(let x=3;x<14;x++){
+      const ny=(y-cy)/ry, nx=(x-cx)/rx, taper=ny<0?1-ny*.4:1;   // oben spitzer
+      if((nx/taper)**2+ny*ny>1) continue;
+      g.fillStyle=cols[Math.floor(r()*cols.length)]; g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='rgba(255,255,255,.5)'; g.fillRect(5,5,2,3);    // Glanzlicht
+  }),
+  // Rohes Hähnchen: eine Keule — rosa Fleisch über einem weißen Knochenende,
+  // freigestellt.
+  meat   :pixTex(g=>{
+    g.fillStyle='#e8dcc0'; g.fillRect(6,12,4,3);                // Knochen
+    g.fillStyle='#d8c9a8'; g.fillRect(7,14,2,1);
+    const cols=['#e8918a','#dd7d75','#f0a49c'], r=mulberry(152);
+    const cx=8,cy=7,rx=5,ry=4.4;
+    for(let y=2;y<12;y++) for(let x=2;x<14;x++){
+      if(((x-cx)/rx)**2+((y-cy)/ry)**2>1) continue;
+      g.fillStyle=cols[Math.floor(r()*cols.length)]; g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='#b85850'; g.fillRect(4,4,2,1); g.fillRect(11,9,2,1);  // Schatten
+  }),
   // Monstertruck: von oben gezeichnet, weil bei 16×16 Pixeln eine Seitenansicht
   // kaum vier Räder zeigen könnte — so stehen sie deutlich als dicke, dunkle
   // Klötze an den vier Ecken der Karosserie heraus, mit Frontscheibe und
@@ -556,6 +586,12 @@ const ITEMS={
   stick   :{ic:'🥢',nm:'Stock'},
   dominik :{ic:'🍑',nm:'Dominik',     food:4},
   mushroom:{ic:'🍄',nm:'Pilz',        food:2},
+  // Vom friedlichen Huhn (siehe MOBS.chicken in shared/world.js): das Ei
+  // fällt von selbst ab und zu, das Fleisch nur, wenn es stirbt (loot dort).
+  // Kein Sprite unter sprites/items/ nötig — beide bekommen ein gezeichnetes
+  // pixTex-Bild wie ball/cracker (siehe TEX unten, ICONS bleibt ohne sie).
+  egg     :{ic:'🥚',nm:'Ei',          food:2},
+  meat    :{ic:'🍖',nm:'Rohes Hähnchen',food:3},
   salt    :{ic:'🧂',nm:'Salz'},
   pepper  :{ic:'🌶️',nm:'Pfeffer'},
   // Saatgut. seed sagt, was daraus wird: erst der Setzling, dann die Ernte.
@@ -1102,12 +1138,10 @@ function removeDrop(d){
   drops.splice(i,1);
 }
 // pickT  Schonfrist, bis es aufgehoben werden darf
-// potT   Schonfrist, bis ein Kochtopf es schlucken darf — sonst fiele das
-//        fertige Gericht sofort wieder in den Topf, aus dem es kam
 // Gemeinsamer Bau-Kern für einen lokalen UND einen von einem anderen Client
 // übernommenen Drop (Phase 6) — der einzige Unterschied ist, wer die dropId
 // vergibt und ob broadcastet wird, s. spawnDrop/spawnDropRemote unten.
-function _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT){
+function _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT){
   if(!ITEMS[id]||n<=0) return null;
   while(drops.length>=DROP_CAP) removeDrop(drops[0]);   // Notbremse gegen Halden
   const mesh=new THREE.Mesh(BLOCKGEO,dropMat(id));
@@ -1118,7 +1152,7 @@ function _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT){
   // age zählt die Lebenszeit, t nur die Phase des Wippens — die startet
   // zufällig, damit nicht alle Würfel im Gleichschritt auf und ab gehen.
   const d={id,n,x,y,z,vx,vy,vz,mesh,spin:rnd(0,6.28),rest:false,
-           pickT,potT,age:0,t:rnd(0,6.28),dropId};
+           pickT,age:0,t:rnd(0,6.28),dropId};
   drops.push(d);
   return d;
 }
@@ -1130,17 +1164,17 @@ let dropSeq=0;
 // für alle Aufrufer, genau wie setBlock() das für Blockänderungen schon tut:
 // eine frische, global eindeutige dropId minten und — sofern verbunden — an
 // alle ANDEREN Clients melden (Empfänger s. on('drop-spawn',...) unten).
-function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35,potT=0){
+function spawnDrop(id,n,x,y,z,vx=0,vy=0,vz=0,pickT=.35){
   const dropId=`${getPid()??'off'}-${++dropSeq}`;
-  const d=_mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT);
+  const d=_mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT);
   if(d&&isConnected()) send({t:'drop-spawn',dropId,id,n,x,y,z,vx,vy,vz});
   return d;
 }
 // Für eine ankommende drop-spawn-Nachricht: baut denselben Würfel, aber mit
 // der schon vom Absender vergebenen dropId und OHNE erneut zu broadcasten —
 // sonst prallte dieselbe Nachricht endlos zwischen den Clients hin und her.
-function spawnDropRemote(dropId,id,n,x,y,z,vx,vy,vz,pickT=.35,potT=0){
-  return _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT,potT);
+function spawnDropRemote(dropId,id,n,x,y,z,vx,vy,vz,pickT=.35){
+  return _mkDrop(dropId,id,n,x,y,z,vx,vy,vz,pickT);
 }
 // Passt es nicht mehr in den Rucksack, liegt es eben vor den Füßen —
 // besser als die alte Meldung, dass etwas verlorengegangen sei.
@@ -1169,7 +1203,6 @@ function updateDrops(dt){
     const d=drops[i];
     d.t+=dt; d.age+=dt; d.spin+=dt*1.7;
     if(d.pickT>0) d.pickT-=dt;
-    if(d.potT>0) d.potT-=dt;
 
     if(d.vx||d.vz){                      // waagerecht, mit Reibung
       const nx=d.x+d.vx*dt, nz=d.z+d.vz*dt;
@@ -1193,27 +1226,12 @@ function updateDrops(dt){
     if(d.vy<=0){
       const by=Math.floor(ny);
       if(fillsAt(bx,by,bz)){
+        // Kein Hineinwerfen mehr: der Kochtopf hat jetzt ein eigenes Fenster
+        // (Rechtsklick → openPot(), s. Abschnitt "Kochtopf"), in das Zutaten
+        // aus dem Rucksack gezogen werden — ein Drop, der zufällig auf einem
+        // Topf landet, bleibt darum einfach oben liegen wie auf jedem anderen
+        // Block.
         ny=by+1; d.vy=0;
-        // Landet es auf einem Kochtopf, wandert es hinein statt obendrauf.
-        // Verbunden: nicht sofort potAdd() aufrufen — zwei Clients, deren
-        // Physik dasselbe Landen fast zeitgleich erkennt, würden sonst beide
-        // füttern (Vervielfältigung). Stattdessen beim Server anmelden (s.
-        // Kommentar bei den anderen beiden Claim-Stellen unten) und erst auf
-        // die Freigabe (on('drop-claimed',...)) hin wirklich füttern. Position
-        // hier merken, weil der Server sie zur Schiedsrichter-Rolle gar nicht
-        // braucht und darum nicht zurückschickt.
-        if(!d.rest&&d.potT<=0&&blockAt(bx,by,bz)==='pot'){
-          if(isConnected()){
-            if(!d._claiming){
-              d._claiming=true; d._claimReason='pot'; d._potPos={x:bx,y:by,z:bz};
-              send({t:'drop-claim',dropId:d.dropId,reason:'pot'});
-            }
-          }else{
-            const took=potAdd(bx,by,bz,d.id,d.n);
-            if(took>=d.n){ removeDrop(d); continue; }
-            if(took>0) d.n-=took;
-          }
-        }
         d.rest=true;
       } else d.rest=false;
     }
@@ -1223,12 +1241,12 @@ function updateDrops(dt){
 
     // Was vor Mannis Tresen liegen bleibt und auf seiner Preisliste steht,
     // kauft er auf der Stelle. Alles andere lässt er liegen.
-    // Verbunden: wie beim Topf oben — nicht sofort verkaufen, sonst könnten
-    // zwei Clients, die dasselbe Ruhen fast zeitgleich erkennen, denselben
-    // Drop beide verkaufen (Geld aus dem Nichts). Erst beim Server anmelden,
-    // dann auf die Freigabe warten (drop._claiming verhindert erneutes
-    // Anmelden, solange die Antwort noch aussteht — rein lokal, s. p._claiming
-    // beim Topf-Claim).
+    // Verbunden: wie beim Kochtopf-Claim (s. updatePots) — nicht sofort
+    // verkaufen, sonst könnten zwei Clients, die dasselbe Ruhen fast
+    // zeitgleich erkennen, denselben Drop beide verkaufen (Geld aus dem
+    // Nichts). Erst beim Server anmelden, dann auf die Freigabe warten
+    // (drop._claiming verhindert erneutes Anmelden, solange die Antwort noch
+    // aussteht — rein lokal, s. p._claiming beim Topf-Claim dort).
     if(d.rest&&PRICES[d.id]&&marketChar&&
        Math.hypot(d.x-marketChar.x,d.z-marketChar.z)<MARKET_R&&
        Math.abs(d.y-marketChar.y)<2.5){
@@ -1372,10 +1390,13 @@ function updateShots(dt){
 }
 
 // ------------------------------------------------------------------ Kochtopf
-// Der Topf ist kein Raster mehr, sondern ein Topf: Zutaten hineinwerfen,
-// Rechtsklick, und was dabei herauskommt, fällt oben wieder heraus.
+// Rechtsklick öffnet ein Fenster (openPot, Vorbild: die Truhe/openChest) —
+// Zutaten werden aus dem Rucksack HINEINGEZOGEN statt hineingeworfen, ein
+// Pfeil-Knopf ("Kochen"/"Nochmal", s. cookPot/renderPot) startet den Vorgang,
+// und ein Ergebnisfeld zeigt vorab, was daraus wird. Das Hineinwerfen mit Q
+// ist abgeschafft (s. Kommentar bei updateDrops).
 const POT_CAP=12, COOK_TIME=4.5;
-const pots=new Map();                    // "x,y,z" → {items:[{id,n}],cook:0}
+const pots=new Map();                    // "x,y,z" → {items:[{id,n}],cook:0,last:[{id,n}]}
 const potCount=p=>p.items.reduce((a,b)=>a+b.n,0);
 function potAdd(x,y,z,id,n){             // gibt zurück, wieviel hineinging
   const k=K(x,y,z);
@@ -1389,55 +1410,109 @@ function potAdd(x,y,z,id,n){             // gibt zurück, wieviel hineinging
   SND.tap();
   // Phase 3b: den vollen Inhalt broadcasten (nicht nur das Delta) — dasselbe
   // "ganzer Zustand" Prinzip wie bei Block/Fackel-Sync, unempfindlich gegen
-  // Drift. Das auslösende Ereignis (ein Wurf-Würfel, der im Topf landet)
-  // bleibt unsynchronisiert (Phase 6), nur das Ergebnis geht raus — hier statt
-  // nur am einen bekannten Aufrufer (Wurf-Physik in updateDrops), damit auch
-  // ein direkter potAdd()-Aufruf (z.B. über das Debug-API) korrekt synct.
+  // Drift. Additiv wie Block/Fackel: keine Vervielfältigungsgefahr, darum
+  // ohne Server-Schiedsspruch direkt lokal anwenden UND broadcasten — anders
+  // als bei einer Truhe gehört ein Topf in dem Moment ohnehin nur dem einen
+  // Spieler, der gerade sein Kochfenster offen hat (s. auch potTake unten).
+  if(isConnected()) send({t:'pot-add',x,y,z,items:p.items});
+  return t;
+}
+// Gegenstück zu potAdd: ein Fach im Kochfenster leeren (Ziehen zurück in den
+// Rucksack, s. clickPotCell). Bleibt im selben additiv/broadcastenden
+// Sync-Schema wie potAdd — der volle Inhalt geht wie gehabt über 'pot-add'
+// raus, diesmal eben verkleinert statt vergrößert.
+function potTake(x,y,z,i,n){
+  const p=pots.get(K(x,y,z));
+  if(!p||p.cook>0) return 0;             // während des Kochens bleibt der Deckel zu, s. potAdd
+  const cur=p.items[i];
+  if(!cur) return 0;
+  const t=Math.min(n,cur.n);
+  cur.n-=t;
+  if(cur.n<=0) p.items.splice(i,1);
   if(isConnected()) send({t:'pot-add',x,y,z,items:p.items});
   return t;
 }
 // Im Topf liegt alles durcheinander — es zählt nur, was drin ist und wieviel.
-function potRecipe(p){
+// potRecipeItems ist der eigentliche Kern (nimmt eine bloße Zutatenliste,
+// nicht erst ein Topf-Objekt) — renderPot() braucht genau das auch für eine
+// Vorschau auf Basis von p.last, wenn der Topf gerade leer ist (s. dort).
+function potRecipeItems(items){
   const ids=[];
-  for(const it of p.items) for(let i=0;i<it.n;i++) ids.push(it.id);
+  for(const it of items) for(let i=0;i<it.n;i++) ids.push(it.id);
   ids.sort();
   return RECIPES.find(r=>r.station==='pot'&&r.shapeless&&
     r.shapeless.length===ids.length&&
     r.shapeless.slice().sort().every((v,i)=>v===ids[i]))||null;
 }
-// Steht man vor einem Topf, hängt rechts, was sich darin kochen lässt — und
-// was gerade drinliegt. Neu gebaut wird die Leiste nur, wenn sich etwas
-// geändert hat; sonst schriebe sie sich sechzigmal je Sekunde selbst neu.
-let potPanelSig='', potPanelOn=false;
-function updatePotPanel(cell){
-  const box=el('potrec');
-  if(!cell||state.paused){
-    if(potPanelOn){ potPanelOn=false; potPanelSig=''; box.classList.add('hidden'); }
-    return;
-  }
-  const p=pots.get(K(cell.x,cell.y,cell.z));
-  const dishes=RECIPES.filter(r=>r.station==='pot'&&known.has(r.id));
-  const sig=[cell.x,cell.y,cell.z,p?p.items.map(i=>i.id+'×'+i.n).join(','):'',
-             p?p.cook>0:'' ,dishes.map(r=>r.id).join(',')].join('|');
-  if(sig===potPanelSig) return;
-  potPanelSig=sig;
-  const n=p?potCount(p):0;
-  const inside=p&&p.items.length
-    ? p.items.map(i=>icon(i.id,'mini')+(i.n>1?'<b>'+i.n+'</b>':'')).join(' ')
-    : '<i style="opacity:.6">leer</i>';
-  box.innerHTML=`<h3>🍲 Kochtopf ${n}/${POT_CAP}</h3>
-    <div class="inpot">${p&&p.cook>0?'kocht gerade …':inside}</div>`+
-    (dishes.length?dishes.map(recCard).join('')
-      :'<p class="sidenote">Du kennst noch kein Gericht. Die Rezepte dafür haben die Jannessen.</p>');
-  box.classList.remove('hidden');
-  potPanelOn=true;
-}
-// Am Fadenkreuz steht, wie voll der Topf ist — sonst müsste man raten.
+const potRecipe=p=>potRecipeItems(p.items);
+// Am Fadenkreuz steht, wie voll der Topf ist — sonst müsste man raten. Bleibt
+// bestehen, obwohl es das Kochfenster jetzt gibt: ein flüchtiger Blick beim
+// Vorbeilaufen soll nicht erst ein Fenster verlangen (s. Commit-Notiz zur
+// gestrichenen Seitenleiste #potrec bei potSideHTML unten).
 function potTip(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
   if(p&&p.cook>0) return '🍲 …';
   if(!p||!p.items.length) return '🍲';
   return '🍲 '+p.items.map(i=>ITEMS[i.id].ic+(i.n>1?i.n:'')).join(' ');
+}
+// Rechtsklick auf den Topf öffnet jetzt dieses Fenster statt sofort zu kochen
+// (das übernimmt der "Kochen"-Knopf darin, s. cookPot) — Vorbild ist die
+// Truhe (openChest): ein fremder Behälter oben, der Rucksack darunter.
+let openPotCell=null;
+function openPot(cell){
+  const k=K(cell.x,cell.y,cell.z);
+  if(!pots.has(k)) pots.set(k,{items:[],cook:0,readyAt:0});
+  openPotCell=cell;
+  panel='pot';
+  SND.chest();
+  renderPot(false);
+}
+// 4×3 = POT_CAP Fächer, genau wie chestGrid() für die Truhe — jedes zeigt
+// direkt p.items[i]; da der Topf shapeless kocht (s. potRecipeItems), hat
+// keine Position eine eigene Bedeutung, ein herausgenommener Stapel lässt
+// die folgenden Fächer einfach nachrücken.
+function potGrid(p){
+  let h='<div class="invgrid potgrid">';
+  for(let i=0;i<POT_CAP;i++) h+=`<div class="cell" data-pot="${i}">${stackHTML(p.items[i])}</div>`;
+  h+='</div>';
+  return h;
+}
+// Zellen im Kochfenster: wie bei der Truhe hängt der bewegte Stapel an carry
+// (s. clickChestCell), nur ohne deren Server-Schiedsspruch (Begründung s.
+// potTake) und ohne deren Tausch-Sonderfall — ein Klick auf ein fremdes oder
+// leeres Fach landet gleichermaßen in potAdd, s. potGrid.
+function clickPotCell(i,one){
+  if(!openPotCell) return;
+  const {x,y,z}=openPotCell;
+  const p=pots.get(K(x,y,z));
+  if(!p) return;
+  if(!carry){
+    const cur=p.items[i];
+    if(!cur) return;
+    const want=one?1:cur.n;
+    const got=potTake(x,y,z,i,want);
+    if(got>0) carry={id:cur.id,n:got};
+  }else{
+    const want=one?1:carry.n;
+    const got=potAdd(x,y,z,carry.id,want);
+    if(got<=0){ SND.fail(); return; }
+    carry.n-=got; if(carry.n<=0) carry=null;
+  }
+  SND.tap();
+  rerenderPanel();
+}
+// Ersetzt die alte, immer sichtbare Seitenleiste #potrec: dieselbe
+// Rezeptübersicht (bekannte Kochtopf-Gerichte), jetzt aber nur, während das
+// Kochfenster offen ist — wie sideHTML() das für die Werkbank neben
+// craftHTML() schon macht. Als eigenständige, dauerhaft eingeblendete Leiste
+// war sie mit dem neuen Fenster doppelt gemoppelt (das Fenster zeigt das
+// Ergebnis direkt); als mside-Inhalt bleibt die Übersicht erhalten, ohne dass
+// zwei Stellen dasselbe anzeigen.
+function potSideHTML(){
+  const dishes=RECIPES.filter(r=>r.station==='pot'&&known.has(r.id));
+  return '<h3>📜 Im Kochtopf</h3>'+
+    (dishes.length?dishes.map(recCard).join('')
+      :'<p class="sidenote">Du kennst noch kein Gericht. Die Rezepte dafür haben die Jannessen.</p>');
 }
 function usePot(cell){
   const p=pots.get(K(cell.x,cell.y,cell.z));
@@ -1453,13 +1528,85 @@ function usePot(cell){
   SND.craft();
   toast('🍲 Der Topf kocht …','good',2000);
 }
+// Der "Kochen"-Knopf im Fenster (data-act="cook", s. renderPot/mbox-Klick-
+// Zuhörer). Ist der Topf leer, aber weiß er noch, was zuletzt darin kochte
+// (p.last, s. on('pot-grant')/updatePots unten), holt dieser Knopf dieselben
+// Zutaten aus dem Rucksack und legt sie wieder hinein — der Kern des
+// "Nochmal"-Auftrags. Reicht der Rucksack nicht, passiert nichts außer einem
+// Hinweis; renderPot markiert den Knopf für genau diesen Fall schon vorher
+// mit der vorhandenen .off-Klasse, das hier ist die zweite, tatsächlich
+// entscheidende Prüfung (der Rucksack kann sich zwischen zwei Bildern ändern).
+function cookPot(cell){
+  if(!cell) return;
+  const k=K(cell.x,cell.y,cell.z);
+  const p=pots.get(k);
+  if(!p||p.cook>0) return;
+  if(!p.items.length){
+    if(!p.last||!p.last.length){ toast('🍲 Erst Zutaten hineinlegen.','warn',1800); return; }
+    if(!p.last.every(it=>countOf(it.id)>=it.n)){
+      toast('🍲 Die Zutaten fehlen im Rucksack.','warn',2200); SND.fail(); return;
+    }
+    for(const it of p.last) take(it.id,it.n);
+    for(const it of p.last) potAdd(cell.x,cell.y,cell.z,it.id,it.n);
+    updateHUD();
+  }
+  usePot(cell);
+}
+// Fortschritt/Ergebnis nur bei echter Änderung neu bauen — dasselbe Signatur-
+// Muster wie hudCache und das frühere potPanelSig (s. Kommentar bei
+// updateHand). remainS rundet auf ganze Sekunden, damit die Signatur nicht
+// mit jedem Bild kippt, sondern höchstens einmal pro Sekunde neu baut.
+let potWinSig='';
+function refreshPotWindow(){
+  if(panel!=='pot'||!openPotCell) return;
+  const p=pots.get(K(openPotCell.x,openPotCell.y,openPotCell.z));
+  if(!p){ potWinSig=''; return; }
+  const remainS=p.cook>0?Math.max(0,Math.ceil((p.readyAt-Date.now())/1000)):-1;
+  const sig=[p.items.map(it=>it.id+'×'+it.n).join(','),p.cook,remainS,
+             p.last?p.last.map(it=>it.id+'×'+it.n).join(','):''].join('|');
+  if(sig===potWinSig) return;
+  potWinSig=sig;
+  renderPot();
+}
+function renderPot(keep=true){
+  if(!openPotCell) return;
+  const p=pots.get(K(openPotCell.x,openPotCell.y,openPotCell.z));
+  if(!p) return;
+  const cooking=p.cook>0;
+  const remainS=cooking?Math.max(0,Math.ceil((p.readyAt-Date.now())/1000)):0;
+  const canRepeat=!cooking&&!p.items.length&&p.last&&p.last.length>0;
+  const repeatReady=canRepeat&&p.last.every(it=>countOf(it.id)>=it.n);
+  // Vorschau: aus dem aktuellen Inhalt, oder — leer, aber wiederholbar — aus
+  // den zuletzt gekochten Zutaten, damit "Nochmal" schon vorher zeigt, was
+  // dabei herauskäme.
+  const previewItems=p.items.length?p.items:(canRepeat?p.last:null);
+  const r=previewItems?potRecipeItems(previewItems):null;
+  const shown=r&&known.has(r.id);
+  let label,off;
+  if(cooking){ label='Kocht … '+remainS+'s'; off=true; }
+  else if(p.items.length){ label='Kochen'; off=false; }
+  else if(canRepeat){ label='Nochmal'; off=!repeatReady; }
+  else{ label='Kochen'; off=true; }
+  let h='<h2>🍲 Kochtopf</h2>'+potGrid(p)+
+    `<div class="potcook"><button class="potbtn${off?' off':''}" data-act="cook">${label}</button>`+
+    '<div class="arrow">➜</div>'+
+    `<div class="cell res${shown?'':' empty'}">${shown
+      ?icon(r.out[0])+(r.out[1]>1?`<span class="n">${r.out[1]}</span>`:''):''}</div></div>`+
+    '<h3>Rucksack</h3>'+invGrid()+
+    dragHint()+
+    '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>';
+  showModal(h,keep,potSideHTML());
+  drawCarry();
+  updateItemTip();
+}
 function finishCook(k,p){
   const [x,y,z]=k.split(',').map(Number);
   const r=potRecipe(p);
   p.items.length=0;
-  // Springt oben heraus und bleibt eine Weile taub für Töpfe, sonst plumpst
-  // das fertige Gericht geradewegs in den zurück, aus dem es kam.
-  const out=(id,n)=>spawnDrop(id,n,x,y+1.25,z,rnd(-.3,.3),2.4,rnd(-.3,.3),.5,1.8);
+  // Springt oben heraus, mit der üblichen kurzen Aufheb-Schonfrist (pickT) —
+  // ein Zurückfallen in den Topf gibt es nicht mehr zu verhindern, seit das
+  // Hineinwerfen abgeschafft ist (s. updateDrops).
+  const out=(id,n)=>spawnDrop(id,n,x,y+1.25,z,rnd(-.3,.3),2.4,rnd(-.3,.3),.5);
   if(r&&known.has(r.id)){
     out(r.out[0],r.out[1]);
     state.crafted++;
@@ -1494,6 +1641,8 @@ function updatePots(dt){
     if(blockAt(x,y,z)!=='pot'){ pots.delete(k); continue; }  // abgebaut, während es kochte
     if(!isConnected()){                    // offline/Einzelspieler: wie bisher, kein Claim-Tanz nötig
       p.cook=0;
+      // Für "Nochmal" merken, BEVOR finishCook() p.items leert (s. cookPot).
+      p.last=p.items.map(it=>({...it}));
       finishCook(k,p);
       continue;
     }
@@ -1501,6 +1650,7 @@ function updatePots(dt){
     p._claiming=true;
     send({t:'pot-claim',x,y,z,readyAt:p.readyAt});
   }
+  refreshPotWindow();
 }
 
 // ------------------------------------------------------------------ Bewohner
@@ -1569,6 +1719,35 @@ let benniTex=null;
 // benni.png abgeleitete Textur je Spielart (siehe Boot-Block unten) — kein
 // zweites, 1,4 MB schweres PNG für dieselbe Silhouette.
 const MOB_TEX={};
+// Huhn: anders als benni/spider/cursed kein Foto und keine daraus
+// verrechnete Variante, sondern ein gezeichnetes Sprite wie ball/cracker/
+// truck oben (siehe pixTex) — steht synchron fest, sobald dieses Skript
+// läuft, ganz ohne auf benni.png zu warten. spawnChicken() (unten) nutzt das
+// aus und prüft anders als spawnMob() kein "ist benniTex schon da". Nur
+// online bleibt es an benni.png gekoppelt: on('mob-state',...) wartet für
+// JEDEN Mob-Kind darauf (der Wächter dort gilt pauschal, nicht texturweise) —
+// bei normaler Ladezeit ein kaum merklicher Verzug, kein eigener Fall wert.
+MOB_TEX.chicken=pixTex(g=>{
+  const r=mulberry(147), body=['#fbfbf6','#f4f3ec','#ffffff'];
+  // Körper: weißes Oval
+  const cx=8,cy=10,rx=5.4,ry=4;
+  for(let y=6;y<15;y++) for(let x=2;x<15;x++){
+    if(((x-cx)/rx)**2+((y-cy)/ry)**2>1) continue;
+    g.fillStyle=body[Math.floor(r()*body.length)]; g.fillRect(x,y,1,1);
+  }
+  // Kopf: kleiner runder Aufsatz oben rechts
+  for(let y=2;y<8;y++) for(let x=9;x<16;x++){
+    if(Math.hypot(x-11.8,y-5)>3) continue;
+    g.fillStyle=body[Math.floor(r()*body.length)]; g.fillRect(x,y,1,1);
+  }
+  g.fillStyle='#c9302a';                                  // Kamm
+  g.fillRect(10,1,1,2); g.fillRect(11,0,2,2); g.fillRect(13,1,1,2);
+  g.fillStyle='#e8b23a'; g.fillRect(14,5,2,1); g.fillRect(15,6,1,1);  // Schnabel
+  g.fillStyle='#241a10'; g.fillRect(12,4,1,1);            // Auge
+  g.fillStyle='#e8b23a';                                  // Füße
+  g.fillRect(5,14,1,2); g.fillRect(4,15,3,1);
+  g.fillRect(9,14,1,2); g.fillRect(8,15,3,1);
+});
 function labelTex(lines,color='#ffd76a'){
   const W=512,LH=54,pad=18;
   const arr=Array.isArray(lines)?lines:[lines];
@@ -1952,6 +2131,94 @@ function dropMob(m,i){
   scene.remove(m.mesh); m.mesh.geometry.dispose(); m.mesh.material.dispose();
   mobs.splice(i<0?mobs.indexOf(m):i,1);
 }
+// ---- Hühner: der erste friedliche Mob (MOBS.chicken.peaceful, siehe
+// shared/world.js). Sie tauchen NIE über pickMobKind/spawnMob auf (w:0),
+// sondern über maintainChickens() unten, laufen tagsüber wie nachts einfach
+// weiter (updateMobs() biegt für sie komplett aus der Kampf-/Fluchtschleife
+// aus, siehe dort) und legen von Zeit zu Zeit ein Ei.
+const CHICKEN_LURE_R=8, CHICKEN_EAT_R=1;
+// Der nächste liegende Dominik in Reichweite — dieselbe Suche läuft offline
+// hier UND online in updateMobsOnline() (dort, weil der Server gar keine
+// Drop-Positionen kennt, s. Kommentar dort). d.id 'dominik' statt eines
+// eigenen Lockstoff-Merkmals, weil das genau der Gegenstand ist, den man
+// zum Anlocken hinwirft (siehe Auftrag).
+function nearestLure(x,z){
+  let best=null,bd=CHICKEN_LURE_R;
+  for(const d of drops){
+    if(d.id!=='dominik') continue;
+    const dd=Math.hypot(d.x-x,d.z-z);
+    if(dd<bd){ bd=dd; best=d; }
+  }
+  return best;
+}
+// Offline-Populationspflege: alle paar Sekunden nachsehen, ob in Spielernähe
+// (CHICKEN_NEAR_R) noch Platz unter CHICKEN_CAP ist, und wenn ja, eines
+// nachwachsen lassen. Online übernimmt der Server dasselbe über
+// _spawnChicken() (siehe party/src/game-server.js) — beide lesen dieselben
+// Konstanten aus shared/world.js, damit die beiden Populationen sich nicht
+// heimlich auseinanderentwickeln.
+let chickenTimer=rnd(2,5);
+function maintainChickens(dt){
+  chickenTimer-=dt;
+  if(chickenTimer>0) return;
+  chickenTimer=rnd(4,9);
+  const near=mobs.filter(m=>m.kind==='chicken'&&Math.hypot(m.x-player.x,m.z-player.z)<CHICKEN_NEAR_R).length;
+  if(near<CHICKEN_CAP) spawnChicken();
+}
+// Beim Betreten der Welt stehen schon ein paar da. Ohne diese Starthilfe
+// beginnt jede Sitzung mit null Hühnern und lässt sie im Takt von
+// maintainChickens einzeln erscheinen — bis die ersten drei da sind, verginge
+// eine knappe halbe Minute, in der die Welt einfach leer aussieht. Nachwachsen
+// tun sie danach wie gehabt, das hier ist nur der erste Anblick.
+function seedChickens(n=3){ for(let i=0;i<n;i++) spawnChicken(); }
+function spawnChicken(){
+  let x,z,tries=0;
+  do{
+    const a=rnd(0,6.28), d=rnd(6,22);
+    x=clamp(Math.round(player.x+Math.cos(a)*d),BOUND.x0+2,BOUND.x1-2);
+    z=clamp(Math.round(player.z+Math.sin(a)*d),BOUND.z0+2,BOUND.z1-2);
+  } while(surfaceAt(x,z)<SEA-1&&++tries<12);
+  const ground=surfaceAt(x,z);
+  if(ground<SEA-1) return;                    // kein Fleck über Wasser gefunden
+  const mesh=makeMobMesh(x,ground,z,'chicken');
+  mobs.push({x,z,y:ground,kind:'chicken',hp:MOBS.chicken.hp,kx:0,kz:0,mesh,
+    hurtT:0,bob:rnd(0,6),wanderAng:null,wanderT:rnd(0,3),eggT:rnd(EGG_MIN,EGG_MAX)});
+}
+// Die eigentliche Verhaltens-KI, aus updateMobs() heraus für jedes Huhn
+// aufgerufen (siehe dort): Ei-Timer, dann entweder auf den nächsten
+// liegenden Dominik zulaufen (und ihn bei Ankunft auffressen) oder
+// gemächlich umherstreifen. Setzt die Mesh-Position selbst — die zwei
+// ".98"-Zeilen in updateMobs gelten nur für die menschengroßen Bennis, ein
+// Huhn (h:.7) braucht seinen eigenen, viel kleineren Höhenversatz.
+function updateChicken(m,dt){
+  m.eggT-=dt;
+  if(m.eggT<=0){
+    m.eggT=rnd(EGG_MIN,EGG_MAX);
+    spawnDrop('egg',1,m.x,m.y+.4,m.z,rnd(-.3,.3),1.4,rnd(-.3,.3),.6);
+    SND.egg();
+  }
+  const lure=nearestLure(m.x,m.z);
+  if(lure){
+    const dx=lure.x-m.x, dz=lure.z-m.z, d=Math.hypot(dx,dz)||1;
+    if(d<CHICKEN_EAT_R) removeDrop(lure);      // aufgefressen — offline sofort, kein Wettrennen möglich
+    else{
+      const nx=m.x+dx/d*MOBS.chicken.speed*dt, nz=m.z+dz/d*MOBS.chicken.speed*dt;
+      if(!mobBlocked(nx,nz,m.y)){ m.x=nx; m.z=nz; }
+    }
+  }else{
+    m.wanderT-=dt;
+    if(m.wanderT<=0){
+      m.wanderT=rnd(2,5);
+      m.wanderAng=Math.random()<.35?null:rnd(0,6.28);   // gelegentlich stehen bleiben
+    }
+    if(m.wanderAng!=null){
+      const nx=m.x+Math.cos(m.wanderAng)*MOBS.chicken.speed*dt,
+            nz=m.z+Math.sin(m.wanderAng)*MOBS.chicken.speed*dt;
+      if(!mobBlocked(nx,nz,m.y)){ m.x=nx; m.z=nz; } else m.wanderAng=null;
+    }
+  }
+  m.mesh.position.set(m.x,mobY(m,dt)+MOBS.chicken.h/2+.02,m.z);
+}
 // Vertragsstelle für B2 (attack()): Signatur bleibt genau damageMob(m,dmg,kx,kz)
 // — kx/kz sind ein horizontaler Stoß im Weltkoordinatensystem, standardmäßig
 // keiner. kbTake gewichtet ihn je Spielart (die Spinne ist träge, der
@@ -1997,6 +2264,10 @@ function updateMobs(dt){
       const f=Math.max(0,1-dt*KB_DRAG); m.kx*=f; m.kz*=f;
       if(Math.hypot(m.kx,m.kz)<.05){ m.kx=0; m.kz=0; }
     }
+    // Friedliche Mobs (bisher nur Hühner) biegen hier komplett aus der
+    // Kampf-/Flucht-KI aus: kein Tagesanbruch-Verschwinden, kein Angriff,
+    // kein Kreischen — eigene Verhaltens-Funktion, siehe updateChicken oben.
+    if(cfg.peaceful){ updateChicken(m,dt); continue; }
     const dx=player.x-m.x, dz=player.z-m.z, d=Math.hypot(dx,dz)||1;
     if(!state.night){                          // Tagesanbruch: sie verziehen sich
       m.x-=dx/d*cfg.speed*1.6*dt; m.z-=dz/d*cfg.speed*1.6*dt;
@@ -2066,6 +2337,34 @@ function updateMobsOnline(dt){
   const f=Math.min(1,dt*10);
   for(const m of mobs){
     if(m.id==null) continue;             // eine (im selben Lauf eigentlich nie gemischte) Offline-Leiche
+    // Huhn: Wandern und Ei-Legen simuliert der Server (stepChicken dort),
+    // aber das Anlocken NICHT — der Server kennt gar keine Drop-Positionen
+    // (siehe die drop-claim-Arbitrierung, die nie prüft WO ein Drop liegt,
+    // nur WELCHER dropId zuerst beansprucht wurde). Ist ein Dominik in Reichweite,
+    // übernimmt darum der Client die sichtbare Position komplett selbst (statt
+    // Richtung m.target zu lerpen) und beansprucht den Drop beim Ankommen über
+    // genau denselben drop-claim/drop-claimed-Tanz wie Verkaufen/Aufheben/Topf
+    // oben — so frisst ihn online nie mehr als ein Huhn gleichzeitig.
+    if(m.kind==='chicken'){
+      const lure=nearestLure(m.x,m.z);
+      if(lure){
+        const dx=lure.x-m.x, dz=lure.z-m.z, d=Math.hypot(dx,dz)||1;
+        if(d<CHICKEN_EAT_R){
+          if(!lure._claiming){
+            lure._claiming=true; lure._claimReason='chicken';
+            send({t:'drop-claim',dropId:lure.dropId,reason:'chicken'});
+          }
+        }else{
+          m.x+=dx/d*MOBS.chicken.speed*dt; m.z+=dz/d*MOBS.chicken.speed*dt;
+        }
+      }else{
+        m.x=lerp(m.x,m.target.x,f); m.z=lerp(m.z,m.target.z,f);
+      }
+      m.y=lerp(m.y,m.target.y,f);
+      m.mesh.position.set(m.x,m.y+MOBS.chicken.h/2+.02,m.z);
+      m.mesh.material.color.setRGB(1,m.hurtT?.4:1,m.hurtT?.4:1);
+      continue;                          // kein Kreischen, kein .98-Höhenversatz
+    }
     m.x=lerp(m.x,m.target.x,f);
     m.y=lerp(m.y,m.target.y,f);
     m.z=lerp(m.z,m.target.z,f);
@@ -2176,7 +2475,6 @@ function updateTarget(){
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
   const atPot=!aimed&&!aimedSign&&!aimedVehicle&&b&&b.use==='pot'?target.cell:null;
-  updatePotPanel(atPot);
   // Nur noch der Name — das goldene Fadenkreuz (#cross.hot) sagt längst,
   // dass hier etwas geht; welche Taste, steht in der Tastenlegende.
   const txt=aimed?aimed.name
@@ -2331,7 +2629,7 @@ function useRight(){
     const u=BLOCKS[target.type].use;
     if(u==='chest') return openChest(target.cell);
     if(u==='bench') return openCraft('bench');
-    if(u==='pot')   return usePot(target.cell);
+    if(u==='pot')   return openPot(target.cell);
   }
   // 3. Hacken und säen — vor dem Essen, sonst isst man die Saat auf
   if(it&&it.hoe&&target){ till(target.cell); return; }
@@ -2789,13 +3087,14 @@ function winGame(){
 // ------------------------------------------------------------------ Fenster
 const modal=el('modal'), mbox=el('mbox'), mside=el('mside');
 let craftStation=null;
-// Welches der drei Fenster gerade offen ist — Raster (Rucksack/Werkbank),
-// Truhe oder Markt. clickCell() braucht das, um zu wissen, was es nach einem
-// Klick neu zeichnen muss (s.u.).
+// Welches Fenster gerade offen ist — Raster (Rucksack/Werkbank), Truhe,
+// Markt oder Kochtopf. clickCell() braucht das, um zu wissen, was es nach
+// einem Klick neu zeichnen muss (s.u.).
 let panel=null;
 function rerenderPanel(){
   if(panel==='chest') renderChest();
   else if(panel==='market') openMarket(marketChar,true);
+  else if(panel==='pot') renderPot();
   else renderCraft();
 }
 // side ist die Rezeptleiste neben dem Fenster; ohne sie bleibt sie weg.
@@ -2812,7 +3111,7 @@ function hideModal(){
   clearGrid();                           // was im Raster liegt, gehört dem Spieler
   dropCarry();
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
-  tradePartner=null; mining=false; openSignCell=null; panel=null;
+  tradePartner=null; mining=false; openSignCell=null; openPotCell=null; panel=null;
 }
 const modalOpen=()=>!modal.classList.contains('hidden');
 
@@ -2998,6 +3297,10 @@ function itemUnder(node){
     const c=chests.get(K(openChestCell.x,openChestCell.y,openChestCell.z));
     return c?.items[+d.chest]?.id||null;
   }
+  if(d.pot!=null&&openPotCell){
+    const p=pots.get(K(openPotCell.x,openPotCell.y,openPotCell.z));
+    return p?.items[+d.pot]?.id||null;
+  }
   if(d.act==='craft') return matchRecipe()?.out[0]||null;
   return null;
 }
@@ -3006,7 +3309,7 @@ function updateItemTip(){
   if(carry||document.pointerLockElement){ tipEl.style.display='none'; return; }
   const node=document.elementFromPoint?.(mouseX,mouseY);
   const cell=node&&node.closest?.(
-    '[data-slot],[data-bar],[data-g],[data-chest],[data-want],[data-act],[data-shop],[data-accept]');
+    '[data-slot],[data-bar],[data-g],[data-chest],[data-pot],[data-want],[data-act],[data-shop],[data-accept]');
   const id=itemUnder(cell);
   if(!id){ tipEl.style.display='none'; return; }
   if(id==='accept') tipEl.innerHTML='<b>Mannis Annahme</b><i>Stapel ablegen — verkauft sofort</i>';
@@ -3115,6 +3418,7 @@ function togglePause(){
 // Eine Zelle bedienen — von Maus wie Finger aus derselben Stelle heraus.
 function useCell(c,one){
   if(c.dataset.chest!=null) clickChestCell(+c.dataset.chest,one);
+  else if(c.dataset.pot!=null) clickPotCell(+c.dataset.pot,one);
   else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
   else if(c.dataset.accept!=null) clickAccept(one);
   else clickCell({k:'g',i:+c.dataset.g},one);
@@ -3131,7 +3435,7 @@ function useCell(c,one){
 //                 Fensterrand hinauszieht, wirft in die Welt
 let cellHoldT=0, cellHeld=null, cellDidHold=false, cellDrag=false, cellX=0, cellY=0;
 mbox.addEventListener('pointerdown',e=>{
-  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-accept]');
+  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-pot],[data-accept]');
   if(!c) return;
   e.preventDefault(); e.stopPropagation();
   ac();
@@ -3154,6 +3458,7 @@ mbox.addEventListener('click',e=>{
   const act=b.dataset.act;
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='trade'){ doTrade(); return; }
+  if(act==='cook'){ cookPot(openPotCell); return; }
   if(act==='close') hideModal();
   else if(act==='takeall'){ takeAllFromChest(); }
   else if(act==='help') openIntro();
@@ -3650,7 +3955,7 @@ resizeHand();
 // Schwung, Wippen, Wechsel-Dip. Läuft aus update() heraus (nach
 // updateSelfModel, siehe dort), damit player.spd für den Frame schon steht.
 // Modell wird NUR bei geänderter heldId() neu gebaut, nicht jedes Bild —
-// dasselbe Muster wie hudCache/potPanelSig für "nur bei Änderung neu bauen".
+// dasselbe Muster wie hudCache/potWinSig für "nur bei Änderung neu bauen".
 function updateHand(dt){
   const id=heldId();
   if(id!==handHeldId){
@@ -4143,6 +4448,11 @@ on('pot-grant',msg=>{
   const p=pots.get(k);
   if(!p) return;
   const itemsSnapshot=p.items;
+  // Für "Nochmal" (s. cookPot): JEDER Client, der die Nachricht bekommt,
+  // kannte den Inhalt bereits synchron über pot-add — nicht nur der Gewinner
+  // unten braucht ihn sich zu merken, sonst böte das Kochfenster bei allen
+  // anderen Mitspielern nie "Nochmal" an.
+  p.last=itemsSnapshot.map(it=>({...it}));
   p.cook=0; p.readyAt=0; p._claiming=false; p.items=[];
   if(msg.pid===getPid()) finishCook(k,{items:itemsSnapshot});
 });
@@ -4164,17 +4474,22 @@ on('shot',msg=>{
   spawnShotRemote(msg.id,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz,msg.grav);
 });
 // Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs um einen
-// Boden-Drop (s. updateDrops: sell/pickup/pot melden sich dort per
-// 'drop-claim' an) — exakt dasselbe Muster wie Truhen-/Topf-Claim. Nur der
-// Gewinner wendet den zu seiner eigenen Anfrage passenden Effekt an (welchen,
-// steht lokal in d._claimReason); alle anderen Clients räumen den Drop
-// trotzdem weg, sobald irgendwer gewonnen hat — er ist für alle weg.
+// Boden-Drop (s. updateDrops: sell/pickup melden sich dort per 'drop-claim'
+// an, updateMobsOnline unten für 'chicken') — exakt dasselbe Muster wie
+// Truhen-/Topf-Claim. Nur der Gewinner wendet den zu seiner eigenen Anfrage
+// passenden Effekt an (welchen, steht lokal in d._claimReason); alle anderen
+// Clients räumen den Drop trotzdem weg, sobald irgendwer gewonnen hat — er
+// ist für alle weg. 'pot' gibt es hier nicht mehr: Zutaten wandern nur noch
+// über das Kochfenster (openPot/clickPotCell) in den Topf, nie mehr durch
+// bloßes Hinfallen — s. Kommentar bei updateDrops.
 on('drop-claimed',msg=>{
   const d=drops.find(o=>o.dropId===msg.dropId);
   if(!d) return;                      // längst lokal zusammengeführt/entfernt — sicher zu ignorieren
   if(msg.pid===getPid()){
     if(d._claimReason==='sell') sellTo(d.id,d.n);
-    else if(d._claimReason==='pot') potAdd(d._potPos.x,d._potPos.y,d._potPos.z,d.id,d.n);
+    // 'chicken': ein Huhn hat den Dominik gefressen — nichts weiter zu tun,
+    // der Drop verschwindet unten wie bei jedem anderen Claim-Gewinn auch.
+    else if(d._claimReason==='chicken'){}
     else{                              // 'pickup' (und Fallback)
       const rest=give(d.id,d.n);
       if(rest<d.n){ playSample('pop',.8)||SND.pop(); updateHUD(); }
@@ -4580,7 +4895,10 @@ function updateNight(dt){
       // _startMobTimer) — this local trigger would otherwise fight it (and
       // every connected client would spawn its OWN extra Bennis on top of
       // the server's).
-      if(!isConnected()&&mobs.length<cap) spawnMob();
+      // Hühner zählen NICHT gegen diesen Deckel (siehe CHICKEN_CAP-Kommentar
+      // in shared/world.js) — sonst schrumpfte die Nachtbedrohung mit jedem
+      // nachgewachsenen Huhn, obwohl das mit ihr nichts zu tun hat.
+      if(!isConnected()&&mobs.filter(m=>!MOBS[m.kind]?.peaceful).length<cap) spawnMob();
     }
   } else {
     birdTimer-=dt;
@@ -4589,6 +4907,11 @@ function updateNight(dt){
       birdTimer=rnd(20,50);
     }
   }
+  // Hühner leben tagsüber wie nachts weiter und laufen über einen eigenen,
+  // von der Nacht unabhängigen Populationspfad nach (siehe maintainChickens
+  // oben) — online übernimmt das derselbe Mechanismus serverseitig
+  // (_spawnChicken in party/src/game-server.js).
+  if(!isConnected()) maintainChickens(dt);
 }
 const C={dayTop:new THREE.Color(0x3f86c8),evTop:new THREE.Color(0xd97b3a),nTop:new THREE.Color(0x0b1030),
   dayBot:new THREE.Color(0xbfe0ef),evBot:new THREE.Color(0xf0b070),nBot:new THREE.Color(0x141c38),
@@ -4919,7 +5242,7 @@ function touchCellUp(e){
   // der Finger den Zielknopf nie "betreten" hat — er war die ganze Zeit auf
   // demselben aufgenommenen Element.
   const node=document.elementFromPoint(e.clientX,e.clientY);
-  const tgt=node?.closest?.('[data-slot],[data-g],[data-chest],[data-accept]');
+  const tgt=node?.closest?.('[data-slot],[data-g],[data-chest],[data-pot],[data-accept]');
   if(tgt){ useCell(tgt,false); return; }
   // Außerhalb des Fensters losgelassen heißt: weg damit.
   if(carry&&!node?.closest?.('#mwrap')) dropCarryToWorld();
@@ -5031,9 +5354,16 @@ function update(dt){
     if(isConnected()) updateMobsOnline(dt); else updateMobs(dt);
     updateDrops(dt);
     updateShots(dt);
-    updatePots(dt);
     updateGrow();
   }
+  // Kochtöpfe laufen wie Tag/Nacht oben bewusst AUCH bei geöffnetem Fenster
+  // weiter: das eigene Kochfenster (openPot/renderPot) IST jetzt ein offenes
+  // Menü (state.paused=true) — ohne diese Ausnahme bliebe ein davor
+  // betrachteter Topf für immer bei "kocht …" hängen, und finishCook() (das
+  // Gericht fällt oben heraus, s. dort) würde erst nach dem Schließen
+  // nachgeholt. readyAt ist ohnehin eine absolute Wanduhrzeit (s. usePot),
+  // ein Pausieren verschiebt also nichts, es hielte nur die Beobachtung an.
+  updatePots(dt);
   updatePlayer(dt);
   updateVehicles(dt);
   // Der Aussteigen-Knopf am Handy zeigt sich nur, wenn man auch wirklich in
@@ -5186,6 +5516,9 @@ Promise.all([
   el('hRecMax').textContent=RECIPES.length;
   el('hGoal').textContent=GOAL;
   resize(); updateHUD();
+  // Nur offline: verbunden füllt der Server die Population (s. _spawnChicken
+  // dort), und lokal gesetzte Hühner wären dann Geister neben den echten.
+  if(!isConnected()) seedChickens();
   el('boot').remove();
   // Steht gerade eine Passwortabfrage aus (siehe bootNet() weiter oben),
   // entscheidet die über den Übergang — sonst wie gehabt.
@@ -5199,7 +5532,8 @@ Promise.all([
 // ------------------------------------------------------------------ Debug-API
 window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,mobs,
   CHARS,traders,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
-  drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potRecipe,potTip,
+  drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potTake,potRecipe,potTip,
+  openPot,cookPot,clickPotCell,renderPot,
   POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,SHOP,PRICES,GOAL,
   openMarket,sellTo,buyFrom,earn,growing,updateGrow,GROW,SEED_OF,till,plantSeed,
   SKINS,equipSkin,unlockSkin,
@@ -5212,8 +5546,10 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   give:(id,n)=>give(id,n), take,countOf,
   get target(){return target;},
   get sel(){return heldId();},
-  openCraft,openChest,attack,spawnMob,damageMob,hurtPlayer,updateHUD,breakBlock,updatePots,
-  learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,updatePotPanel,icon,iconSrc,
+  get openPotCell(){return openPotCell;},
+  get panel(){return panel;},
+  openCraft,openChest,attack,spawnMob,spawnChicken,maintainChickens,damageMob,hurtPlayer,updateHUD,breakBlock,updatePots,
+  learnRecipe,matchRecipe,craftFromGrid,patRows,recCard,sideHTML,icon,iconSrc,
   clickCell,clickChestCell,takeAllFromChest,hideModal,showCrack,CRACKS,updateItemTip,itemNote,
   faceVerts,crossVerts,scenery,REACH,EYE,collides,keys,
   signs,signSprites,aimSign,ensureSignLabel,openSignEditor,saveSignEditor,removeSignEditor,SIGN_MAX,

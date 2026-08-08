@@ -89,7 +89,7 @@
 //     the spawning client already resolved its own random kick velocity, so
 //     the server has nothing to decide, only to tell everyone else a new
 //     drop exists.
-//   - consuming a drop (auto-sell, auto-pickup, auto-pot-feed) IS contested
+//   - consuming a drop (auto-sell, auto-pickup) IS contested
 //     the same way pot-claim is: every connected client simulates that
 //     drop's physics independently, so two clients can both decide "I
 //     should act on this drop" at nearly the same moment. `drop-claim` ->
@@ -163,6 +163,7 @@ import {
   createWorld, BOUND, BLOCKS, mulberry, MARKET, lerp, clamp, SEA,
   DAYLEN, NIGHT_START, NIGHT_END, MOBS, mobCap as sharedMobCap, bloodMoon,
   KB_DRAG, KB_MAX, FLY_H, MOB_SPAWN_MIN, MOB_SPAWN_MAX,
+  CHICKEN_CAP, CHICKEN_NEAR_R, EGG_MIN, EGG_MAX,
 } from "../../shared/world.js";
 import { PRICES, SHOP, GOAL, RECIPES, REFRESH, offerWant } from "../../shared/economy.js";
 
@@ -325,6 +326,55 @@ function mobY(m, dt, world) {
 }
 
 /**
+ * Server-side port of the client's `updateChicken(m,dt)` (game.js) — the
+ * peaceful-mob branch `stepMob` delegates to below. No chase, no attack, no
+ * day-flee-removal: just a gentle random wander (a new heading every 2-5s,
+ * a chance to just stand still instead) and an egg timer.
+ *
+ * Deliberately does NOT know about nearby `dominik` ground drops the way
+ * the client's `updateChicken` does — the server never tracks ground-drop
+ * *positions* at all (see the class-level comment near `this.dropClaims`:
+ * `drop-spawn` is a plain relay, and claims are arbitrated purely by
+ * `dropId`, blind to where anything actually is). "Is a dominik nearby" is
+ * therefore a question only a client can answer; see game.js's
+ * `updateMobsOnline` for the client-side lure-and-eat override that runs
+ * cosmetically on top of this wander position, and claims the eaten drop
+ * through the exact same `drop-claim`/`drop-claimed` race as selling/
+ * picking up/feeding a pot.
+ *
+ * The egg itself IS server-authoritative, unlike the lure: laying one needs
+ * no drop position, only a mob position the server already has. Returning
+ * `egg: true` on the tick it fires lets the caller (`_startMobTimer`) mint
+ * and broadcast the `drop-spawn` itself — see there — rather than this pure
+ * step function reaching out to `_broadcast` directly.
+ * @param {{x:number,z:number,y:number,wanderAng?:number|null,wanderT?:number,eggT?:number}} m
+ * @param {number} dt
+ * @param {ReturnType<typeof createWorld>} world
+ * @returns {{remove:boolean, attack:null, egg:boolean}}
+ */
+function stepChicken(m, dt, world) {
+  m.wanderT = (m.wanderT ?? 0) - dt;
+  if (m.wanderT <= 0) {
+    m.wanderT = rnd(2, 5);
+    m.wanderAng = Math.random() < 0.35 ? null : rnd(0, 6.28); // gelegentlich stehen bleiben
+  }
+  if (m.wanderAng != null) {
+    const speed = MOBS.chicken.speed;
+    const nx = m.x + Math.cos(m.wanderAng) * speed * dt, nz = m.z + Math.sin(m.wanderAng) * speed * dt;
+    if (!world.mobBlocked(nx, nz, m.y)) {
+      m.x = clamp(nx, BOUND.x0, BOUND.x1); m.z = clamp(nz, BOUND.z0, BOUND.z1);
+    } else {
+      m.wanderAng = null;
+    }
+  }
+  mobY(m, dt, world);
+  m.eggT = (m.eggT ?? rnd(EGG_MIN, EGG_MAX)) - dt;
+  let egg = false;
+  if (m.eggT <= 0) { m.eggT = rnd(EGG_MIN, EGG_MAX); egg = true; }
+  return { remove: false, attack: null, egg };
+}
+
+/**
  * Server-side port of the client's per-mob body inside `updateMobs(dt)`
  * (game.js) — same movement/attack math, reading `world.surfaceAt`/
  * `world.mobBlocked` instead of the client's module-scope versions, and
@@ -351,7 +401,7 @@ function mobY(m, dt, world) {
  * @param {ReturnType<typeof createWorld>} world
  * @param {{pid:number,x:number,y:number,z:number}[]} players currently connected, position-known players
  * @param {boolean} night
- * @returns {{remove:boolean, attack:{pid:number,dmg:number}|null}}
+ * @returns {{remove:boolean, attack:{pid:number,dmg:number}|null, egg?:boolean}}
  */
 function stepMob(m, dt, world, players, night) {
   const cfg = MOBS[m.kind || "benni"];
@@ -367,6 +417,11 @@ function stepMob(m, dt, world, players, night) {
     m.kx *= f; m.kz *= f;
     if (Math.hypot(m.kx, m.kz) < 0.05) { m.kx = 0; m.kz = 0; }
   }
+  // Peaceful mobs (currently only `chicken`, see MOBS.chicken.peaceful in
+  // shared/world.js) never chase, attack, or flee-and-despawn at dawn — the
+  // knockback step above still applies to them (a hit chicken still gets
+  // shoved), everything after this point does not.
+  if (cfg.peaceful) return stepChicken(m, dt, world);
   if (!players.length) {
     // Nobody connected/positioned to react to yet (a brief window right
     // after connect, before anyone's first `pos` has arrived). By day
@@ -628,14 +683,28 @@ export class GameServer extends DurableObject {
     // aren't part of the deterministic world-gen the way chests/traderSpots
     // are) — a fresh, empty, purely in-memory Map, same "ephemeral, never
     // persisted" treatment as this.potClaims above. id -> mob state; no
-    // `mesh`, obviously, this is data only (see stepMob/mobY).
-    /** @type {Map<number, {id:number,x:number,z:number,y:number,hp:number,hurtT:number,atkCd:number,fleeing:boolean}>} */
+    // `mesh`, obviously, this is data only (see stepMob/mobY). Also holds
+    // chickens (`kind:'chicken'`, MOBS.chicken.peaceful — see stepChicken):
+    // `wanderAng`/`wanderT`/`eggT` are only ever set/read there, `atkCd`/
+    // `fleeing` only by the hostile branch of stepMob — each kind simply
+    // ignores the other's fields.
+    /** @type {Map<number, {id:number,x:number,z:number,y:number,kind?:string,hp:number,hurtT:number,atkCd:number,fleeing:boolean,wanderAng?:number|null,wanderT?:number,eggT?:number}>} */
     this.mobs = new Map();
-    /** @type {number} next id handed out by _spawnMob */
+    /** @type {number} next id handed out by _spawnMob (also used by _spawnChicken — one shared id space) */
     this._nextMobId = 1;
     // Counts down between spawn attempts, mirroring the client's own
     // (now offline-only) `mobTimer` in game.js.
     this._mobSpawnTimer = 0;
+    // Counts down between chicken-population top-ups, mirroring the
+    // client's own (offline-only) `chickenTimer` — unlike _mobSpawnTimer
+    // this one runs regardless of night/day/blood moon (see CHICKEN_CAP's
+    // doc comment in shared/world.js).
+    this._chickenSpawnTimer = rnd(3, 8);
+    // Mints unique dropIds for server-authoritative egg-spawns (see
+    // stepChicken's `egg` result / the mob tick's drop-spawn broadcast
+    // below) — a plain counter is enough, dropIds only need to be unique,
+    // never reproducible.
+    this._eggSeq = 0;
     // Ticks this.mobs via stepMob() and broadcasts the result — same
     // start-in-fetch()/clear-in-_handleDisconnect lifecycle as _charTimer
     // above, just at a faster rate (see MOB_TICK_MS).
@@ -869,15 +938,45 @@ export class GameServer extends DurableObject {
   }
 
   /**
+   * Server-side port of the client's (now offline-only) `spawnChicken()` —
+   * same anchor-on-a-random-connected-player, avoid-water placement as
+   * `_spawnMob` above, just closer in (chickens are ambient, not a threat
+   * closing in from the dark) and with no `litAt` avoidance (that only
+   * matters for night spawns) or `kind` draw (always 'chicken'). Population
+   * size is capped by the caller (see `_startMobTimer`'s CHICKEN_CAP check),
+   * not here — mirrors `_spawnMob`, whose own cap check also lives in its
+   * caller.
+   */
+  _spawnChicken() {
+    const anchors = [...this.lastPos.values()];
+    if (!anchors.length) return;
+    const anchor = anchors[Math.floor(Math.random() * anchors.length)];
+    const a = rnd(0, 6.28), d = rnd(6, 22);
+    const x = clamp(Math.round(anchor.x + Math.cos(a) * d), BOUND.x0 + 2, BOUND.x1 - 2);
+    const z = clamp(Math.round(anchor.z + Math.sin(a) * d), BOUND.z0 + 2, BOUND.z1 - 2);
+    const ground = this.world.surfaceAt(x, z);
+    if (ground < SEA - 1) return;
+    const id = this._nextMobId++;
+    this.mobs.set(id, {
+      id, x, z, y: ground, kind: "chicken", hp: MOBS.chicken.hp, kx: 0, kz: 0, hurtT: 0,
+      atkCd: 0, fleeing: false, wanderAng: null, wanderT: rnd(0, 3), eggT: rnd(EGG_MIN, EGG_MAX),
+    });
+  }
+
+  /**
    * Starts the Benni tick (see MOB_TICK_MS) if it isn't already running —
    * same idempotent-and-lifecycle-matched shape as _startCharTimer above,
    * just a separate timer since combat wants a faster rate than ambient
    * wandering (see the class-level comment). Each tick: maybe spawns one
    * new Benni (night-gated, capped, see mobCap — doubled, and spawning
-   * roughly three times as often, on a blood moon), steps every existing
-   * one's AI (see stepMob), delivers any attacks landed this tick to the ONE
-   * player actually hit (never broadcast — see the class-level comment),
-   * and broadcasts a full position/hp/kind snapshot to everyone.
+   * roughly three times as often, on a blood moon) and maybe tops up the
+   * chicken population (day/night-independent, capped at CHICKEN_CAP — see
+   * `_spawnChicken`/shared/world.js), steps every existing mob's AI (see
+   * stepMob), delivers any attacks landed this tick to the ONE player
+   * actually hit (never broadcast — see the class-level comment), relays any
+   * egg a chicken laid this tick as a plain `drop-spawn` (see stepChicken's
+   * doc comment for why the server can author that one itself), and
+   * broadcasts a full position/hp/kind snapshot to everyone.
    */
   _startMobTimer() {
     if (this._mobTimer) return;
@@ -904,9 +1003,25 @@ export class GameServer extends DurableObject {
         // connection's request — a lesson carried over unchanged from the
         // PartyKit version (its room.getConnections() had the exact same
         // restriction; see the class-level comment history).
-        if (night && this.mobs.size < mobCap(day) * (blood ? 2 : 1)) {
+        // Chickens live in the same this.mobs map but must NOT eat into
+        // this threat budget (see CHICKEN_CAP's doc comment in
+        // shared/world.js) — only count non-peaceful mobs against it.
+        const hostileCount = [...this.mobs.values()].filter((m) => !MOBS[m.kind || "benni"].peaceful).length;
+        if (night && hostileCount < mobCap(day) * (blood ? 2 : 1)) {
           this._spawnMob(day);
         }
+      }
+
+      // Chickens: a separate, night-independent timer (see the
+      // _chickenSpawnTimer field comment) tops up the population up to
+      // CHICKEN_CAP, same idea as the Benni cap above but without any
+      // night gate or blood-moon multiplier — chickens are ambient, not a
+      // threat.
+      this._chickenSpawnTimer -= dt;
+      if (this._chickenSpawnTimer <= 0) {
+        this._chickenSpawnTimer = rnd(4, 9);
+        const chickenCount = [...this.mobs.values()].filter((m) => m.kind === "chicken").length;
+        if (chickenCount < CHICKEN_CAP) this._spawnChicken();
       }
 
       // lastPos only ever holds currently-connected pids (see the `pos`
@@ -926,6 +1041,18 @@ export class GameServer extends DurableObject {
           // any live-request-only connection API — see the comment above.
           const ws = this.connByPid.get(result.attack.pid);
           if (ws) send(ws, { t: "mob-attack", dmg: result.attack.dmg });
+        }
+        if (result.egg) {
+          // A plain, self-authored `drop-spawn` — every client (including
+          // this Durable Object's own notion of "the sender") just builds
+          // the egg locally via spawnDropRemote on receipt, no claim/relay
+          // dance needed (unlike mob-dead loot, there is no single
+          // "responsible" client here to pick — see stepChicken's doc
+          // comment for why the server can safely author this one itself).
+          this._broadcast({
+            t: "drop-spawn", dropId: `egg-${id}-${++this._eggSeq}`, id: "egg", n: 1,
+            x: m.x, y: m.y + 0.4, z: m.z, vx: rnd(-0.3, 0.3), vy: 1.2, vz: rnd(-0.3, 0.3),
+          });
         }
       }
 
