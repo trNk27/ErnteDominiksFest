@@ -3278,6 +3278,45 @@ function headTex(i){
   faceCache.set(i,tex);
   return tex;
 }
+// Zusatzgesicht nur für Skins (siehe SKINS unten) — bewusst NICHT in FACES
+// oben mit hineingemischt: FACES.length bestimmt den Kreis, in dem headTex()
+// ohne Skin über die pid rotiert, und der darf sich durch ein zusätzliches
+// Gesicht nicht plötzlich verschieben. benni.png ist kein freigestellter
+// Kopf wie dominik.png, sondern ein Ganzkörperbild — der Ausschnitt ist wie
+// bei Manni/Jannes oben von Hand an dem Bild abgelesen.
+const SKIN_FACES={benni:{tex:()=>benniTex, crop:{x:.395,y:.10,w:.25}}};
+const skinFaceCache=new Map();            // Schlüssel aus SKIN_FACES → THREE.Texture
+function skinHeadTex(key){
+  if(skinFaceCache.has(key)) return skinFaceCache.get(key);
+  const spec=SKIN_FACES[key];
+  const img=spec&&spec.tex()?.image;
+  if(!img||!img.width) return null;
+  const S=96;
+  const cv=document.createElement('canvas'); cv.width=cv.height=S;
+  const ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  const w=img.width*spec.crop.w;
+  ctx.drawImage(img,img.width*spec.crop.x,img.height*spec.crop.y,w,w,0,0,S,S);
+  const tex=new THREE.CanvasTexture(cv);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.magFilter=THREE.NearestFilter; tex.minFilter=THREE.LinearMipmapLinearFilter;
+  skinFaceCache.set(key,tex);
+  return tex;
+}
+// Käufliche Auftritte bei Manni (siehe SHOP/openMarket) — Index 0 ist der
+// Standard-Look von jeher und bleibt unangetastet: er trägt keine eigenen
+// torso/pants/skin/face-Werte, seine Torsofarbe kommt weiterhin aus
+// PLAYER_COLORS weiter unten (unterscheidet Mitspieler voneinander). Erst ab
+// Index 1 legt ein Skin diese Werte selbst fest und überschreibt damit sowohl
+// PLAYER_COLORS als auch die feste SKIN/PANTS-Vorgabe (siehe makePlayerModel).
+// face zeigt entweder auf einen FACES-Index (Zahl) oder auf SKIN_FACES oben
+// (Schlüssel als Text) — fehlt es, bleibt es beim pid-abhängigen Standard.
+const SKINS=[
+  {nm:'Standard',            ic:'🙂'},
+  {nm:'Dominik-Kostüm',      ic:'🍑', torso:'#e8935a', pants:'#6b4423', skin:'#f2c39a', face:0},
+  {nm:'Benni-Kostüm',        ic:'👹', torso:'#2e2438', pants:'#1c1620', skin:'#8f7d99', face:'benni'},
+  {nm:'Mannis Arbeitskittel',ic:'🦺', torso:'#4a7a9e', pants:'#33383f', skin:SKIN,      face:1},
+];
 const box=(w,h,d,color)=>{
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color}));
   m.castShadow=true;
@@ -3294,14 +3333,19 @@ function limb(x,y,w,h,d,color){
   pivot.add(m);
   return pivot;
 }
-function makePlayerModel(pid){
-  const color=PLAYER_COLORS[((pid||1)-1)%PLAYER_COLORS.length];
+function makePlayerModel(pid,skinIdx=0){
+  const sk=SKINS[skinIdx]||SKINS[0];
+  // sk.torso/pants/skin fehlen am Standard-Skin (Index 0) — dann bleibt es
+  // bei PLAYER_COLORS/PANTS/SKIN wie eh und je (siehe SKINS oben).
+  const color=sk.torso||PLAYER_COLORS[((pid||1)-1)%PLAYER_COLORS.length];
+  const pants=sk.pants||PANTS;
+  const skinCol=sk.skin||SKIN;
   const g=new THREE.Group();
-  const legL=limb(-.15,.74,.19,.74,.22,PANTS), legR=limb(.15,.74,.19,.74,.22,PANTS);
-  const armL=limb(-.36,1.28,.16,.58,.16,SKIN), armR=limb(.36,1.28,.16,.58,.16,SKIN);
+  const legL=limb(-.15,.74,.19,.74,.22,pants), legR=limb(.15,.74,.19,.74,.22,pants);
+  const armL=limb(-.36,1.28,.16,.58,.16,skinCol), armR=limb(.36,1.28,.16,.58,.16,skinCol);
   const torso=box(.54,.58,.28,color); torso.position.y=1.03;
-  const head=box(.5,.5,.5,SKIN); head.position.y=1.57;
-  const face=headTex((pid||1)-1);
+  const head=box(.5,.5,.5,skinCol); head.position.y=1.57;
+  const face=sk.face==='benni'?skinHeadTex('benni'):headTex(sk.face??((pid||1)-1));
   if(face){
     // Das Gesicht liegt als eigene Fläche hauchdünn vor dem Kopf statt als
     // Textur auf dessen Vorderseite: durchsichtige Ränder (die Bilder sind
