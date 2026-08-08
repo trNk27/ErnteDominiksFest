@@ -554,7 +554,6 @@ const ITEMS={
   torch   :{ic:'🔥',nm:'Fackel',      torch:true},
   sign    :{ic:'🪧',nm:'Schild',      sign:true},
   stick   :{ic:'🥢',nm:'Stock'},
-  bowl    :{ic:'🥣',nm:'Schale'},
   dominik :{ic:'🍑',nm:'Dominik',     food:4},
   mushroom:{ic:'🍄',nm:'Pilz',        food:2},
   salt    :{ic:'🧂',nm:'Salz'},
@@ -570,6 +569,18 @@ const ITEMS={
   compote :{ic:'🍯',nm:'Dominik-Kompott',food:8},
   panfry  :{ic:'🍳',nm:'Pilzpfanne',  food:10},
   soup    :{ic:'🍲',nm:'Dominik-Suppe',food:20},
+  // Die Gerichte, die mit dem Huhn dazugekommen sind (Rezepte s.
+  // shared/economy.js). Sie tragen bewusst KEIN gezeichnetes Bildchen und
+  // stehen auch nicht in ICONS: dann liefert iconSrc() nichts, und icon()
+  // fällt sauber auf das Emoji zurück (derselbe Weg, den Truhe und Schild
+  // schon immer gehen). Ein Teller Essen ist als Emoji sofort zu erkennen —
+  // dafür lohnt keine 16×16-Zeichnung.
+  salat   :{ic:'🥗',nm:'Pfeffersalat', food:6},
+  pfannkuchen:{ic:'🥞',nm:'Pfannkuchen',food:8},
+  roast   :{ic:'🍗',nm:'Brathähnchen', food:12},
+  omelett :{ic:'🥘',nm:'Bauernomelett',food:10},
+  kuchen  :{ic:'🥧',nm:'Dominikkuchen',food:12},
+  eintopf :{ic:'🍛',nm:'Hühnereintopf',food:14},
   // Vom Markt, nicht aus dem Raster. Sie wirken, solange man sie in der
   // Hand hält — deshalb steht ihre Wirkung an einem Merkmal und nicht in
   // einem eigenen Ausrüstungsfach.
@@ -648,7 +659,7 @@ const heldKb=()=>{ const id=heldId(); return (id&&ITEMS[id]?.kb)||.5; };
 // kaputte-Bild-Symbol statt sauber auf den alt-Text (das Emoji) auszuweichen
 // — ganz ohne <img>-Versuch bleibt es zuverlässig beim Emoji.
 const ICONS=new Set(['dirt','stone','sand','snow','log','plank','brick','bench','pot','torch',
-                     'stick','bowl','dominik','mushroom','salt','pepper','sword','axe','pick',
+                     'stick','dominik','mushroom','salt','pepper','sword','axe','pick',
                      'compote','panfry','soup','junk','boat','board','glider',
                      'hoe','kern','mycel','korn']);
 // Dominik trägt sein Gesicht — im Rucksack wie am Baum dasselbe Bild.
@@ -1708,6 +1719,10 @@ function buyFrom(id){
 // updateItemTip) — dafür tragen die Zellen data-want/data-shop/data-accept.
 function openMarket(c,keep){
   panel='market';
+  // Höchstens fünf Waren je Zeile, der Rest bricht um. Mit den Gerichten aus
+  // dem Kochtopf nimmt Manni inzwischen zehn Sachen an — alle nebeneinander
+  // wären über dreihundert Pixel breit und ragten am Handy im Hochformat aus
+  // dem Fenster (dieselbe Falle wie bei der Inventarleiste, siehe deren CSS).
   const buys=Object.entries(PRICES).map(([id,p])=>
     `<div class="pc" data-want="${id}">${icon(id)}<span class="n">${p}</span></div>`).join('');
   const shop=SHOP.map(w=>{
@@ -1727,7 +1742,7 @@ function openMarket(c,keep){
   showModal(`<h2>💶 ${state.money} €</h2>
     <h3>Mannis Annahme</h3>
     <div class="patwrap"><div class="pat"
-      style="grid-template-columns:repeat(${Object.keys(PRICES).length},30px)">${buys}</div></div>
+      style="grid-template-columns:repeat(${Math.min(5,Object.keys(PRICES).length)},30px)">${buys}</div></div>
     <div class="cell accept" data-accept>📥</div>
     <h3>Mannis Auslage</h3>
     <div class="invgrid" style="grid-template-columns:repeat(${SHOP.length},64px);justify-content:center">${shop}</div>

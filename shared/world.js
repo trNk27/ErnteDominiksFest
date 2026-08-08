@@ -473,7 +473,13 @@ export function createWorld(){
     place(OLD_BOUND,VILLAGES.length+5,6000);
     place(BOUND,18,12000);
     // --- Truhen füllen: Werkzeug und Baustoff, keine Zutaten.
-    const LOOT=[['plank',3,8],['stick',2,6],['torch',2,5],['bowl',1,1],
+    // Die 🥣 Schale stand hier früher mit drin. Sie gibt es nicht mehr (ein
+    // Gericht besteht jetzt nur noch aus Zutaten, siehe RECIPES in
+    // shared/economy.js) — und ein Truhenfach mit einem Gegenstand, den ITEMS
+    // gar nicht kennt, wäre kein leeres Fach, sondern ein Fehler beim
+    // Zeichnen. An ihrer Stelle steht Schnur: auch Baustoff, auch nicht
+    // anbaubar, und man braucht sie für die Schleuder.
+    const LOOT=[['plank',3,8],['stick',2,6],['torch',2,5],['string',1,2],
                 ['stone',3,8],['dirt',2,6],['brick',2,6],['sword',1,1]];
     chestSpots.forEach(c=>{
       put('chest',c.x,c.y,c.z);

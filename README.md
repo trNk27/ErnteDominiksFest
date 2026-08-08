@@ -346,7 +346,6 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | 🛠️ Werkbank | 🟧🟧 / 🟧🟧 | |
 | 🔥 Fackel ×4 | 🪨 / 🥢 | |
 | 🧱 Ziegel ×4 | 🪨🟨 / 🟨🪨 | |
-| 🥣 Schale ×2 | 🟧·🟧 / ·🟧· | Werkbank |
 | ⚔️ Steinschwert | 🪨 / 🪨 / 🥢 | Werkbank |
 | ⛏️ Spitzhacke | 🪨🪨🪨 / ·🥢· / ·🥢· | Werkbank |
 | 🪓 Axt | 🪨🪨· / 🪨🥢· / ·🥢· | Werkbank |
@@ -393,9 +392,15 @@ keine Reihenfolge, kein Muster.
 
 | Gericht | Zutaten | sättigt |
 |---|---|---|
-| 🍯 Dominik-Kompott | 2× 🍑 · 1× 🧂 · 1× 🥣 | 8 |
-| 🍳 Pilzpfanne | 2× 🍄 · 1× 🌶️ · 1× 🥣 | 10 |
-| **🍲 Dominik-Suppe** | 3× 🍑 · 2× 🍄 · 1× 🧂 · 2× 🌶️ · 1× 🥣 | alles |
+| 🥗 Pfeffersalat | 1× 🍄 · 2× 🌶️ | 6 |
+| 🥞 Pfannkuchen | 1× 🥚 · 1× 🍑 · 1× 🧂 | 8 |
+| 🍯 Dominik-Kompott | 2× 🍑 · 1× 🧂 | 8 |
+| 🍳 Pilzpfanne | 2× 🍄 · 1× 🌶️ | 10 |
+| 🥘 Bauernomelett | 2× 🥚 · 1× 🍄 · 1× 🌶️ | 10 |
+| 🍗 Brathähnchen | 2× 🍖 · 1× 🧂 | 12 |
+| 🥧 Dominikkuchen | 2× 🍑 · 2× 🥚 | 12 |
+| 🍛 Hühnereintopf | 1× 🍖 · 2× 🍄 · 1× 🧂 · 1× 🌶️ | 14 |
+| **🍲 Dominik-Suppe** | 3× 🍑 · 2× 🍄 · 1× 🧂 · 2× 🌶️ | alles |
 
 Passt es **nicht** zusammen, kommt **🤢 angebrannte Pampe** heraus, und die Zutaten sind
 weg. Dasselbe passiert, wenn die Zutaten zwar stimmen, du das **Rezept aber nicht kennst** —
@@ -431,8 +436,14 @@ lieber wirft: **`Q`**/**`⇧Q`** vor ihm hin tut es weiterhin genauso.
 | Er kauft | Preis |
 |---|---|
 | 🍑 Dominik | **1 €** |
+| 🥗 Pfeffersalat | 10 € |
 | 🍯 Dominik-Kompott | 12 € |
+| 🥞 Pfannkuchen | 14 € |
 | 🍳 Pilzpfanne | 15 € |
+| 🥘 Bauernomelett | 18 € |
+| 🍗 Brathähnchen | 20 € |
+| 🥧 Dominikkuchen | 25 € |
+| 🍛 Hühnereintopf | 30 € |
 | **🍲 Dominik-Suppe** | **100 €** |
 
 Alles andere lässt er liegen. Ein Dominik zu einer Suppe verkocht ist das Dreiunddreißig-
@@ -513,7 +524,7 @@ Die **drei Gerichte** sind davon ausgenommen: Kompott, Pfanne und Suppe entstehe
 mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekommt Pampe.
 
 **🧰 Truhen** sind selten geworden — acht in der ganzen Welt — und halten nur noch
-Vorräte bereit: Bretter, Stöcke, Fackeln, Schalen, Stein, Ziegel, gelegentlich ein
+Vorräte bereit: Bretter, Stöcke, Fackeln, Schnur, Stein, Ziegel, gelegentlich ein
 Schwert. **Zutaten liegen nicht mehr darin**, die holst du dir draußen selbst.
 
 ## Die Welt
