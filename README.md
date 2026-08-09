@@ -527,10 +527,13 @@ Kontostand.
 
 ## Die Jannessen
 
-Acht **Jannessen** streifen durch die Welt — einer im Starttal, drei in den Dorfhäusern,
-der Rest draußen an Furt, Berg und hinter dem Fluss. Sie sehen alle gleich aus, heißen
-alle gleich und tragen **kein Namensschild**; wer vor einem steht, sieht es am
-Fadenkreuz. Sie bleiben nicht stehen, sondern gehen ein paar Schritte umher.
+Elf **Jannessen** streifen durch die Welt — einer im Starttal, sechs je im zweiten Haus
+eines Dorfes, vier draußen an Furt, Berg und hinter dem Fluss. Sie sehen alle gleich aus,
+heißen alle gleich und tragen **kein Namensschild**; wer vor einem steht, sieht es am
+Fadenkreuz. Sie bleiben nicht stehen, sondern gehen ein paar Schritte umher — die im
+Haus nur so weit, wie ihre **Stube es hergibt**: in der engen Kate einen Schritt, im
+Langhaus drei. Vorher hing das an einer festen Zahl, die nur für die ersten drei Dörfer
+stimmte; die drei später dazugekommenen liefen damit durch ihre eigenen Wände.
 
 **Jedes Rezept im Spiel gibt es bei einem von ihnen** — und keines zweimal: was der eine
 aushängen hat, bietet der andere nicht an. Rechtsklick, und er zeigt, was er dafür haben
@@ -600,8 +603,26 @@ jedem Start dieselbe, kein Speicherstand nötig.
   der Oberfläche, inzwischen gut anderthalbmal so dicht gesät wie früher. Eine Lage
   höher, schon ab vier Blöcken Tiefe, liegen dunklere **⚫ Kohleadern**. Ohne ⛏️
   Spitzhacke wird bei beiden nichts.
-- **Sechs Dörfer** aus je vier Häuschen um einen gepflasterten Platz. Im ersten Haus
-  steht eine Truhe, im zweiten wohnt ein **Jannes**.
+- **Sechs Dörfer**, und keines wie das andere. Bisher stand in jedem viermal dasselbe
+  Häuschen an denselben vier Ecken. Jetzt würfelt jedes Dorf seinen **Grundriss** aus —
+  Carré um den Platz, Gasse mit zwei Häuserreihen, Runddorf im Kreis oder gewachsenes
+  Haufendorf —, dazu drei bis fünf Bauplätze und einen Platz, mal quadratisch, mal rund,
+  mit einem Stein in der Mitte. Von jeder Tür führt ein **gepflasterter Weg** dorthin.
+
+  Auf jedem Bauplatz steht eine andere **Bauart**:
+
+  | Haus | Grundriss | Dach |
+  |---|---|---|
+  | Kate | 5×5, Bretter mit Stammecken | Satteldach aus Ziegeln |
+  | Steinhaus | 6×5, gemauert | Walmdach aus Brettern |
+  | Langhaus | 9×5, Bretter | Satteldach über die ganze Länge |
+  | Turm | 4×4, aber sieben Blöcke hoch | flache Plattform mit **Zinnen** |
+  | Scheune | 7×5, **ganz ohne Wände** | großes Satteldach auf vier Pfosten |
+  | Werkstatt | 6×6, Bretter | Walmdach, drinnen eine 🔨 **Werkbank** |
+
+  Jedes Haus dreht seine **Tür zum Platz** und hat **Fenster**; wo ein Haus nicht mehr
+  auf den ebenen Grund passt, weicht das Dorf auf eine kleinere Bauart aus. Im ersten
+  Haus steht wie bisher eine Truhe, im zweiten wohnt ein **Jannes**.
 - Wild wachsende **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** kommen **nicht wieder** —
   wer dauerhaft ernten will, legt sich ein 🧑‍🌾 **Feld** an.
 - **18 Truhen**, sechs davon in Dörfern; **11 Jannessen**, die umherstreifen.
@@ -614,13 +635,15 @@ Gezeichnet wird nicht Würfel für Würfel, sondern **chunkweise nur die freilie
 Flächen**. Ein abgebauter oder gesetzter Block vernetzt genau seinen Chunk neu, nicht
 die ganze Welt.
 
-**Der Bewuchs sieht seit Nadelbäumen, Büschen und dem Abstandsgebot anders aus als
-vorher** — das Gelände selbst (Berge, Flüsse, Dörfer, Adern) ist Block für Block
-dasselbe geblieben, aber wo vorher ein Baum stand, steht jetzt vielleicht keiner oder
-eine Fichte. **Gesetzte und abgebaute Blöcke bleiben davon unberührt**: was gebaut
-wurde, steht weiter, und was abgebaut wurde, bleibt weg (beides liegt in `edits`, nicht
-im erzeugten Bewuchs). Ein Haus mitten im Wald kann danach allerdings einen Baum weniger
-oder einen neuen Nachbarn vor der Tür haben.
+**Bewuchs und Dörfer sehen anders aus als vorher** — das Gelände selbst (Berge, Flüsse,
+Adern, die Lage der Dörfer) ist Block für Block dasselbe geblieben, aber wo vorher ein
+Baum stand, steht jetzt vielleicht keiner oder eine Fichte, und wo vier gleiche Häuschen
+standen, steht jetzt ein anderes Dorf. **Gesetzte und abgebaute Blöcke bleiben davon
+unberührt**: was gebaut wurde, steht weiter, und was abgebaut wurde, bleibt weg (beides
+liegt in `edits`, nicht im erzeugten Bewuchs). Ein Haus mitten im Wald kann danach
+allerdings einen Baum weniger oder einen neuen Nachbarn vor der Tür haben — und wer in
+einem Dorf gebaut hat, findet seinen Anbau womöglich neben einer anderen Hauswand
+wieder.
 
 ### Die Welt wurde einmal zurückgesetzt
 

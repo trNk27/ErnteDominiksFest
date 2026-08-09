@@ -656,18 +656,22 @@ export class GameServer extends DurableObject {
 
     // Phase 5a: server-owned wander state for every roaming character —
     // index 0 is Manni (home = his market stall, same MARKET constant the
-    // client uses), indices 1..8 are the 8 Jannessen in the exact same order
+    // client uses), the rest are the Jannessen in the exact same order
     // as `this.world.traderSpots` (and thus the same order the client's own
     // `CHARS` array ends up in: it starts with just Manni, then pushes the
-    // traderSpots-derived Jannessen one by one — see game.js). The `roam`
-    // values for the Jannessen mirror the client's `i>=1&&i<=3?1.1:3.2`
-    // exactly (i here is the traderSpots index, 0-based).
+    // traderSpots-derived Jannessen one by one — see game.js). A Jannes who
+    // lives in a village house now carries his own `roam` on that houseSpot
+    // (shared/world.js sizes it to the room he stands in), so both sides read
+    // the same number off the same object instead of each typing out the old
+    // `i>=1&&i<=3?1.1:3.2` — which only ever fit the three original villages
+    // and walked the three later ones straight through their own walls. The
+    // Jannessen out in the open carry no `roam` and keep the wide default.
     /** @type {{home:{x:number,z:number}, roam:number, x:number, z:number, y:number, tx:number|null, tz:number|null, waitT:number}[]} */
     this.chars = [
       { home: { x: MARKET.x, z: MARKET.z }, roam: 1 },
-      ...this.world.traderSpots.map((s, i) => ({
+      ...this.world.traderSpots.map((s) => ({
         home: { x: s.x, z: s.z },
-        roam: i >= 1 && i <= 3 ? 1.1 : 3.2,
+        roam: s.roam ?? 3.2,
       })),
     ].map((c) => {
       const y = this.world.surfaceAt(c.home.x, c.home.z);

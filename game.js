@@ -1737,9 +1737,15 @@ const offerHint=c=>{
 };
 // Alle heißen Jannes, alle sehen gleich aus. Die in den Dorfhäusern haben
 // wenig Platz, die draußen dürfen weiter umherstreifen.
-const traders=traderSpots.map((s,i)=>{
+const traders=traderSpots.map(s=>{
+  // Wie weit einer umhergeht, bringt sein Platz jetzt selbst mit (roam in
+  // houseSpots, siehe shared/world.js): der Jannes in der Kate hat einen
+  // Schritt Platz, der im Langhaus drei. Vorher stand hier eine feste Zahl
+  // nach Index — die passte auf die ersten drei Dörfer und ließ die drei
+  // später hinzugekommenen durch ihre eigenen Wände laufen. Wer im Freien
+  // steht, bringt kein roam mit und behält den weiten Radius.
   const c={key:'jannes',name:'Jannes',h:1.88,x:s.x,z:s.z,color:'#4ab0ff',
-           tag:false, roam:i>=1&&i<=3?1.1:3.2, home:{x:s.x,z:s.z}, trade:null};
+           tag:false, roam:s.roam??3.2, home:{x:s.x,z:s.z}, trade:null};
   CHARS.push(c);
   return c;
 });
