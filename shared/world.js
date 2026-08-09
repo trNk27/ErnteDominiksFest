@@ -142,6 +142,12 @@ export const VILLAGES=[{x:21,z:52},{x:44,z:-26},{x:50,z:24},
                        {x:-95,z:20},{x:20,z:86},{x:70,z:-85}]
   .map(v=>({...v,y:clamp(Math.round(rawHeight(v.x,v.z)),1,6)}));
 export const VILL_R=14, VILL_FADE=11;
+// Wie weit ein Haus höchstens von der Dorfmitte wegstehen darf, und wie breit
+// der baumfreie Gürtel um ein Dorf ist. Das eine muss kleiner sein als das
+// andere: ein Giebel, in den ein Baum hineinwächst, sieht nach Fehler aus.
+// Beides ist mit den neuen Grundrissen gewachsen — vorher lagen alle vier
+// Häuser eines Dorfes fest auf denselben nahen Ecken.
+export const HOUSE_MAX=15, VILL_CLEAR=20;
 const _hCache=new Map();
 // Oberkante der Säule: fester Grund liegt bei y < terrainH, gelaufen wird auf terrainH.
 export function terrainH(x,z){
@@ -193,7 +199,14 @@ export const BLOCKS={
   sand   :{tex:'sand',  hard:.6,  drop:'sand',   nm:'Sand'},
   snow   :{tex:'snow',  hard:.5,  drop:'snow',   nm:'Schnee'},
   log    :{tex:'log',   hard:1.6, drop:'log',    nm:'Holzstamm', axe:true},
-  leaf   :{tex:'leaf',  hard:.3,  drop:null,     nm:'Laub'},
+  // twig markiert, was beim Abbauen manchmal einen Stock hergibt (siehe
+  // breakBlock in game.js) — Laub tat das schon immer, die Nadeln und der
+  // Busch sind jetzt genauso Reisig und sollen sich nicht anders anfühlen.
+  leaf   :{tex:'leaf',  hard:.3,  drop:null,     nm:'Laub', twig:true},
+  // Nadelbaum-Krone. Eigener Blocktyp statt dunkler eingefärbtem Laub, damit
+  // man Fichte und Laubbaum schon von weitem auseinanderhält — und damit der
+  // Nadelwald sich abbauen lässt, ohne dass Laub daraus wird.
+  needle :{tex:'needle',hard:.3,  drop:null,     nm:'Nadeln', twig:true},
   plank  :{tex:'plank', hard:1.3, drop:'plank',  nm:'Bretter', axe:true},
   brick  :{tex:'brick', hard:2.2, drop:'brick',  nm:'Ziegel',  pick:true},
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
@@ -208,6 +221,11 @@ export const BLOCKS={
            cross:true, size:.8, sit:true, alpha:true, pass:true},
   pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
            cross:true, size:.95,sit:true, alpha:true, pass:true},
+  // Wilder Busch: kniehoch, steht wie alles Wachsende als gekreuzte Fläche im
+  // Gras, und man geht mitten hindurch. Er trägt nichts — er ist Landschaft,
+  // kein Vorrat; höchstens ein Stock fällt ab (twig, s. leaf oben).
+  shrub  :{tex:'shrub', hard:0,  drop:null,     nm:'Busch',
+           cross:true, size:1,  sit:true, alpha:true, pass:true, twig:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
   coalore:{tex:'coalore',hard:2.2,drop:'coal',   nm:'Kohleader', pick:true},
   // --- Acker und was darauf wächst
@@ -235,6 +253,61 @@ export const TREE_TOP=[];
   for(let x=-1;x<=1;x++) for(let z=-1;z<=1;z++)
     if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,2,z]);
 })();
+// Der Nadelbaum: ein Kegel in Etagen statt eines Balls obendrauf. Unten ein
+// breiter Kranz, darüber wechseln sich schmal und breit ab — das gibt die
+// abgestuften Zweige einer Fichte —, ganz oben eine einzelne Spitze. Die
+// Krone reicht weit am Stamm herunter (CONIFER_H Lagen), darum trägt sie
+// ihre eigene Liste und ist kein gestauchtes TREE_TOP.
+export const CONIFER_H=6;
+export const CONIFER_TOP=[];
+(function coniferShape(){
+  const ring=(dy,rad)=>{
+    for(let x=-rad;x<=rad;x++) for(let z=-rad;z<=rad;z++)
+      if(Math.abs(x)+Math.abs(z)<=rad) CONIFER_TOP.push([x,dy,z]);
+  };
+  ring(0,2); ring(1,2); ring(2,1); ring(3,2); ring(4,1); ring(5,0);
+})();
+// ------------------------------------------------------------------ Dörfer
+// Die Bauarten. In jedem Dorf stand bisher viermal dasselbe Häuschen; das hier
+// ist die Auswahl, aus der jeder Bauplatz jetzt zieht.
+//
+// w/d ist der Grundriss, h die Wandhöhe über dem Fußboden. wall:null heißt
+// offener Unterstand — nur Eckpfosten aus trim und ein Dach darüber. roof ist
+// die Dachform: 'gable' Sattel (First über die lange Seite), 'hip' Walm (läuft
+// von allen vier Seiten auf einen kurzen First zu), 'flat' ein flaches Dach
+// mit Brüstung. Ein Block Überstand hat jedes Dach — ohne den sieht ein
+// Klötzchenhaus aus wie eine Kiste mit Deckel.
+export const HOUSE_KINDS=[
+  // Die Kate: das alte Dorfhaus, jetzt mit richtigem Dach statt einer Platte.
+  {id:'kate',   w:5,d:5,h:3, floor:'plank',wall:'plank',trim:'log',  roofMat:'brick',roof:'gable'},
+  // Das Steinhaus: breiter, gemauert, mit Walmdach — das wohlhabende im Dorf.
+  {id:'stein',  w:6,d:5,h:3, floor:'rock', wall:'brick',trim:'rock', roofMat:'plank',roof:'hip'},
+  // Das Langhaus: schmal und lang, der First läuft über die ganze Länge.
+  {id:'lang',   w:9,d:5,h:3, floor:'plank',wall:'plank',trim:'log',  roofMat:'brick',roof:'gable'},
+  // Der Turm: nur vier mal vier, dafür doppelt so hoch, oben eine Brüstung
+  // statt eines Dachs. Von weitem sieht man daran, dass dort ein Dorf liegt.
+  {id:'turm',   w:4,d:4,h:7, floor:'rock', wall:'brick',trim:'rock',  roofMat:'rock', roof:'flat'},
+  // Die Scheune: gar keine Wände, nur Pfosten und ein großes Dach.
+  {id:'scheune',w:7,d:5,h:4, floor:'plank',wall:null,   trim:'log',  roofMat:'plank',roof:'gable'},
+  // Die Werkstatt: Kate mit einer 🔨 Werkbank darin, an der man auch bauen darf.
+  {id:'werk',   w:6,d:6,h:3, floor:'plank',wall:'plank',trim:'log',  roofMat:'brick',roof:'hip', bench:true},
+];
+// Die Grundrisse. Jeder Eintrag ist ein Bauplatz als Mittelpunkt relativ zur
+// Dorfmitte; das Haus wird darum herum gesetzt und dreht seine Tür zum Platz.
+// Die Bauplätze bleiben eng genug beieinander, dass auch das breiteste Haus
+// noch auf die eingeebnete Fläche passt (VILL_R) — was nicht passt, weicht
+// beim Bauen auf eine kleinere Bauart aus.
+export const VILLAGE_PLANS=[
+  // Das Carré: vier Häuser um den Platz, wie bisher — nur eben nicht mehr
+  // viermal dasselbe Haus.
+  [[-8,-8],[8,-8],[-8,8],[8,8]],
+  // Die Gasse: zwei Reihen an einer Straße, drei und drei.
+  [[-8,-9],[-9,0],[-8,9],[8,-9],[9,0],[8,9]],
+  // Das Runddorf: die Höfe stehen im Kreis um den Platz.
+  [[0,-10],[10,-3],[6,9],[-6,9],[-10,-3]],
+  // Das Haufendorf: unregelmäßig gewachsen, ohne erkennbare Ordnung.
+  [[-9,-6],[1,-10],[9,3],[-5,9],[-1,0]],
+];
 // Die Dominiks hängen unter der Krone, und die hängt hoch: vom Boden aus
 // kommt man mit REACH nicht heran, es braucht zwei, drei gesetzte Blöcke.
 export const TRUNK_MIN=10;
@@ -387,22 +460,166 @@ export function createWorld(){
 
   // -------------------------------------------------------------- Landschaft
   (function landscape(){
-    // --- Dörfer: je vier Häuschen um einen gepflasterten Platz. Ins erste
-    // kommt die Truhe, im zweiten wartet ein Jannes.
+    // --- Dörfer. Alles hier legt Blöcke ab vy — der freien Zelle über dem
+    // eingeebneten Dorfboden (VILL_R in terrainH). Fußböden, Platz und Wege
+    // liegen damit eine Stufe über dem Gras ringsum, so wie schon immer.
+
+    // Der Baukörper: Fußboden über den ganzen Grundriss (auch unter der Tür,
+    // sonst stolpert man in ein Loch), darauf die Wände. Die Tür ist zwei
+    // Blöcke hoch, die Fenster sitzen auf Augenhöhe und höher. Ecken bekommen
+    // ein eigenes Material — das gibt dem Haus Kanten statt einer glatten
+    // Fläche. Ohne Wand (o.wall null) bleiben nur Boden und Eckpfosten: die
+    // offene Scheune.
+    const shell=(x0,z0,y,w,d,h,o)=>{
+      for(let dx=0;dx<w;dx++) for(let dz=0;dz<d;dz++){
+        const x=x0+dx, z=z0+dz;
+        put(o.floor,x,y,z);
+        const edge=dx===0||dx===w-1||dz===0||dz===d-1;
+        const corner=(dx===0||dx===w-1)&&(dz===0||dz===d-1);
+        if(!edge) continue;
+        if(!o.wall){ if(corner) for(let k=1;k<=h;k++) put(o.trim,x,y+k,z); continue; }
+        for(let k=1;k<=h;k++){
+          // Die Tür lässt zwei Blöcke frei, die Fenster je einen — aber weder
+          // in den Ecken (die tragen) noch in der obersten Lage (die trägt das
+          // Dach) und nie neben der Tür, sonst steht davon zu wenig Wand.
+          if(dx===o.doorX&&dz===o.doorZ){ if(k<=2) continue; }
+          else if(!corner&&k>1&&k<h&&Math.abs(dx-o.doorX)+Math.abs(dz-o.doorZ)>1
+                  &&hash2(x,z,161+k)<.18) continue;
+          put(corner?o.trim:o.wall,x,y+k,z);
+        }
+      }
+    };
+    // Satteldach: Lage für Lage von zwei Seiten einrücken, bis der First übrig
+    // bleibt. Gelegt wird nicht die ganze Lage, sondern nur ihr abfallender
+    // Rand — was dazwischen liegt, deckt schon die nächste ab.
+    //
+    // Der Rand ist dabei ZWEI Reihen breit, nicht eine. Bei einer greift die
+    // nächste Lage genau dort an, wo die vorige aufhört, und zwischen den
+    // Stufen bleibt eine diagonale Ritze: von schräg unten sieht man durchs
+    // Dach in den Himmel. Mit zwei Reihen überlappen sich die Stufen um eine,
+    // die Ritze ist zu, und das Dach wirkt von außen nur etwas kräftiger.
+    const slope=(mat,x0,z0,y,w,d,alongX)=>{
+      const lay=Math.ceil(((alongX?d:w)+2)/2);
+      for(let i=0;i<lay;i++){
+        const ax=x0-1+(alongX?0:i), bx=x0+w-(alongX?0:i);
+        const az=z0-1+(alongX?i:0), bz=z0+d-(alongX?i:0);
+        for(let x=ax;x<=bx;x++) for(let z=az;z<=bz;z++){
+          const e=alongX?Math.min(z-az,bz-z):Math.min(x-ax,bx-x);
+          if(i<lay-1&&e>1) continue;
+          put(mat,x,y+i,z);
+        }
+      }
+    };
+    // Walmdach: dasselbe von allen vier Seiten. Es läuft nicht auf einen First
+    // über die ganze Länge zu, sondern auf ein kurzes Stück in der Mitte.
+    const hip=(mat,x0,z0,y,w,d)=>{
+      const lay=Math.ceil((Math.min(w,d)+2)/2);
+      for(let i=0;i<lay;i++){
+        const ax=x0-1+i, bx=x0+w-i, az=z0-1+i, bz=z0+d-i;
+        if(ax>bx||az>bz) break;
+        for(let x=ax;x<=bx;x++) for(let z=az;z<=bz;z++){
+          if(i<lay-1&&Math.min(x-ax,bx-x,z-az,bz-z)>1) continue;
+          put(mat,x,y+i,z);
+        }
+      }
+    };
+    // Flaches Dach mit Brüstung — nur der Turm trägt eines. Die Zinnen machen
+    // aus der Platte oben eine Plattform, auf der offensichtlich jemand steht.
+    const flatRoof=(mat,x0,z0,y,w,d)=>{
+      for(let x=x0-1;x<=x0+w;x++) for(let z=z0-1;z<=z0+d;z++){
+        put(mat,x,y,z);
+        if((x===x0-1||x===x0+w||z===z0-1||z===z0+d)&&((x+z)&1)) put(mat,x,y+1,z);
+      }
+    };
+
     for(const v of VILLAGES){
       const {x:vx,z:vz,y:vy}=v;
-      for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('rock',vx+dx,vy,vz+dz);
-      [[-8,-7],[5,-7],[-8,5],[5,5]].forEach(([hx,hz],hi)=>{
-        for(let dx=0;dx<5;dx++) for(let dz=0;dz<5;dz++){
-          const edge=dx===0||dx===4||dz===0||dz===4;
-          const x=vx+hx+dx, z=vz+hz+dz;
-          if(edge&&!(dx===2&&dz===4)) for(let y=0;y<3;y++) put('plank',x,vy+y,z);
-          else if(!edge) put('rock',x,vy,z);
-          put('brick',x,vy+3,z);
+      // Der Wurf hängt allein an den Koordinaten des Dorfes: kein gemeinsamer
+      // Generator, den ein späterer Eingriff woanders verschieben könnte, und
+      // für Client wie Server derselbe Grundriss ohne ein Netzwerkpaket.
+      const rv=mulberry(Math.imul(vx,73856093)^Math.imul(vz,19349663));
+      const plan=VILLAGE_PLANS[Math.floor(rv()*VILLAGE_PLANS.length)];
+      const want=Math.min(plan.length,3+Math.floor(rv()*3));   // drei bis fünf Häuser
+      // Der Platz: gepflastert, mal quadratisch, mal rund, mit einem Stein in
+      // der Mitte.
+      const pr=2+Math.floor(rv()*2), round=rv()<.5;
+      for(let dx=-pr;dx<=pr;dx++) for(let dz=-pr;dz<=pr;dz++){
+        if(round&&Math.hypot(dx,dz)>pr+.4) continue;
+        put(dx||dz?'rock':'brick',vx+dx,vy,vz+dz);
+      }
+      const houses=[];
+      for(const [ax,az] of plan){
+        if(houses.length>=want) break;
+        // In die ersten beiden Häuser kommen Truhe und Jannes — die brauchen
+        // Wände, eine offene Scheune wäre für beides das falsche Haus.
+        const needsWalls=houses.length<2;
+        const start=Math.floor(rv()*HOUSE_KINDS.length), rot=rv()<.5;
+        let kind=null, w=0, d=0, x0=0, z0=0;
+        for(let k=0;k<HOUSE_KINDS.length&&!kind;k++){
+          const c=HOUSE_KINDS[(start+k)%HOUSE_KINDS.length];
+          if(needsWalls&&!c.wall) continue;
+          w=rot?c.d:c.w; d=rot?c.w:c.d;
+          x0=vx+ax-(w>>1); z0=vz+az-(d>>1);
+          // Passt der Grundriss? Gefragt wird nicht nach einem Radius, sondern
+          // nach dem Gelände selbst: jede Zelle des Grundrisses muss auf
+          // Dorfhöhe liegen, sonst hinge eine Ecke in der Luft oder steckte im
+          // Hang. Das ebene Stück reicht je nach Dorf und Richtung
+          // unterschiedlich weit über VILL_R hinaus (die Abstufung rundet sich
+          // noch eine Weile auf dieselbe Höhe) — so nutzt jedes Dorf genau so
+          // viel Platz, wie es wirklich hat. HOUSE_MAX deckelt das trotzdem,
+          // damit kein Haus aus dem baumfreien Gürtel um das Dorf herausragt.
+          let fits=Math.max(Math.abs(ax),Math.abs(az))+Math.max(w,d)/2<=HOUSE_MAX;
+          for(let cx=x0;cx<x0+w&&fits;cx++) for(let cz=z0;cz<z0+d&&fits;cz++)
+            if(terrainH(cx,cz)!==vy) fits=false;
+          // Zwischen zwei Häusern müssen zwei Blöcke Luft bleiben, sonst
+          // wachsen ihre Dächer (je ein Block Überstand) ineinander.
+          const clash=houses.some(b=>x0-3<=b.x1&&b.x0<=x0+w+2&&z0-3<=b.z1&&b.z0<=z0+d+2);
+          if(fits&&!clash) kind=c;
         }
-        if(hi===0) chestSpots.push({x:vx+hx+1,y:vy+1,z:vz+hz+2});
-        if(hi===1) houseSpots.push({x:vx+hx+2,z:vz+hz+2});
-      });
+        if(!kind) continue;
+        // Die Tür zeigt zum Platz; welche Wand das ist, entscheidet die
+        // größere der beiden Richtungen dorthin.
+        const fx=vx-(x0+(w>>1)), fz=vz-(z0+(d>>1));
+        const o={...kind, doorX:0, doorZ:0};
+        if(Math.abs(fx)>=Math.abs(fz)){ o.doorX=fx>0?w-1:0; o.doorZ=d>>1; }
+        else                          { o.doorZ=fz>0?d-1:0; o.doorX=w>>1; }
+        shell(x0,z0,vy,w,d,kind.h,o);
+        const ry=vy+kind.h+1;
+        if(kind.roof==='gable')     slope(kind.roofMat,x0,z0,ry,w,d,w>=d);
+        else if(kind.roof==='hip')  hip(kind.roofMat,x0,z0,ry,w,d);
+        else                        flatRoof(kind.roofMat,x0,z0,ry,w,d);
+        houses.push({x0,z0,x1:x0+w-1,z1:z0+d-1,w,d,kind,
+                     doorX:x0+o.doorX, doorZ:z0+o.doorZ});
+      }
+      // Truhe ins erste, Jannes ins zweite Haus — dieselbe Reihenfolge wie
+      // vorher, ein Eintrag je Dorf: an traderSpots und damit an der Zuordnung
+      // Jannes ↔ Angebot ändert sich dadurch nichts.
+      const [h0,h1]=houses;
+      if(h0) chestSpots.push({x:h0.x0+1,y:vy+1,z:h0.z0+1});
+      if(h1){
+        // Wie weit der Jannes umhergeht, hängt jetzt am Zimmer statt an einer
+        // Zahl, die Client und Server doppelt tippen mussten: in der Kate ein
+        // Schritt, im Langhaus drei. Sonst liefe er im Turm durch die Wand.
+        const roam=Math.max(.8,(Math.min(h1.w,h1.d)-2)/2);
+        houseSpots.push({x:h1.x0+(h1.w>>1),z:h1.z0+(h1.d>>1),roam});
+      }
+      // Die Werkbank in der Werkstatt. Sie steht in der hinteren Ecke, die
+      // Truhe oben in der vorderen — so kommen sich beide auch dann nicht ins
+      // Gehege, wenn die Werkstatt zufällig das Truhenhaus ist.
+      for(const h of houses) if(h.kind.bench) put('bench',h.x1-1,vy+1,h.z1-1);
+      // Ein gepflasterter Weg von jeder Tür zum Platz. Er macht aus ein paar
+      // Häusern erst ein Dorf — und er nimmt die Stufe, die der um einen Block
+      // erhöhte Dorfboden sonst vor jede Tür setzte. Gelegt wird nur auf
+      // freien Boden, damit ein Weg, der an einem anderen Haus vorbeiführt,
+      // ihm nicht den Fußboden aufreißt.
+      for(const h of houses){
+        let px=h.doorX, pz=h.doorZ;
+        for(let k=0;k<26&&Math.hypot(px-vx,pz-vz)>1;k++){
+          if(!scenery.has(K(px,vy,pz))) put('rock',px,vy,pz);
+          if(Math.abs(px-vx)>=Math.abs(pz-vz)) px+=Math.sign(vx-px);
+          else pz+=Math.sign(vz-pz);
+        }
+      }
     }
     // --- Manni-Markt: vier Pfosten, ein Dach, ein Tresen. Er steht im flachen
     // Starttal und zeigt seine Theke dem Startpunkt zu, damit man beim ersten
@@ -422,24 +639,68 @@ export function createWorld(){
     // halben Osten kahl.
     const TREE_CAP=4800;
     let n=0, trees=[];
+    // Kein Baum steht mehr an einem anderen — weder über die Kante noch über
+    // die Ecke. Zwei Stämme in Nachbarzellen sahen aus wie ein Fehler im
+    // Gelände und ließen sich zu zweit auf einmal fällen; jetzt bleibt
+    // zwischen zwei Stämmen immer mindestens eine Zelle Platz.
+    //
+    // Geprüft wird gegen die schon gesetzten Stämme, und die Schleife läuft in
+    // fester Reihenfolge (West nach Ost, darin Nord nach Süd) — welcher von
+    // zwei Bewerbern um dieselbe Ecke gewinnt, steht damit fest, und Client
+    // und Server kommen ohne ein einziges Netzwerkpaket auf denselben Wald.
+    const trunks=new Set();
+    const roomFor=(x,z)=>{
+      for(let dx=-1;dx<=1;dx++) for(let dz=-1;dz<=1;dz++)
+        if(trunks.has((x+dx)+','+(z+dz))) return false;
+      return true;
+    };
+    // Der Abstandstest wirft Bewerber weg, die es vorher ins Bild geschafft
+    // hätten — ohne Gegengewicht wären die Wälder um gut ein Drittel lichter
+    // geworden. Die Dichteschwellen sind darum angehoben, sodass am Ende
+    // wieder ungefähr gleich viele Bäume stehen, nur eben verteilt.
     for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<TREE_CAP;x++)
       for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<TREE_CAP;z++){
         if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
-        if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
         const dens=vnoise(x,z,44,11);
-        if(hash2(x,z,55)>(dens>.54?.13:.022)) continue;
+        if(hash2(x,z,55)>(dens>.54?.22:.036)) continue;
         const h=treeSpot(x,z);
         if(h<0) continue;
+        if(!roomFor(x,z)) continue;
+        // Nadelbäume stehen, wo es höher und karger wird, und dazu in eigenen
+        // Beständen aus einer zweiten Rauschformel — ein Fichtenhain mitten im
+        // Laubwald ist keine Ausnahme, sondern genau das, was man sucht. Das
+        // Starttal und seine Umgebung liegen tief, dort bleibt es laubgrün.
+        const fir=h>=7||vnoise(x,z,34,131)>.70;
         const trunk=TRUNK_MIN+Math.floor(hash2(x,z,56)*3);
         for(let y=0;y<trunk;y++) put('log',x,h+y,z);
-        for(const [dx,dy,dz] of TREE_TOP) put('leaf',x+dx,h+trunk-1+dy,z+dz);
-        trees.push({x,z,h,trunk});
+        // Kronen reichen zwei Zellen weit und damit bis in den Nachbarstamm
+        // hinein — ohne diese Wache stanzte ein später gesetzter Baum dem
+        // früheren ein Stück Laub mitten in den Stamm, und beim Fällen bliebe
+        // dessen Krone in der Luft hängen. Laub über Laub ist dagegen egal.
+        const crown=(t,x2,y2,z2)=>{ if(scenery.get(K(x2,y2,z2))!=='log') put(t,x2,y2,z2); };
+        if(fir)
+          // Ein Stück über den Stamm hinaus, sonst fiele die Spitze (die
+          // oberste Lage von CONIFER_TOP sitzt in der Stammachse) unter die
+          // Wache oben und der Baum endete in einem kahlen Pfahl. Nach unten
+          // reicht die Krone dafür weit den Stamm hinab.
+          for(const [dx,dy,dz] of CONIFER_TOP) crown('needle',x+dx,h+trunk+1-CONIFER_H+dy,z+dz);
+        else
+          for(const [dx,dy,dz] of TREE_TOP) crown('leaf',x+dx,h+trunk-1+dy,z+dz);
+        trunks.add(x+','+z);
+        trees.push({x,z,h,trunk,fir});
         n++;
       }
-    // --- Jeder fünfte Baum trägt Dominiks. Sie hängen eine Lage unter der
+    // --- Jeder fünfte Laubbaum trägt Dominiks. Sie hängen eine Lage unter der
     // Krone, jeder direkt unter einem Blatt — und damit ausser Reichweite.
+    // Am Nadelbaum wächst kein Dominik; er hat dort auch keinen Platz, seine
+    // Krone reicht bis auf diese Höhe herunter. Zusammen mit dem breiteren
+    // baumfreien Gürtel um die Dörfer (VILL_CLEAR) kostete das rund ein Siebtel
+    // der wilden Ernte — die Rate ist darum von .22 auf .30 angehoben, sodass
+    // am Ende wieder ungefähr gleich viele Dominiks in den Kronen hängen.
     for(const t of trees){
-      if(hash2(t.x,t.z,77)>.22) continue;
+      if(t.fir) continue;
+      if(hash2(t.x,t.z,77)>.30) continue;
       const y=t.h+t.trunk-2;
       for(const [dx,dz] of FRUIT_OFF){
         if(hash2(t.x+dx,t.z+dz,78)>.5) continue;
@@ -455,6 +716,61 @@ export function createWorld(){
       if(scenery.has(K(mx,terrainH(mx,mz),mz))) continue;
       put('shroom',mx,terrainH(mx,mz),mz);
     }
+    // --- Umgestürzte Bäume: selten liegt einer quer im Gras. Ein Stumpf am
+    // Fuß, daneben der ausgestreckte Stamm, am Kopfende das heruntergekommene
+    // Laub — und mit etwas Glück wächst schon ein Pilz darauf. Für den
+    // Spieler ist es Holz ohne Klettern, für die Landschaft eine Stelle, an
+    // der einmal etwas passiert ist.
+    //
+    // Auf einer Linie gleicher Höhe, sonst schwebte das hintere Ende oder
+    // steckte im Hang; treeSpot() prüft Ebenheit und Gras schon mit.
+    for(let x=BOUND.x0+6;x<=BOUND.x1-6;x++)
+      for(let z=BOUND.z0+6;z<=BOUND.z1-6;z++){
+        if(hash2(x,z,111)>.005) continue;
+        if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
+        const h=treeSpot(x,z);
+        if(h<0) continue;
+        const [dx,dz]=NB4[Math.floor(hash2(x,z,112)*4)];
+        const len=4+Math.floor(hash2(x,z,113)*3);          // 4 bis 6 Blöcke Stamm
+        let free=true;
+        for(let i=0;i<=len+1&&free;i++){
+          const cx=x+dx*i, cz=z+dz*i;
+          if(treeSpot(cx,cz)!==h||scenery.has(K(cx,h,cz))) free=false;
+        }
+        if(!free) continue;
+        put('log',x,h,z);                                  // der Stumpf
+        for(let i=2;i<=len;i++) put('log',x+dx*i,h,z+dz*i);
+        // Das Kopfende: was von der Krone übrig ist, liegt um die Spitze
+        // herum ausgebreitet.
+        const tx=x+dx*len, tz=z+dz*len;
+        for(const [lx,lz] of NB4){
+          if(lx===-dx&&lz===-dz) continue;                 // nicht zurück auf den Stamm
+          if(scenery.has(K(tx+lx,h,tz+lz))||treeSpot(tx+lx,tz+lz)<0) continue;
+          if(hash2(tx+lx,tz+lz,114)>.6) continue;
+          put('leaf',tx+lx,h,tz+lz);
+        }
+        // Ein Pilz auf dem morschen Stamm — sit:true setzt ihn oben auf.
+        const my=hash2(x,z,115);
+        if(my<.5) put('shroom',x+dx*(2+Math.floor(my*6)),h+1,z+dz*(2+Math.floor(my*6)));
+      }
+    // --- Büsche: kniehohes Gestrüpp in Gruppen über dem Grasland, dichter am
+    // Waldrand als auf der freien Fläche (dieselbe Dichteformel wie die
+    // Bäume). Sie halten niemanden auf und geben nichts her — sie füllen nur
+    // den leeren Boden zwischen den Stämmen.
+    for(let x=BOUND.x0+3;x<=BOUND.x1-3;x++)
+      for(let z=BOUND.z0+3;z<=BOUND.z1-3;z++){
+        // Der Würfel zuerst, das Rauschen danach: er wirft neun von zehn
+        // Zellen weg und kostet einen Bruchteil davon. Über die ganze Karte
+        // gerechnet ist das der Unterschied zwischen spürbar und unmerklich.
+        if(hash2(x,z,152)>.09) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
+        if(vnoise(x,z,19,151)<.44) continue;               // Gruppen statt Teppich
+        if(vnoise(x,z,44,11)<=.54&&hash2(x,z,152)>.03) continue;   // außerhalb der Wälder lichter
+        const h=treeSpot(x,z);
+        if(h<0||scenery.has(K(x,h,z))) continue;
+        put('shrub',x,h,z);
+      }
     // --- Pfeffer: nur jenseits der Flüsse, in lockeren Feldern auf dem Grasland.
     for(let x=BOUND.x0+3;x<=BOUND.x1-3;x++)
       for(let z=BOUND.z0+3;z<=BOUND.z1-3;z++){
