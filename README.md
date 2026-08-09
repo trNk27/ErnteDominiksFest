@@ -35,6 +35,11 @@ für alle gleich). Was **nicht** geteilt ist und nur im eigenen Browser bleibt:
 Rucksack, Leben, Hunger, Position — keine Accounts, kein Login, keine
 Spielerdaten auf dem Server.
 
+**Kommen und Gehen** wird kurz eingeblendet: „👋 Spieler 3 ist dazugekommen." bzw.
+„👋 Spieler 3 hat das Spiel verlassen." — unter demselben Namen, der dem Mitspieler auch
+über dem Kopf hängt. Wer die Verbindung verliert statt bewusst aufzuhören, erscheint
+genauso: der Server sieht in beiden Fällen nur, dass jemand weg ist.
+
 **Die Zeit steht still, solange niemand spielt.** Der Server rechnet die Welt
 nur weiter, wenn mindestens einer verbunden ist: geht der Letzte raus, wird der
 Stand gespeichert und die Uhr angehalten — Tag und Nacht, wachsende Felder,
@@ -245,7 +250,9 @@ Pause und hinter einem offenen Fenster verschwindet sie.
   stehen, der Fluch-Benni taumelt wie ein Blatt. Dazu drei geworfene Waffen: die
   **🏹 Schleuder** verschießt 🍑 Dominiks mit einem hohen Quietschen, ohne sich selbst zu
   verbrauchen; der **🏀 Basketball** fliegt im Bogen; der **🧨 Knaller** zündet nach kurzer
-  Lunte und stößt alles im Umkreis weg, ohne dabei Blöcke zu zerlegen.
+  Lunte mit einem **echten, lang nachhallenden Knall** und stößt alles im Umkreis weg,
+  ohne dabei Blöcke zu zerlegen. Jede Zündung klingt eine Spur anders — zwei Knaller
+  kurz hintereinander sollen nicht wie eine Kopie klingen.
 
   Die beiden ersten reichen jetzt **weit**: die Schleuder schießt flach und schnell fast
   geradeaus, der Basketball geht in hohem Bogen über eine halbe Lichtung. Beide treffen
@@ -290,7 +297,7 @@ die **fallen beim ersten Klick** (siehe unten).
 |---|---|---|
 | 🟩 Gras / 🟫 Erde / 🟨 Sand / ❄️ Schnee | Erde, Sand, Schnee | — |
 | 🪵 Holzstamm | Holzstamm | 🪓 Axt |
-| 🍃 Laub | manchmal einen 🥢 Stock | — |
+| 🍃 Laub / 🌲 Nadeln / 🌿 Busch | manchmal einen 🥢 Stock | — |
 | 🪨 Stein / 🧱 Ziegel | Stein, Ziegel | ⛏️ Spitzhacke |
 | 🧂 Salzader | Salz | ⛏️ Spitzhacke · nur tief im Fels |
 | ⚫ Kohleader | Kohle | ⛏️ Spitzhacke · nur tief im Fels |
@@ -298,9 +305,10 @@ die **fallen beim ersten Klick** (siehe unten).
 | 🍄 Pilz | Pilz (Essen + Zutat) | — |
 | 🌶️ Pfefferstrauch | Pfeffer | — · nur hinter dem Fluss |
 
-**🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** sind keine Klötze, sondern **zwei gekreuzte
-Flächen** — man geht mitten durch sie hindurch, und sie verdecken nichts: unter der
-Frucht bleibt das Laub geschlossen, unter Pilz und Strauch die Grasnarbe.
+**🍑 Dominiks, 🍄 Pilze, 🌶️ Pfeffer und 🌿 Büsche** sind keine Klötze, sondern **zwei
+gekreuzte Flächen** — man geht mitten durch sie hindurch, und sie verdecken nichts:
+unter der Frucht bleibt das Laub geschlossen, unter Pilz, Strauch und Busch die
+Grasnarbe.
 
 Sie werden auch nicht *abgebaut*, sondern **gepflückt**: ein Klick, und sie fallen —
 kein Halten, kein Fortschrittsbalken, keine Risse. Mit gedrückter Maustaste über ein
@@ -486,7 +494,7 @@ Füßen. Verkaufen tut er nur, was sich **nicht bauen lässt**:
 | 🛶 Boot | 750 € | Setzt dich **oben aufs** Wasser statt hinein, und schnell |
 | 🪂 Gleitschirm | 1500 € | Im Fallen segelst du sanft hinab statt zu stürzen |
 | 🚚 **Monstertruck** | **3000 €** | Rast an Land — und **bricht durch, was im Weg steht** |
-| 🧪 Aquariendünger | 120 € | ??? |
+| 🧪 Aquariendünger | 60 € | ??? |
 
 Die Fahrzeuge stellst du ab und steigst ein (Rechtsklick), statt sie in der Hand zu
 halten. Sie bringen dich schneller zur nächsten Ernte und zahlen sich damit selbst
@@ -564,10 +572,28 @@ jedem Start dieselbe, kein Speicherstand nötig.
 - **Zwei Flüsse** durch Westen und Norden, mit Sandufern. Die Rinne ist vier Blöcke
   tief — da wird geschwommen —, die **Furten** dazwischen nur einen.
 - **Wälder** in zusammenhängenden Gebieten aus **hohen Bäumen** — zehn bis zwölf Blöcke
-  Stamm, darüber die Krone. An jedem fünften hängen unter dem Laub **🍑 Dominiks**:
-  zwei gekreuzte Flächen statt eines Klotzes, mit Dominiks Gesicht darauf. Man geht
-  durch sie hindurch, und vom Boden kommt man **nicht** heran — dazu müssen zwei bis
-  vier Blöcke untergebaut werden. Im Schatten stehen **🍄 Pilze**.
+  Stamm, darüber die Krone. An jedem fünften Laubbaum hängen unter dem Laub **🍑
+  Dominiks**: zwei gekreuzte Flächen statt eines Klotzes, mit Dominiks Gesicht darauf.
+  Man geht durch sie hindurch, und vom Boden kommt man **nicht** heran — dazu müssen
+  zwei bis vier Blöcke untergebaut werden. Im Schatten stehen **🍄 Pilze**.
+
+  **Kein Baum steht mehr an einem anderen** — weder über die Kante noch über die Ecke.
+  Zwischen zwei Stämmen bleibt immer mindestens eine Zelle Platz; zwei zusammengewachsene
+  Stämme sahen aus wie ein Fehler und fielen zu zweit auf einmal. Die Wälder sind dafür
+  etwas dichter gesät, damit sie insgesamt genauso voll bleiben wie vorher.
+- **🌲 Nadelbäume** stehen dort, wo es höher und karger wird, und dazu in eigenen
+  Beständen mitten im Laubwald — knapp ein Drittel aller Bäume. Ihre Krone ist ein
+  Kegel in Etagen statt eines Balls obendrauf und reicht viel weiter am Stamm herunter,
+  die Nadeln sind dunkler und blaustichiger als Laub. **Dominiks wachsen an ihnen
+  nicht** — dafür fällt beim Abbauen, wie beim Laub, manchmal ein 🪵 Stock ab.
+- **🌿 Büsche** in Gruppen über dem Grasland, am dichtesten zwischen den Stämmen. Sie
+  sind kniehoch, man geht mitten hindurch, und sie geben nichts her außer gelegentlich
+  einem Stock — sie füllen den leeren Boden, sonst nichts.
+- **Umgestürzte Bäume** liegen selten quer im Gras: ein Stumpf, daneben der
+  ausgestreckte Stamm, am Kopfende das heruntergekommene Laub, und mit etwas Glück
+  wächst schon ein 🍄 Pilz darauf. Vier bis sechs Blöcke **🪵 Holz ohne Klettern** — und
+  eine Stelle, an der einmal etwas passiert ist. Rund vierzig davon auf der ganzen
+  Karte, also nichts, worauf man zählen sollte.
 - **Hinter den Flüssen** — dem Streifen im Westen und im Norden, den man nur über eine
   Furt erreicht — wachsen **🌶️ Pfeffersträucher** in lockeren Feldern. Diesseits keiner.
 - **Tief im Fels** sitzen **🧂 Salzadern** — helle Kristallnester, ab fünf Blöcken unter
@@ -587,6 +613,14 @@ jedem Start dieselbe, kein Speicherstand nötig.
 Gezeichnet wird nicht Würfel für Würfel, sondern **chunkweise nur die freiliegenden
 Flächen**. Ein abgebauter oder gesetzter Block vernetzt genau seinen Chunk neu, nicht
 die ganze Welt.
+
+**Der Bewuchs sieht seit Nadelbäumen, Büschen und dem Abstandsgebot anders aus als
+vorher** — das Gelände selbst (Berge, Flüsse, Dörfer, Adern) ist Block für Block
+dasselbe geblieben, aber wo vorher ein Baum stand, steht jetzt vielleicht keiner oder
+eine Fichte. **Gesetzte und abgebaute Blöcke bleiben davon unberührt**: was gebaut
+wurde, steht weiter, und was abgebaut wurde, bleibt weg (beides liegt in `edits`, nicht
+im erzeugten Bewuchs). Ein Haus mitten im Wald kann danach allerdings einen Baum weniger
+oder einen neuen Nachbarn vor der Tür haben.
 
 ### Die Welt wurde einmal zurückgesetzt
 

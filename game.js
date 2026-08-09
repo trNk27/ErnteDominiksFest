@@ -337,6 +337,13 @@ const TEX={
     g.fillStyle='#84603c'; g.fillRect(5,0,1,s); g.fillRect(10,0,1,s);
   }),
   leaf   :noiseTex(['#3f8c39','#357a31','#489a41','#2e6b2b','#54a84a'],26),
+  // Nadeln: dunkler und blaustichiger als Laub, damit ein Fichtenhain sich
+  // schon aus der Ferne vom Laubwald abhebt. Die kurzen senkrechten Striche
+  // sind die Nadelbüschel — ohne sie wäre es nur dunkleres Laub.
+  needle :noiseTex(['#245c3a','#1e5033','#2b6b43','#19452c','#31784d'],27,(g,s)=>{
+    g.fillStyle='#143824';
+    for(let y=0;y<s;y+=3) for(let x=(y/3)%2?1:3;x<s;x+=4) g.fillRect(x,y,1,2);
+  }),
   plank  :noiseTex(['#b08247','#a5783f','#bb8d51'],28,(g,s)=>{
     g.fillStyle='#8a6535'; for(let y=3;y<s;y+=4) g.fillRect(0,y,s,1);
   }),
@@ -403,6 +410,23 @@ const TEX={
       g.fillStyle='#c9302a'; g.fillRect(x,y,1,3);
       g.fillStyle='#e8604c'; g.fillRect(x,y,1,1);
     }
+  }),
+  // Busch: ein niedriges Blätterpolster auf zwei dünnen Ästchen, freigestellt.
+  // Er steht mit der Unterkante auf dem Boden (sit in BLOCKS), darum ist die
+  // obere Bildhälfte leer — sonst ragte er wie ein Baum in die Zelle hinauf.
+  shrub  :pixTex(g=>{
+    const leaf=['#4c8f36','#427f2f','#57a03e','#38702a','#63ad48'], r=mulberry(171);
+    g.fillStyle='#6b4c2b';                                  // die Ästchen darunter
+    g.fillRect(6,12,1,4); g.fillRect(9,13,1,3); g.fillRect(7,14,3,1);
+    for(let y=5;y<15;y++) for(let x=1;x<15;x++){
+      // Zwei überlappende Polster statt eines Kreises — ein Busch ist selten
+      // rund, und die Delle in der Mitte macht ihn erst zu einem.
+      const d=Math.min(Math.hypot((x-5.5)/1.15,y-10.5),Math.hypot((x-10)/1.15,y-10));
+      if(d>4.6-r()*1.5) continue;
+      g.fillStyle=leaf[Math.floor(r()*leaf.length)]; g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='#2b5c22';                                  // Schatten am Fuß
+    for(let x=3;x<13;x++) if(r()<.6) g.fillRect(x,14,1,1);
   }),
   // Pilz: roter Hut mit weißen Tupfen auf hellem Stiel, freigestellt — er
   // steht als gekreuzte Fläche im Gras und nicht mehr als Klotz.
@@ -2592,9 +2616,10 @@ function breakBlock(x,y,z,t){
   if(b.drop==='dominik') playSample('dominik_break',.7)||SND.pop();
   else SND.pop();
   let drop=b.drop;
-  if(t==='leaf'){                            // Laub gibt manchmal einen Stock
-    if(Math.random()<.22) drop='stick';
-  }
+  // Reisig — Laub, Nadeln, Busch — gibt manchmal einen Stock her (twig in
+  // BLOCKS). Früher stand hier 'leaf' fest; mit Nadelbaum und Busch daneben
+  // wäre das eine Liste von Sonderfällen geworden.
+  if(b.twig&&Math.random()<.22) drop='stick';
   // Nichts springt mehr direkt in den Rucksack: es fällt heraus und liegt da.
   if(drop) spawnDrop(drop,1,x,y+.3,z,rnd(-.7,.7),1.6,rnd(-.7,.7),.25);
   // Ernte gibt Saatgut. Auf dem Acker gezogen fällt mehr ab als in der
@@ -4002,6 +4027,10 @@ function updateHand(dt){
 // Werts. Die eigene Bewegung bleibt komplett lokal maßgeblich (kein
 // serverseitiges Zurückkorrigieren).
 const PLAYER_COLORS=['#e0555f','#4fa8e0','#e0c04f','#7bcf6a'];
+// Der Name eines Mitspielers — einmal hier, damit das Schild über seinem Kopf
+// und die Meldungen beim Kommen und Gehen (siehe on('join')/on('leave')) nicht
+// auseinanderlaufen können.
+const playerName=pid=>'Spieler '+pid;
 const remotePlayers=new Map();              // pid -> {group, target:{x,y,z,yaw}}
 function ensureRemotePlayer(pid,skinIdx=0){
   let rp=remotePlayers.get(pid);
@@ -4010,7 +4039,7 @@ function ensureRemotePlayer(pid,skinIdx=0){
   const g=new THREE.Group();
   const body=makePlayerModel(pid,skinIdx);
   g.add(body);
-  const label=makeLabel(['Spieler '+pid],color,.35);
+  const label=makeLabel([playerName(pid)],color,.35);
   label.position.y=2.1; g.add(label);
   scene.add(g);
   rp={pid,group:g,body,label,target:{x:0,y:0,z:0,yaw:0},gait:0,moving:0,skin:skinIdx};
@@ -4130,11 +4159,15 @@ function attemptConnect(pw,fromPrompt){
 // Kleine Statusmeldungen für Mitspieler und Verbindungsabbrüche — die
 // eigentliche Roster-Verwaltung/Spiel-Synchronisation kommt erst in
 // späteren Phasen, hier nur die Verkabelung.
-on('join',()=>toast('👋 Ein Mitspieler ist beigetreten.','',1800));
+// Wer gekommen oder gegangen ist, steht jetzt in der Meldung — und zwar unter
+// demselben Namen, der ihm auch über dem Kopf hängt (playerName, siehe oben).
+// "Ein Mitspieler" half zu viert niemandem weiter: man sah, dass sich etwas
+// geändert hatte, aber nicht bei wem.
+on('join',msg=>toast('👋 '+playerName(msg.pid)+' ist dazugekommen.','good',2600));
 // 'join' selbst trägt keine Position — die kommt erst mit der ersten 'pos'-
 // Nachricht des Beigetretenen, also gibt es hier noch nichts zu zeichnen.
 on('leave',msg=>{
-  toast('👋 Ein Mitspieler hat verlassen.','',1800);
+  toast('👋 '+playerName(msg.pid)+' hat das Spiel verlassen.','',2600);
   removeRemotePlayer(msg.pid);
   // Sein Fahrzeug wird wieder frei. Der Server räumt den Platz ebenfalls
   // (siehe _onClose dort) — hier zusätzlich, damit das Boot nicht bis zur

@@ -27,7 +27,7 @@ export const SHOP=[
   {id:'board', price:250,  txt:'Auf festem Boden fast doppelt so flott.'},
   {id:'boat',  price:750,  txt:'Setzt dich oben aufs Wasser statt hinein.'},
   {id:'glider',price:1500, txt:'Im Fallen gehalten, segelst du sanft hinab.'},
-  {id:'fert',  price:120,  txt:'???'},
+  {id:'fert',  price:60,   txt:'???'},
   // Das teuerste Stück im Sortiment: rasend schnell an Land, dafür im Wasser
   // ein Klotz — und wer damit gegen etwas fährt, muss nicht erst absteigen
   // und abbauen.

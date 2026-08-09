@@ -193,7 +193,14 @@ export const BLOCKS={
   sand   :{tex:'sand',  hard:.6,  drop:'sand',   nm:'Sand'},
   snow   :{tex:'snow',  hard:.5,  drop:'snow',   nm:'Schnee'},
   log    :{tex:'log',   hard:1.6, drop:'log',    nm:'Holzstamm', axe:true},
-  leaf   :{tex:'leaf',  hard:.3,  drop:null,     nm:'Laub'},
+  // twig markiert, was beim Abbauen manchmal einen Stock hergibt (siehe
+  // breakBlock in game.js) — Laub tat das schon immer, die Nadeln und der
+  // Busch sind jetzt genauso Reisig und sollen sich nicht anders anfühlen.
+  leaf   :{tex:'leaf',  hard:.3,  drop:null,     nm:'Laub', twig:true},
+  // Nadelbaum-Krone. Eigener Blocktyp statt dunkler eingefärbtem Laub, damit
+  // man Fichte und Laubbaum schon von weitem auseinanderhält — und damit der
+  // Nadelwald sich abbauen lässt, ohne dass Laub daraus wird.
+  needle :{tex:'needle',hard:.3,  drop:null,     nm:'Nadeln', twig:true},
   plank  :{tex:'plank', hard:1.3, drop:'plank',  nm:'Bretter', axe:true},
   brick  :{tex:'brick', hard:2.2, drop:'brick',  nm:'Ziegel',  pick:true},
   bench  :{tex:'bench', hard:1.5, drop:'bench',  nm:'Werkbank',axe:true, use:'bench'},
@@ -208,6 +215,11 @@ export const BLOCKS={
            cross:true, size:.8, sit:true, alpha:true, pass:true},
   pepper :{tex:'pepper',hard:0,  drop:'pepper', nm:'Pfefferstrauch',
            cross:true, size:.95,sit:true, alpha:true, pass:true},
+  // Wilder Busch: kniehoch, steht wie alles Wachsende als gekreuzte Fläche im
+  // Gras, und man geht mitten hindurch. Er trägt nichts — er ist Landschaft,
+  // kein Vorrat; höchstens ein Stock fällt ab (twig, s. leaf oben).
+  shrub  :{tex:'shrub', hard:0,  drop:null,     nm:'Busch',
+           cross:true, size:1,  sit:true, alpha:true, pass:true, twig:true},
   saltore:{tex:'saltore',hard:2.6,drop:'salt',   nm:'Salzader', pick:true},
   coalore:{tex:'coalore',hard:2.2,drop:'coal',   nm:'Kohleader', pick:true},
   // --- Acker und was darauf wächst
@@ -234,6 +246,20 @@ export const TREE_TOP=[];
       if(Math.abs(x)+Math.abs(z)<=2) TREE_TOP.push([x,dy,z]);
   for(let x=-1;x<=1;x++) for(let z=-1;z<=1;z++)
     if(Math.abs(x)+Math.abs(z)<=1) TREE_TOP.push([x,2,z]);
+})();
+// Der Nadelbaum: ein Kegel in Etagen statt eines Balls obendrauf. Unten ein
+// breiter Kranz, darüber wechseln sich schmal und breit ab — das gibt die
+// abgestuften Zweige einer Fichte —, ganz oben eine einzelne Spitze. Die
+// Krone reicht weit am Stamm herunter (CONIFER_H Lagen), darum trägt sie
+// ihre eigene Liste und ist kein gestauchtes TREE_TOP.
+export const CONIFER_H=6;
+export const CONIFER_TOP=[];
+(function coniferShape(){
+  const ring=(dy,rad)=>{
+    for(let x=-rad;x<=rad;x++) for(let z=-rad;z<=rad;z++)
+      if(Math.abs(x)+Math.abs(z)<=rad) CONIFER_TOP.push([x,dy,z]);
+  };
+  ring(0,2); ring(1,2); ring(2,1); ring(3,2); ring(4,1); ring(5,0);
 })();
 // Die Dominiks hängen unter der Krone, und die hängt hoch: vom Boden aus
 // kommt man mit REACH nicht heran, es braucht zwei, drei gesetzte Blöcke.
@@ -422,24 +448,66 @@ export function createWorld(){
     // halben Osten kahl.
     const TREE_CAP=4800;
     let n=0, trees=[];
+    // Kein Baum steht mehr an einem anderen — weder über die Kante noch über
+    // die Ecke. Zwei Stämme in Nachbarzellen sahen aus wie ein Fehler im
+    // Gelände und ließen sich zu zweit auf einmal fällen; jetzt bleibt
+    // zwischen zwei Stämmen immer mindestens eine Zelle Platz.
+    //
+    // Geprüft wird gegen die schon gesetzten Stämme, und die Schleife läuft in
+    // fester Reihenfolge (West nach Ost, darin Nord nach Süd) — welcher von
+    // zwei Bewerbern um dieselbe Ecke gewinnt, steht damit fest, und Client
+    // und Server kommen ohne ein einziges Netzwerkpaket auf denselben Wald.
+    const trunks=new Set();
+    const roomFor=(x,z)=>{
+      for(let dx=-1;dx<=1;dx++) for(let dz=-1;dz<=1;dz++)
+        if(trunks.has((x+dx)+','+(z+dz))) return false;
+      return true;
+    };
+    // Der Abstandstest wirft Bewerber weg, die es vorher ins Bild geschafft
+    // hätten — ohne Gegengewicht wären die Wälder um gut ein Drittel lichter
+    // geworden. Die Dichteschwellen sind darum angehoben, sodass am Ende
+    // wieder ungefähr gleich viele Bäume stehen, nur eben verteilt.
     for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<TREE_CAP;x++)
       for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<TREE_CAP;z++){
         if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
         if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
         const dens=vnoise(x,z,44,11);
-        if(hash2(x,z,55)>(dens>.54?.13:.022)) continue;
+        if(hash2(x,z,55)>(dens>.54?.22:.036)) continue;
         const h=treeSpot(x,z);
         if(h<0) continue;
+        if(!roomFor(x,z)) continue;
+        // Nadelbäume stehen, wo es höher und karger wird, und dazu in eigenen
+        // Beständen aus einer zweiten Rauschformel — ein Fichtenhain mitten im
+        // Laubwald ist keine Ausnahme, sondern genau das, was man sucht. Das
+        // Starttal und seine Umgebung liegen tief, dort bleibt es laubgrün.
+        const fir=h>=7||vnoise(x,z,34,131)>.70;
         const trunk=TRUNK_MIN+Math.floor(hash2(x,z,56)*3);
         for(let y=0;y<trunk;y++) put('log',x,h+y,z);
-        for(const [dx,dy,dz] of TREE_TOP) put('leaf',x+dx,h+trunk-1+dy,z+dz);
-        trees.push({x,z,h,trunk});
+        // Kronen reichen zwei Zellen weit und damit bis in den Nachbarstamm
+        // hinein — ohne diese Wache stanzte ein später gesetzter Baum dem
+        // früheren ein Stück Laub mitten in den Stamm, und beim Fällen bliebe
+        // dessen Krone in der Luft hängen. Laub über Laub ist dagegen egal.
+        const crown=(t,x2,y2,z2)=>{ if(scenery.get(K(x2,y2,z2))!=='log') put(t,x2,y2,z2); };
+        if(fir)
+          // Ein Stück über den Stamm hinaus, sonst fiele die Spitze (die
+          // oberste Lage von CONIFER_TOP sitzt in der Stammachse) unter die
+          // Wache oben und der Baum endete in einem kahlen Pfahl. Nach unten
+          // reicht die Krone dafür weit den Stamm hinab.
+          for(const [dx,dy,dz] of CONIFER_TOP) crown('needle',x+dx,h+trunk+1-CONIFER_H+dy,z+dz);
+        else
+          for(const [dx,dy,dz] of TREE_TOP) crown('leaf',x+dx,h+trunk-1+dy,z+dz);
+        trunks.add(x+','+z);
+        trees.push({x,z,h,trunk,fir});
         n++;
       }
-    // --- Jeder fünfte Baum trägt Dominiks. Sie hängen eine Lage unter der
+    // --- Jeder fünfte Laubbaum trägt Dominiks. Sie hängen eine Lage unter der
     // Krone, jeder direkt unter einem Blatt — und damit ausser Reichweite.
+    // Am Nadelbaum wächst kein Dominik; er hat dort auch keinen Platz, seine
+    // Krone reicht bis auf diese Höhe herunter. Damit die Ernte darunter nicht
+    // leidet, hängen an den verbliebenen Laubbäumen etwas häufiger welche.
     for(const t of trees){
-      if(hash2(t.x,t.z,77)>.22) continue;
+      if(t.fir) continue;
+      if(hash2(t.x,t.z,77)>.26) continue;
       const y=t.h+t.trunk-2;
       for(const [dx,dz] of FRUIT_OFF){
         if(hash2(t.x+dx,t.z+dz,78)>.5) continue;
@@ -455,6 +523,61 @@ export function createWorld(){
       if(scenery.has(K(mx,terrainH(mx,mz),mz))) continue;
       put('shroom',mx,terrainH(mx,mz),mz);
     }
+    // --- Umgestürzte Bäume: selten liegt einer quer im Gras. Ein Stumpf am
+    // Fuß, daneben der ausgestreckte Stamm, am Kopfende das heruntergekommene
+    // Laub — und mit etwas Glück wächst schon ein Pilz darauf. Für den
+    // Spieler ist es Holz ohne Klettern, für die Landschaft eine Stelle, an
+    // der einmal etwas passiert ist.
+    //
+    // Auf einer Linie gleicher Höhe, sonst schwebte das hintere Ende oder
+    // steckte im Hang; treeSpot() prüft Ebenheit und Gras schon mit.
+    for(let x=BOUND.x0+6;x<=BOUND.x1-6;x++)
+      for(let z=BOUND.z0+6;z<=BOUND.z1-6;z++){
+        if(hash2(x,z,111)>.005) continue;
+        if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
+        const h=treeSpot(x,z);
+        if(h<0) continue;
+        const [dx,dz]=NB4[Math.floor(hash2(x,z,112)*4)];
+        const len=4+Math.floor(hash2(x,z,113)*3);          // 4 bis 6 Blöcke Stamm
+        let free=true;
+        for(let i=0;i<=len+1&&free;i++){
+          const cx=x+dx*i, cz=z+dz*i;
+          if(treeSpot(cx,cz)!==h||scenery.has(K(cx,h,cz))) free=false;
+        }
+        if(!free) continue;
+        put('log',x,h,z);                                  // der Stumpf
+        for(let i=2;i<=len;i++) put('log',x+dx*i,h,z+dz*i);
+        // Das Kopfende: was von der Krone übrig ist, liegt um die Spitze
+        // herum ausgebreitet.
+        const tx=x+dx*len, tz=z+dz*len;
+        for(const [lx,lz] of NB4){
+          if(lx===-dx&&lz===-dz) continue;                 // nicht zurück auf den Stamm
+          if(scenery.has(K(tx+lx,h,tz+lz))||treeSpot(tx+lx,tz+lz)<0) continue;
+          if(hash2(tx+lx,tz+lz,114)>.6) continue;
+          put('leaf',tx+lx,h,tz+lz);
+        }
+        // Ein Pilz auf dem morschen Stamm — sit:true setzt ihn oben auf.
+        const my=hash2(x,z,115);
+        if(my<.5) put('shroom',x+dx*(2+Math.floor(my*6)),h+1,z+dz*(2+Math.floor(my*6)));
+      }
+    // --- Büsche: kniehohes Gestrüpp in Gruppen über dem Grasland, dichter am
+    // Waldrand als auf der freien Fläche (dieselbe Dichteformel wie die
+    // Bäume). Sie halten niemanden auf und geben nichts her — sie füllen nur
+    // den leeren Boden zwischen den Stämmen.
+    for(let x=BOUND.x0+3;x<=BOUND.x1-3;x++)
+      for(let z=BOUND.z0+3;z<=BOUND.z1-3;z++){
+        // Der Würfel zuerst, das Rauschen danach: er wirft neun von zehn
+        // Zellen weg und kostet einen Bruchteil davon. Über die ganze Karte
+        // gerechnet ist das der Unterschied zwischen spürbar und unmerklich.
+        if(hash2(x,z,152)>.09) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<15&&Math.abs(z-v.z)<15)) continue;
+        if(vnoise(x,z,19,151)<.44) continue;               // Gruppen statt Teppich
+        if(vnoise(x,z,44,11)<=.54&&hash2(x,z,152)>.03) continue;   // außerhalb der Wälder lichter
+        const h=treeSpot(x,z);
+        if(h<0||scenery.has(K(x,h,z))) continue;
+        put('shrub',x,h,z);
+      }
     // --- Pfeffer: nur jenseits der Flüsse, in lockeren Feldern auf dem Grasland.
     for(let x=BOUND.x0+3;x<=BOUND.x1-3;x++)
       for(let z=BOUND.z0+3;z<=BOUND.z1-3;z++){
