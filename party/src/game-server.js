@@ -1887,7 +1887,21 @@ export class GameServer extends DurableObject {
     } else if (msg.t === "drop-claim") {
       const { dropId } = msg;
       if (typeof dropId !== "string" || !dropId) return;
-      if (this.dropClaims.has(dropId)) return; // already claimed — the original grant broadcast told everyone
+      const winner = this.dropClaims.get(dropId);
+      if (winner !== undefined) {
+        // Already claimed. This used to `return` silently, on the assumption
+        // that the original grant broadcast had reached everyone — but a
+        // client whose connection hiccuped at that exact moment never saw it,
+        // and (since the client only ever asks once per drop unless it gets
+        // an answer) would then wait forever with an item it can never pick
+        // up. So re-announce the recorded winner instead. It is idempotent:
+        // whoever no longer has that drop ignores the message (`if(!d)
+        // return` in the client's `drop-claimed` handler), and the winner is
+        // read from the map rather than recomputed, so a second request can
+        // never hand the same drop to two players.
+        this._broadcast({ t: "drop-claimed", dropId, pid: winner });
+        return;
+      }
       this.dropClaims.set(dropId, pid);
       if (this.dropClaims.size > 4000) {
         // Light, not-critical-for-correctness cleanup, same spirit as

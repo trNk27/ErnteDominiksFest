@@ -1154,6 +1154,39 @@ const ITEM_TEX={};                    // Gegenstandsbildchen als Textur
 const drops=[];
 const DROP_S=.32, DROP_CAP=200, DROP_GRAV=22, DROP_DRAG=4;
 const PICK_R=1.2;                     // so nah muss man ran
+// Wie lange auf die Antwort des Servers gewartet wird, bevor der Anspruch auf
+// einen Drop noch einmal angemeldet wird. Siehe claimDrop() gleich darunter —
+// ohne diese Frist blieb ein Drop nach einer verschluckten Nachricht für immer
+// liegen.
+const CLAIM_TIMEOUT=2.5;
+// Einen Boden-Drop beim Server beanspruchen (Aufheben, Verkaufen an Manni,
+// Huhn frisst) — der entscheidet den Wettlauf und antwortet mit
+// 'drop-claimed'. Erst diese Antwort hebt wirklich auf.
+//
+// Hier steckte ein Fehler, der einen Gegenstand dauerhaft unaufhebbar machte:
+// _claiming wurde gesetzt und NIE zurückgenommen, und die Wache dagegen
+// verhinderte jeden zweiten Versuch. Blieb die Antwort aus, lag der Drop für
+// den Rest der Sitzung tot da — für alle anderen weiter aufhebbar, denn
+// _claiming ist rein lokal. Zwei Wege dorthin:
+//
+//   1. send() meldet false, wenn die Leitung nicht offen ist, und der
+//      Rückgabewert wurde nicht angesehen: die Nachricht war weg, die Wache
+//      stand trotzdem.
+//   2. Eine halb offene Leitung: readyState bleibt nach einem stillen
+//      Verbindungsabriss noch lange OPEN, send() meldet brav Erfolg, und beim
+//      Server kommt nichts an. Alles, worüber man in diesem Fenster läuft,
+//      war danach verloren — auch nach dem Wiederverbinden.
+//
+// Darum jetzt: nur beanspruchen, wenn die Nachricht wirklich hinausging, und
+// nach CLAIM_TIMEOUT ohne Antwort einfach noch einmal fragen. Doppelt vergeben
+// kann das nichts — der Server merkt sich den Gewinner je dropId und schickt
+// bei einer zweiten Anfrage dasselbe Ergebnis noch einmal (siehe den
+// drop-claim-Zweig in party/src/game-server.js).
+function claimDrop(d,reason){
+  if(d._claiming) return;
+  if(!send({t:'drop-claim',dropId:d.dropId,reason})) return;
+  d._claiming=true; d._claimReason=reason; d._claimT=CLAIM_TIMEOUT;
+}
 // Ein Würfel je Gegenstand, das Material geteilt: bei fünfzig herumliegenden
 // Steinen wären fünfzig gleiche Materialien reine Verschwendung.
 const dropMats=new Map();
@@ -1243,6 +1276,9 @@ function updateDrops(dt){
     const d=drops[i];
     d.t+=dt; d.age+=dt; d.spin+=dt*1.7;
     if(d.pickT>0) d.pickT-=dt;
+    // Antwort überfällig? Dann den Anspruch freigeben, damit die Bedingungen
+    // unten ihn gleich noch einmal anmelden (s. claimDrop oben).
+    if(d._claiming){ d._claimT-=dt; if(d._claimT<=0) d._claiming=false; }
 
     if(d.vx||d.vz){                      // waagerecht, mit Reibung
       const nx=d.x+d.vx*dt, nz=d.z+d.vz*dt;
@@ -1284,16 +1320,14 @@ function updateDrops(dt){
     // Verbunden: wie beim Kochtopf-Claim (s. updatePots) — nicht sofort
     // verkaufen, sonst könnten zwei Clients, die dasselbe Ruhen fast
     // zeitgleich erkennen, denselben Drop beide verkaufen (Geld aus dem
-    // Nichts). Erst beim Server anmelden, dann auf die Freigabe warten
-    // (drop._claiming verhindert erneutes Anmelden, solange die Antwort noch
-    // aussteht — rein lokal, s. p._claiming beim Topf-Claim dort).
+    // Nichts). Erst beim Server anmelden, dann auf die Freigabe warten —
+    // claimDrop() oben kümmert sich darum, dass genau einmal gefragt wird,
+    // aber eben auch, dass nach einer verschluckten Antwort noch einmal
+    // gefragt wird.
     if(d.rest&&PRICES[d.id]&&marketChar&&
        Math.hypot(d.x-marketChar.x,d.z-marketChar.z)<MARKET_R&&
        Math.abs(d.y-marketChar.y)<2.5){
-      if(isConnected()){
-        if(!d._claiming){ d._claiming=true; d._claimReason='sell'; send({t:'drop-claim',dropId:d.dropId,reason:'sell'}); }
-        continue;
-      }
+      if(isConnected()){ claimDrop(d,'sell'); continue; }
       const id=d.id, n=d.n;
       removeDrop(d);
       sellTo(id,n);
@@ -1304,7 +1338,7 @@ function updateDrops(dt){
     if(d.pickT<=0&&Math.hypot(d.x-player.x,d.z-player.z)<PICK_R&&
        Math.abs(d.y-player.y)<2.2&&!state.paused){
       if(isConnected()){
-        if(!d._claiming){ d._claiming=true; d._claimReason='pickup'; send({t:'drop-claim',dropId:d.dropId,reason:'pickup'}); }
+        claimDrop(d,'pickup');
       }else{
         const rest=give(d.id,d.n);
         if(rest<d.n){
@@ -2396,10 +2430,7 @@ function updateMobsOnline(dt){
       if(lure){
         const dx=lure.x-m.x, dz=lure.z-m.z, d=Math.hypot(dx,dz)||1;
         if(d<CHICKEN_EAT_R){
-          if(!lure._claiming){
-            lure._claiming=true; lure._claimReason='chicken';
-            send({t:'drop-claim',dropId:lure.dropId,reason:'chicken'});
-          }
+          claimDrop(lure,'chicken');
         }else{
           m.x+=dx/d*MOBS.chicken.speed*dt; m.z+=dz/d*MOBS.chicken.speed*dt;
         }
