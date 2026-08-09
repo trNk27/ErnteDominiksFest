@@ -111,14 +111,22 @@ const SND={
   step:()=>tone(90+Math.random()*30,.05,'triangle',.03),
   land:()=>tone(110,.07,'triangle',.05),
   fail:()=>tone(160,.15,'square',.06),
-  // Knaller: Rauschstoß fürs Krachen, zwei tiefe Sägezahntöne für den Wumms.
+  // Kurzer Krach fürs Zermalmen: Rauschstoß, zwei tiefe Sägezahntöne für den
+  // Wumms. Bleibt synthetisch — der Truck walzt im Dauerfeuer (smashCd), da
+  // würde sich ein langer Nachhall über sich selbst legen.
   boom:()=>{boomNoise(.28,.35);tone(65,.24,'sawtooth',.2);tone(42,.32,'sawtooth',.16,.04);},
+  // Der Knaller dagegen zündet einzeln und darf ausklingen: echtes Sample mit
+  // langem Nachhall, leicht zufällige Tonhöhe, damit zwei Explosionen kurz
+  // hintereinander nicht wie eine Kopie klingen. Ohne geladenes Sample fällt
+  // er auf denselben Rauschknall wie oben zurück.
+  explode:()=>playSample('explode',.55,.94+Math.random()*.14)||SND.boom(),
 };
 loadSample('dig','./block_break.wav');
 loadSample('pop','./item_pickupp.ogg');
 loadSample('punch','./punch.wav');
 loadSample('eat','./eating.wav');
 loadSample('dominik_break','./dominik_break.wav');
+loadSample('explode','./firecracker_explosion.wav');
 loadSample('benni1','./benni_scream1.wav');
 loadSample('benni2','./benni_scream2.wav');
 loadSample('benni3','./benni_scream3.wav');
@@ -1359,7 +1367,7 @@ function spawnShotRemote(id,x,y,z,vx,vy,vz,grav){
 // Block-Edit-Pfad laufen (setBlock + send('block',...)) — ein eigenes,
 // deutlich größeres Problem, hier bewusst ausgespart.
 function detonate(s){
-  SND.boom();
+  SND.explode();
   if(!s.mine) return;
   for(const m of mobs){
     const dx=m.x-s.x, dz=m.z-s.z, d=Math.hypot(dx,dz);
