@@ -323,22 +323,31 @@ const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05
 // Nur die sinnvollen Felder sichern; transiente Pro-Frame-Physik (vy,
 // onGround,wet,bob,stepT,atkCd,hurtT,invT,fallFrom) soll beim Laden neu
 // starten statt in einem seltsamen Zwischenzustand aufzutauchen.
-// Die Schlüssel tragen eine 2, seit die Welt einmal zurückgesetzt wurde
-// (Wurfweiten, Monstertruck, Skins — der Server hat dazu passend seinen
-// Speicherschlüssel auf "world2" gehoben, siehe STORAGE_KEY dort). Rucksack
-// und Standort fangen damit von vorn an, statt dass jemand mit vollen Taschen
-// in einer nagelneuen Welt aufwacht. Das Passwort (edf_pw) und der gesehene
-// Willkommensgruß (edf_seen) hängen nicht an der Welt und bleiben, wo sie sind.
+// Die Schlüssel tragen jetzt eine 3: die Welt wurde ein ZWEITES Mal
+// zurückgesetzt, diesmal für den Pagodengarten. Der Grund ist derselbe wie
+// beim ersten Mal (Wurfweiten, Monstertruck, Skins — damals von "world"/
+// "edf_*2" auf "world2"), nur zwingender: der Tempel legt Blöcke dorthin, wo
+// in der alten Welt offenes Gelände war. Ein gesetzter oder abgebauter Block
+// aus `edits` überlebt jede Neuerzeugung (siehe blockAt in shared/world.js) —
+// wer dort vorher gebaut hatte, fände seine Mauer sonst mitten im Tempel
+// wieder, und ein einmal abgebauter Block risse ein Loch in eine Tempelwand,
+// die es damals noch gar nicht gab. Der Server hebt dazu passend seinen
+// Speicherschlüssel auf "world3" (siehe STORAGE_KEY dort). Rucksack und
+// Standort fangen damit von vorn an, statt dass jemand mit vollen Taschen in
+// einer nagelneuen Welt aufwacht. Der alte Stand ist NICHT gelöscht, nur
+// liegengelassen: wer den Reset bereut, zeigt beide Schlüssel zurück. Das
+// Passwort (edf_pw) und der gesehene Willkommensgruß (edf_seen) hängen nicht
+// an der Welt und bleiben, wo sie sind.
 function savePersist(){
   try{
     const{x,y,z,yaw,pitch,hp,food,skins,skin}=player;
-    localStorage.setItem('edf_player2',JSON.stringify({x,y,z,yaw,pitch,hp,food,skins,skin}));
-    localStorage.setItem('edf_slots2',JSON.stringify(slots));
+    localStorage.setItem('edf_player3',JSON.stringify({x,y,z,yaw,pitch,hp,food,skins,skin}));
+    localStorage.setItem('edf_slots3',JSON.stringify(slots));
   }catch(e){}
 }
 function loadPersist(){
   try{
-    const p=JSON.parse(localStorage.getItem('edf_player2'));
+    const p=JSON.parse(localStorage.getItem('edf_player3'));
     if(p) Object.assign(player,p);
   }catch(e){}
   // Ein beschädigter oder älterer Speicherstand darf nie zu einem Index
@@ -349,7 +358,7 @@ function loadPersist(){
   if(!player.skins.includes(0)) player.skins.push(0);
   if(!Number.isInteger(player.skin)||!player.skins.includes(player.skin)) player.skin=0;
   try{
-    const s=JSON.parse(localStorage.getItem('edf_slots2'));
+    const s=JSON.parse(localStorage.getItem('edf_slots3'));
     if(Array.isArray(s)) for(let i=0;i<NSLOT;i++) slots[i]=s[i]||null;
   }catch(e){}
 }

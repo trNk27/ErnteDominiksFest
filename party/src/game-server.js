@@ -190,7 +190,15 @@ const MAX_PLAYERS = 4;
 // "Die Welt" section). The old blob is simply orphaned rather than deleted —
 // a Durable Object keeps it at the old key for free, so a bad surprise after
 // the reset can still be dug back out by pointing this constant back.
-const STORAGE_KEY = "world2";
+// Bumped again to "world3" for the pagoda garden, and this time the reset is
+// not a matter of taste but of geometry: the temple puts blocks where the old
+// world had open ground. Persisted `edits` win over freshly generated scenery
+// (see blockAt in shared/world.js), so a block someone had placed there would
+// now sit inside a temple wall, and one they had dug away would punch a hole
+// through a wall that did not exist when they dug it. Same orphan-don't-delete
+// treatment as before; the client bumps `edf_player3`/`edf_slots3` to match
+// (see savePersist in game.js).
+const STORAGE_KEY = "world3";
 // How long to wait after the last edit before writing to storage — avoids a
 // storage.put() per dig/place while someone is rapidly mining.
 const FLUSH_DEBOUNCE_MS = 2000;
