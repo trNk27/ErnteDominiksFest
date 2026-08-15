@@ -42,14 +42,18 @@ const ac=()=>{
     if(AC){_pd.forEach(([n,b])=>AC.decodeAudioData(b).then(d=>{SAMPLES[n]=d;}).catch(()=>{}));_pd.length=0;}
   } return AC;
 };
-function tone(f,d,type='sine',v=.1,w=0){
+// dest: optionaler Anschlusspunkt statt c.destination — damit lässt sich ein
+// Oszillator-Chirp (s. SND.craft/mobDie/chest unten) wahlweise durch eine
+// Positionston-Kette schicken (s. spatialize()), ohne dass jeder Aufrufer
+// selbst einen Gain-Knoten verkabeln müsste. Ohne dest wie eh und je.
+function tone(f,d,type='sine',v=.1,w=0,dest=null){
   const c=ac(); if(!c) return;
   if(c.state==='suspended') c.resume();
   const o=c.createOscillator(), g=c.createGain();
   o.type=type; o.frequency.value=f;
   g.gain.setValueAtTime(v,c.currentTime+w);
   g.gain.exponentialRampToValueAtTime(.001,c.currentTime+w+d);
-  o.connect(g).connect(c.destination);
+  o.connect(g).connect(dest||c.destination);
   o.start(c.currentTime+w); o.stop(c.currentTime+w+d+.02);
 }
 // rate verstellt die Wiedergabegeschwindigkeit mit — tiefer klingt ein Schrei
@@ -62,6 +66,73 @@ function playSample(name,vol=1,rate=1){
   src.buffer=SAMPLES[name]; g.gain.value=vol; src.playbackRate.value=rate;
   src.connect(g).connect(c.destination); src.start(); return true;
 }
+// Radius, ab dem ein Positionston gar nicht mehr gespielt wird. Deutlich unter
+// der Fern-/Nahsicht des Renderers (125 bzw. 78, s. shared/world.js) gewählt:
+// was man ohnehin nicht mehr sieht (oder nur noch als Silhouette am Nebelrand),
+// muss man auch nicht mehr hören — sonst würde aus einem vollen Dorf ein Brei
+// aus fernem Hacken und Truhenklappern, obwohl gerade nichts davon zu sehen ist.
+const SFX_R=48;
+// Baut die kleine Audiokette Gain(Entfernung)→Tiefpass→Panner→Ausgang für eine
+// Weltposition, relativ zum HÖRER (den Ohren des Spielers, nicht der Kamera —
+// player.x/player.viewY+EYE/player.z, exakt wie eyePos.set() oben bei
+// updateEyeRay nutzt). null außerhalb SFX_R: dann bleibt es still, statt in
+// ein fernes Grundrauschen zu verschwimmen (s.o.). Der Rückgabewert ist der
+// EINSTIEGSPUNKT der Kette (ein Gain-Knoten) — Aufrufer verbinden ihre eigene
+// Quelle (BufferSource oder ein tone()-Oszillator) dort hinein, alles Weitere
+// (Dämpfung/Muffelung/Seite) übernimmt die Kette von selbst.
+function spatialize(x,y,z){
+  const c=ac(); if(!c) return null;
+  const lx=player.x, ly=player.viewY+EYE, lz=player.z;
+  const dx=x-lx, dy=y-ly, dz=z-lz, d=Math.hypot(dx,dy,dz);
+  if(d>=SFX_R) return null;
+  const g=c.createGain();
+  // Quadratisch statt linear abklingen lassen: in der Nähe bleibt es kräftig
+  // hörbar, erst das letzte Stück zum Rand hin verblasst spürbar — eine
+  // lineare Rampe wirkt am Rand dagegen wie ein harter Schnitt.
+  g.gain.value=(1-d/SFX_R)**2;
+  let node=g;
+  // Tiefpass gegen die Entfernung: billige Muffelung (ein Biquad-Filter mehr
+  // kostet praktisch nichts), fällt aber ohne Bedauern weg, falls der
+  // Browser createBiquadFilter nicht kennt — Dämpfung und Panning bleiben
+  // die eigentliche Anforderung, das hier ist nur die Zugabe.
+  if(c.createBiquadFilter){
+    const f=c.createBiquadFilter();
+    f.type='lowpass'; f.frequency.value=800+3200*(1-d/SFX_R);
+    node.connect(f); node=f;
+  }
+  // Panning: der Vektor Hörer→Quelle, in die Blickrichtung des Spielers
+  // gedreht (player.yaw). "Rechts" ist dieselbe Achse, die updatePlayer für
+  // KeyD (Strafe rechts, mx=1) rechnet: dx=cos(yaw), dz=-sin(yaw) (siehe dort
+  // — bei mx=1,mz=0 wird dx=(mx*cos+mz*sin)*sp=cos(yaw)*sp). Die Probe, mit
+  // der die Formel gegengerechnet wurde: yaw=0 blickt Richtung -z (s. eyeDir
+  // = (-sin(yaw),·,-cos(yaw))), eine Quelle genau im Osten liegt bei
+  // dx=+E,dz=0 → sideways=dx*cos0-dz*sin0=+E>0. Nach Norden blickend liegt
+  // Osten rechts — ein positiver StereoPanner-Wert ist rechts — passt also.
+  // Nach Westen (dx=-E) ergibt sich sideways=-E<0, links, ebenfalls richtig.
+  const horiz=Math.hypot(dx,dz);
+  if(horiz>1e-4&&c.createStereoPanner){
+    const sideways=dx*Math.cos(player.yaw)-dz*Math.sin(player.yaw);
+    const p=c.createStereoPanner();
+    p.pan.value=clamp(sideways/horiz,-1,1);
+    node.connect(p); node=p;
+  }
+  node.connect(c.destination);
+  return {node:g,d};
+}
+// Positionierte Variante von playSample: dieselben Parameter, aber statt fest
+// auf c.destination läuft die Quelle über spatialize() — Entfernung, Muffelung
+// und Seite kommen von dort, vol bleibt die Basis-Lautstärke des Samples wie
+// bei playSample. false sowohl außerhalb SFX_R als auch bei fehlendem Sample,
+// damit Aufrufer (s. SFX unten) in beiden Fällen gleich auf eine Tonersatz-
+// Kaskade (tone()) ausweichen können.
+function playSampleAt(name,x,y,z,vol=1,rate=1){
+  const c=ac(); if(!c||!SAMPLES[name]) return false;
+  const sp=spatialize(x,y,z); if(!sp) return false;
+  if(c.state==='suspended') c.resume();
+  const src=c.createBufferSource(),g=c.createGain();
+  src.buffer=SAMPLES[name]; g.gain.value=vol; src.playbackRate.value=rate;
+  src.connect(g).connect(sp.node); src.start(); return true;
+}
 async function loadSample(name,url){
   try{ const buf=await fetch(url).then(r=>r.arrayBuffer());
     if(AC) SAMPLES[name]=await AC.decodeAudioData(buf); else _pd.push([name,buf]);
@@ -70,7 +141,8 @@ async function loadSample(name,url){
 // Kein Sample fürs Knallen — ein weißes Rauschen reicht, einmal gebaut und
 // dann immer wieder abgespielt, statt es jedes Mal neu auszuwürfeln.
 let _boomBuf=null;
-function boomNoise(dur,vol){
+// dest wie bei tone() oben — für SND.boom() über eine spatialize()-Kette.
+function boomNoise(dur,vol,dest=null){
   const c=ac(); if(!c) return;
   if(c.state==='suspended') c.resume();
   if(!_boomBuf){
@@ -82,19 +154,23 @@ function boomNoise(dur,vol){
   src.buffer=_boomBuf;
   g.gain.setValueAtTime(vol,c.currentTime);
   g.gain.exponentialRampToValueAtTime(.001,c.currentTime+dur);
-  src.connect(g).connect(c.destination); src.start();
+  src.connect(g).connect(dest||c.destination); src.start();
 }
 const SND={
   tap:()=>tone(620,.05,'square',.05),
   dig:()=>playSample('dig',.7)||tone(150+Math.random()*70,.05,'square',.045),
   pop:()=>{tone(523,.07,'triangle',.08);tone(784,.09,'triangle',.08,.06);},
-  place:()=>tone(240,.07,'square',.06),
-  craft:()=>{tone(392,.09,'square',.08);tone(587,.09,'square',.08,.08);tone(784,.14,'square',.08,.16);},
+  // dest (hier und bei craft/mobDie/chest/boom unten): optionale
+  // spatialize()-Kette statt c.destination, s. tone()-Kommentar oben — damit
+  // können SFX unten (s. Ende dieses Abschnitts) dieselben Chirps entfernt
+  // und geschwind statt fest zentriert abspielen, ohne sie zu verdoppeln.
+  place:(dest)=>tone(240,.07,'square',.06,0,dest),
+  craft:(dest)=>{tone(392,.09,'square',.08,0,dest);tone(587,.09,'square',.08,.08,dest);tone(784,.14,'square',.08,.16,dest);},
   eat:()=>playSample('eat',.7)||(tone(300,.08,'triangle',.07),tone(240,.1,'triangle',.06,.09)),
   swing:()=>tone(300,.07,'sawtooth',.05),
   hit:()=>{tone(140,.09,'square',.1);tone(90,.12,'square',.08,.05);},
   hurt:()=>{tone(180,.2,'sawtooth',.13);tone(120,.25,'sawtooth',.1,.1);},
-  mobDie:()=>{tone(400,.1,'square',.08);tone(200,.18,'square',.07,.09);},
+  mobDie:(dest)=>{tone(400,.1,'square',.08,0,dest);tone(200,.18,'square',.07,.09,dest);},
   // Ein kurzes Gackern-Zwitschern, wenn ein Huhn ein Ei legt (siehe
   // updateChicken/stepChicken) — zwei helle, schnell aufeinander folgende
   // Töne statt eines echten Sample, genau wie pop/craft oben.
@@ -104,7 +180,7 @@ const SND={
   // dieselben drei Oszillatoren, nur tiefer und länger gehalten.
   bloodMoon:()=>{tone(70,1.6,'sawtooth',.11);tone(52,2,'sine',.1,.3);tone(38,2.6,'sawtooth',.08,.6);},
   dawn:()=>{tone(523,.14,'triangle',.08);tone(659,.14,'triangle',.08,.12);tone(784,.2,'triangle',.08,.24);},
-  chest:()=>{tone(440,.09,'triangle',.08);tone(660,.12,'triangle',.08,.08);},
+  chest:(dest)=>{tone(440,.09,'triangle',.08,0,dest);tone(660,.12,'triangle',.08,.08,dest);},
   book:()=>{tone(659,.12,'triangle',.09);tone(988,.18,'triangle',.09,.11);},
   win:()=>{tone(523,.14,'triangle',.1);tone(659,.14,'triangle',.1,.14);
            tone(784,.14,'triangle',.1,.28);tone(1046,.3,'triangle',.1,.42);},
@@ -114,7 +190,7 @@ const SND={
   // Kurzer Krach fürs Zermalmen: Rauschstoß, zwei tiefe Sägezahntöne für den
   // Wumms. Bleibt synthetisch — der Truck walzt im Dauerfeuer (smashCd), da
   // würde sich ein langer Nachhall über sich selbst legen.
-  boom:()=>{boomNoise(.28,.35);tone(65,.24,'sawtooth',.2);tone(42,.32,'sawtooth',.16,.04);},
+  boom:(dest)=>{boomNoise(.28,.35,dest);tone(65,.24,'sawtooth',.2,0,dest);tone(42,.32,'sawtooth',.16,.04,dest);},
   // Der Knaller dagegen zündet einzeln und darf ausklingen: echtes Sample mit
   // langem Nachhall, leicht zufällige Tonhöhe, damit zwei Explosionen kurz
   // hintereinander nicht wie eine Kopie klingen. Ohne geladenes Sample fällt
@@ -131,6 +207,88 @@ loadSample('benni1','./benni_scream1.wav');
 loadSample('benni2','./benni_scream2.wav');
 loadSample('benni3','./benni_scream3.wav');
 for(let i=1;i<=11;i++) loadSample('bird'+i,'./bird'+i+'.ogg');
+
+// ------------------------------------------------------------------ Positionston (SFX)
+// Namentliche Gegenstücke zu SND, aber für eine WELTPOSITION statt den eigenen
+// Bildschirm: was hier steht, hören auch andere Spieler (s. on('sfx',...)
+// weiter unten). Sample-Sounds bekommen ihr Panning über playSampleAt; für
+// die rein synthetischen Klänge (place/craft/mobDie/chest) gibt es kein
+// Sample zum Verschieben — hier bekommt tone() über SND.xxx(sp.node) einfach
+// die spatialize()-Kette als Ziel mit. Reines Weglassen der Position wäre
+// schlechter als nur das halbe Bild (Panning fehlt, Entfernung bliebe): ein
+// Handwerker drei Blöcke entfernt dürfte nicht genauso laut plingen wie einer
+// am anderen Dorfende. explode/punch/dig/eat/sling haben ein Sample UND einen
+// Tonersatz — beide laufen hier durch dieselbe Kette, mit Fallback wie bei SND.
+const SFX={
+  dig:(x,y,z,rate=1)=>{
+    const sp=spatialize(x,y,z); if(!sp) return;
+    if(!playSampleAt('dig',x,y,z,.7,rate)) tone(150+Math.random()*70,.05,'square',.045,0,sp.node);
+  },
+  place:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.place(sp.node); },
+  eat:(x,y,z,rate=1)=>{
+    const sp=spatialize(x,y,z); if(!sp) return;
+    if(!playSampleAt('eat',x,y,z,.7,rate)){ tone(300,.08,'triangle',.07,0,sp.node); tone(240,.1,'triangle',.06,.09,sp.node); }
+  },
+  craft:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.craft(sp.node); },
+  explode:(x,y,z,rate=1)=>{
+    const sp=spatialize(x,y,z); if(!sp) return;
+    if(!playSampleAt('explode',x,y,z,.55,rate)) SND.boom(sp.node);
+  },
+  punch:(x,y,z,rate=1)=>{
+    const sp=spatialize(x,y,z); if(!sp) return;
+    playSampleAt('punch',x,y,z,.6,rate);
+  },
+  mobDie:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.mobDie(sp.node); },
+  sling:(x,y,z,rate=1)=>{
+    const sp=spatialize(x,y,z); if(!sp) return;
+    playSampleAt('dominik_break',x,y,z,.6,rate);
+  },
+  chest:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.chest(sp.node); },
+  // Der Kochtopf ist fertig — klanglich derselbe Chirp wie ein Handwerks-
+  // Ergebnis (s. finishCook), aber eine eigene id: "etwas wurde gebaut" und
+  // "ein Topf ist fertig" sind für einen Zuhörer zwei verschiedene Ereignisse,
+  // auch wenn sie zufällig gleich klingen.
+  cook:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.craft(sp.node); },
+};
+// Lokal exakt der Aufruf, der vorher direkt am jeweiligen Call-Site stand —
+// unpositioniert, volle Lautstärke. Wer selbst gräbt, baut oder isst, soll
+// sich dadurch nicht plötzlich leiser oder seitlich versetzt anhören, nur
+// weil jetzt auch andere zuhören (s. emitSfx unten). mobDie fehlt hier
+// absichtlich: der Kill-Ton kommt bereits vollständig synchron über die
+// bestehende 'mob-dead'-Serverantwort (s. on('mob-dead',...)) — ein
+// zusätzlicher 'sfx'-Broadcast dafür wäre nur ein zweites, überflüssiges Echo.
+const SFX_LOCAL={
+  dig:()=>SND.dig(),
+  place:()=>SND.place(),
+  eat:()=>SND.eat(),
+  craft:()=>SND.craft(),
+  explode:(rate)=>playSample('explode',.55,rate)||SND.boom(),
+  punch:()=>playSample('punch',.6),
+  sling:(rate)=>playSample('dominik_break',.6,rate),
+  chest:()=>SND.chest(),
+  cook:()=>SND.craft(),
+};
+// Drossel je Sound-id, nicht je Sender oder Ort: Abbauen allein feuert dig()
+// zig Mal pro Sekunde (s. updateMining), multipliziert mit jedem Zuhörer im
+// Raum. Sie sitzt bewusst HIER beim Sender statt beim Empfänger — ein
+// Empfänger kann ein Dauerfeuer derselben id nicht von mehreren echten,
+// eng getakteten Ereignissen unterscheiden, und müsste die Drosselung sonst
+// pro Client wiederholen. Einmal an der Quelle ist eindeutig und billiger.
+const _sfxLastSent={};
+const SFX_THROTTLE_MS=80;
+// Spielt lokal wie eh und je (SFX_LOCAL) und meldet die id+Position — sofern
+// verbunden und nicht gerade gedrosselt — an alle anderen (s. on('sfx',...)
+// unten, Relay s. party/src/game-server.js msg.t==="sfx", modelliert auf
+// "shot"). rate wandert mit, damit z.B. die zufällige Tonhöhe der Schleuder
+// bei Sender und Empfänger gleich klingt statt bei jedem neu ausgewürfelt.
+function emitSfx(name,x,y,z,rate=1){
+  SFX_LOCAL[name]?.(rate);
+  if(!isConnected()) return;
+  const now=performance.now();
+  if(now-(_sfxLastSent[name]||0)<SFX_THROTTLE_MS) return;
+  _sfxLastSent[name]=now;
+  send({t:'sfx',n:name,x,y,z,r:rate});
+}
 
 // ------------------------------------------------------------------ Welt-Eckdaten
 // ------------------------------------------------------------------ Welt
@@ -982,7 +1140,7 @@ function till(cell){
   if(t!=='grass'&&t!=='dirt') return false;
   if(blockAt(cell.x,cell.y+1,cell.z)) return false;
   setBlock(cell.x,cell.y,cell.z,'till');
-  SND.dig();
+  emitSfx('dig',cell.x,cell.y,cell.z);
   return true;
 }
 function plantSeed(cell,it){
@@ -997,7 +1155,7 @@ function plantSeed(cell,it){
   growing.set(K(x,gy,z),{to:it.seed.ripe,at});
   if(isConnected()) send({t:'plant',x,y:gy,z,to:it.seed.ripe,at});
   state.planted++;
-  SND.place();
+  emitSfx('place',x,gy,z);
   return true;
 }
 function updateGrow(){
@@ -1425,7 +1583,20 @@ function spawnShotRemote(id,x,y,z,vx,vy,vz,grav){
 // Block-Edit-Pfad laufen (setBlock + send('block',...)) — ein eigenes,
 // deutlich größeres Problem, hier bewusst ausgespart.
 function detonate(s){
-  SND.explode();
+  // Eigener Knaller: lokal wie eh und je (voll, zentriert) UND — sofern
+  // verbunden — als 'sfx' gemeldet, damit andere ihn positional hören (s.
+  // emitSfx). Ein gespiegelter Knaller (s.mine=false, "macht trotzdem Krach"
+  // s.o.) bekommt seinen Ton NICHT mehr hier: der käme sonst doppelt an —
+  // einmal unpositioniert hier, einmal positional über die eingehende
+  // 'sfx'-Nachricht des Schützen (s. on('sfx',...) unten). Der eigene
+  // Simulationslauf jedes Clients bleibt trotzdem synchron genug, dass beide
+  // Knalle im selben Bild fallen; das 'sfx' kommt nur einmal statt geloopt.
+  // Die leicht ausgewürfelte Tonhöhe muss hier ausgewürfelt und MITGESCHICKT
+  // werden, nicht erst beim Abspielen: sonst klänge derselbe Knall bei jedem
+  // Zuhörer anders, und schlimmer, der Sender selbst verlöre sie ganz (rate
+  // fiele auf 1 zurück). Zwei Knaller kurz hintereinander sollen sich
+  // unterscheiden — für alle im Raum gleich, siehe SND.explode.
+  if(s.mine) emitSfx('explode',s.x,s.y,s.z,.94+Math.random()*.14);
   if(!s.mine) return;
   for(const m of mobs){
     const dx=m.x-s.x, dz=m.z-s.z, d=Math.hypot(dx,dz);
@@ -1684,7 +1855,10 @@ function finishCook(k,p){
   if(r&&known.has(r.id)){
     out(r.out[0],r.out[1]);
     state.crafted++;
-    SND.craft();
+    // 'cook' statt 'craft': ruft online nur der EINE Gewinner des pot-grant-
+    // Wettlaufs auf (s. Kommentar unten), emitSfx meldet also automatisch
+    // genau einmal an alle anderen — kein Sonderfall nötig.
+    emitSfx('cook',x,y,z);
     const pr=PRICES[r.out[0]];
     toast(ITEMS[r.out[0]].ic+' '+ITEMS[r.out[0]].nm+' ist fertig.'+
       (pr?' — '+pr+' € bei Manni.':''),'good',2800);
@@ -2619,7 +2793,9 @@ function updateMining(dt){
   const k=K(target.cell.x,target.cell.y,target.cell.z);
   if(k!==mineKey){ mineKey=k; mineT=0; }
   mineT+=dt*breakSpeed(t);
-  if(mineT%.22<dt*breakSpeed(t)) SND.dig();
+  // Feuert bei zäheren Blöcken mehrfach pro Sekunde — emitSfx drosselt das
+  // Netzwerk-Echo selbst (s. SFX_THROTTLE_MS), lokal bleibt jeder Tick hörbar.
+  if(mineT%.22<dt*breakSpeed(t)) emitSfx('dig',target.cell.x,target.cell.y,target.cell.z);
   bar.style.display='block';
   bar.firstElementChild.style.width=clamp(mineT/b.hard,0,1)*100+'%';
   showCrack(target.cell,mineT/b.hard,t);
@@ -2726,7 +2902,9 @@ function useRight(){
     const sp=it.sp??20, lift=it.lift??0;   // flach und schnell, eine Schleuder ist kein Wurf (s. ITEMS)
     spawnShot(it.ammo,eyePos.x,eyePos.y,eyePos.z,eyeDir.x*sp,eyeDir.y*sp+lift,eyeDir.z*sp,
       {dmg:it.dmg,kb:it.kb,grav:it.grav});
-    playSample('dominik_break',.6,rnd(1.8,2.2));   // ein Dominik quietscht anders als er zerplatzt
+    // ein Dominik quietscht anders als er zerplatzt — derselbe Zufallswert
+    // geht lokal UND (falls verbunden) an alle anderen, s. emitSfx.
+    emitSfx('sling',eyePos.x,eyePos.y,eyePos.z,rnd(1.8,2.2));
     updateHUD();
     return;
   }
@@ -2745,7 +2923,7 @@ function useRight(){
     if(player.food>=player.maxfood&&player.hp>=player.maxhp){ toast('😋 Du bist satt.','',1200); return; }
     player.food=clamp(player.food+it.food,0,player.maxfood);
     if(id==='soup') player.hp=player.maxhp;
-    consumeHeld(); SND.eat(); updateHUD();
+    consumeHeld(); emitSfx('eat',player.x,player.y+1,player.z); updateHUD();
     return;
   }
   // 4b. Fahrzeug abstellen. Vor dem Blocksetzen, weil Boot/Brett/Schirm keine
@@ -2760,7 +2938,7 @@ function useRight(){
     const p=target.place;
     if(!canPlaceAt(p.x,p.y,p.z)||!blockAt(p.x,p.y-1,p.z)) return;
     torches.push({x:p.x,y:p.y,z:p.z});
-    emitTorches(); consumeHeld(); SND.place(); updateHUD();
+    emitTorches(); consumeHeld(); emitSfx('place',p.x,p.y,p.z); updateHUD();
     if(isConnected()) send({t:'torch',x:p.x,y:p.y,z:p.z});
     return;
   }
@@ -2773,7 +2951,7 @@ function useRight(){
     if(signs.has(key)) return;               // hier steht schon eines
     signs.set(key,{text:''});
     ensureSignLabel(p.x,p.y,p.z);
-    consumeHeld(); SND.place(); updateHUD();
+    consumeHeld(); emitSfx('place',p.x,p.y,p.z); updateHUD();
     if(isConnected()) send({t:'sign-place',x:p.x,y:p.y,z:p.z});
     openSignEditor(p.x,p.y,p.z);
     return;
@@ -2794,7 +2972,7 @@ function useRight(){
       if(!chests.has(k)) chests.set(k,{items:Array(24).fill(null),opened:false});
     }
     consumeHeld(); state.placed++;
-    SND.place(); updateHUD();
+    emitSfx('place',p.x,p.y,p.z); updateHUD();
   }
 }
 // hitMob ist der einzige Ort, der weiß, ob wir online sind oder nicht — jeder
@@ -2807,7 +2985,7 @@ function hitMob(m,dmg,kb,dx,dz){
   // tatsächliche Änderung kommt einen Tick später über mob-state/mob-dead
   // zurück (siehe die Handler weiter unten). Eine bewusste, kleine
   // Latenz, kein Bug.
-  if(isConnected()){ playSample('punch',.6); send({t:'mob-hit',id:m.id,dmg,kx,kz}); return; }
+  if(isConnected()){ emitSfx('punch',m.x,m.y+.5,m.z); send({t:'mob-hit',id:m.id,dmg,kx,kz}); return; }
   damageMob(m,dmg,kx,kz);
 }
 function attack(){
@@ -2853,7 +3031,7 @@ function openChest(cell){
   if(!c.opened){ c.opened=true; state.chests++; }
   openChestCell=cell;
   panel='chest';
-  SND.chest();
+  emitSfx('chest',cell.x,cell.y,cell.z);
   renderChest();
 }
 // Zweiseitiges Fenster: 24 feste Truhenfächer oben, das eigene Inventar
@@ -3250,7 +3428,7 @@ function craftFromGrid(){
   for(let i=0;i<9;i++){ const s=grid[i]; if(s&&--s.n<=0) grid[i]=null; }
   giveOrDrop(r.out[0],r.out[1]);
   state.crafted++;
-  SND.craft();
+  emitSfx('craft',player.x,player.y+1,player.z);
   const fresh=!known.has(r.id);
   // Phase 4b: known ist team-weit — nur beim ECHTEN Erstfund gibt es etwas zu
   // verbreiten (sonst würde jedes weitere Craften desselben Rezepts unnötig
@@ -4389,7 +4567,11 @@ on('mob-state',msg=>{
 // spawnt sie": das wäre nicht deterministisch und ließe sich nicht clientseitig
 // nachprüfen.
 on('mob-dead',msg=>{
-  SND.mobDie(); state.killed++;
+  // Kommt schon als Server-Broadcast an ALLE (auch den Schützen selbst) —
+  // kein zusätzlicher emitSfx nötig, s. Kommentar bei SFX_LOCAL oben. Direkt
+  // positional statt SND.mobDie(): der Tod hat eine echte Weltposition, und
+  // wer weit weg steht (mehrere Spieler, ein Benni), soll ihn leiser hören.
+  SFX.mobDie(msg.x,msg.y,msg.z); state.killed++;
   if(msg.killerPid===getPid()&&msg.loot)
     spawnDrop(msg.loot.id,msg.loot.n,msg.x,msg.y+.5,msg.z,rnd(-1,1),1.8,rnd(-1,1));
   removeMob(msg.id);
@@ -4558,6 +4740,19 @@ on('drop-spawn',msg=>{
 // bekäme jeder Mitspieler für jedes Geschoss dieselbe Flugbahn zu sehen.
 on('shot',msg=>{
   spawnShotRemote(msg.id,msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.vz,msg.grav);
+});
+// Ein von einem anderen Client verursachtes SFX (s. emitSfx/SFX oben) —
+// rein kosmetisch und unarbitriert, genau wie 'shot' direkt darüber (Relay
+// s. party/src/game-server.js msg.t==="sfx"). Unbekannte ids ODER kaputte
+// Koordinaten werden verworfen statt einen Fehler zu werfen: ein gefälschtes
+// 'sfx' kann ohnehin höchstens einen falschen Ton auslösen, nie Schaden oder
+// Beute (s. Server-Kommentar dort).
+on('sfx',msg=>{
+  const fn=SFX[msg.n];
+  if(!fn) return;
+  if(!Number.isFinite(msg.x)||!Number.isFinite(msg.y)||!Number.isFinite(msg.z)) return;
+  const rate=Number.isFinite(msg.r)?msg.r:1;
+  fn(msg.x,msg.y,msg.z,rate);
 });
 // Der Server bestimmt hier EINMAL den Gewinner des Claim-Wettlaufs um einen
 // Boden-Drop (s. updateDrops: sell/pickup melden sich dort per 'drop-claim'

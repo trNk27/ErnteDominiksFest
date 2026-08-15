@@ -156,6 +156,20 @@
 //     THIS particular roll is the server's job: with every connected client
 //     receiving the same `mob-dead`, only one of them may act on it), and
 //     `killerPid` naming that one client.
+// Positional SFX (this revision) adds a purely cosmetic `sfx` relay:
+//   - `sfx` (client -> server -> everyone else): fired for a short, fixed
+//     list of player-caused noises (dig/place/eat/craft/explode/punch/
+//     mobDie/sling/chest/cook — see game.js's SFX/emitSfx) that used to play
+//     locally only. Modelled exactly on `shot` above: a plain, unarbitrated
+//     relay with input validation (`n` a known-shaped, length-capped short
+//     string; `x`/`y`/`z`/optional `r` finite numbers) and nothing stored or
+//     persisted. Broadcast to everyone EXCEPT the sender, who already played
+//     it locally, unpositioned, the moment it happened (see emitSfx) — remote
+//     clients hear it positionally instead (distance + panning, see
+//     playSampleAt in game.js) instead of not at all. The worst a forged or
+//     duplicated `sfx` can do is make a wrong noise somewhere in the world —
+//     there is no damage, loot, or shared state riding on it, unlike
+//     `mob-hit`/`shot`.
 
 import { DurableObject } from "cloudflare:workers";
 
@@ -1513,6 +1527,16 @@ export class GameServer extends DurableObject {
    *     exclusively `mob-hit`'s job, arbitrated exactly as above — a forged
    *     or duplicated `shot` can spawn phantom visuals but can never itself
    *     land a hit or grant loot.
+   *   - `sfx` (Positional SFX, see the class-level comment): a plain,
+   *     unarbitrated relay of one of a short, fixed list of player-caused
+   *     noises (game.js's SFX table), modelled exactly on `shot` just above.
+   *     Validates `n` (a string, non-empty, length-capped — same "type-check,
+   *     no allowlist needed" treatment `shot`'s own `id` gets) and
+   *     `x`/`y`/`z`/optional `r` (finite numbers), then broadcasts to
+   *     everyone except the sender ([connId], wie bei `shot`). Nichts wird
+   *     gespeichert, nichts arbitriert — ein gefälschtes oder dupliziertes
+   *     `sfx` kann höchstens einen falschen Ton irgendwo in der Welt
+   *     auslösen, nie Schaden oder Beute.
    * @param {string | ArrayBuffer} message
    * @param {string} connId
    */
@@ -2071,6 +2095,18 @@ export class GameServer extends DurableObject {
       const nums = [x, y, z, vx, vy, vz, grav];
       if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return;
       this._broadcast({ t: "shot", id, x, y, z, vx, vy, vz, grav }, [connId]);
+    } else if (msg.t === "sfx") {
+      // Purely cosmetic relay, modelled exactly on `shot` above — see the
+      // class-level comment and the JSDoc above _onMessage. `n` names one of
+      // a fixed, short list of sound ids (game.js's SFX table); like `shot`'s
+      // own `id`, this is a type/length check, not an allowlist lookup — the
+      // server doesn't need to know the actual sound names to relay safely.
+      const { n, x, y, z, r } = msg;
+      if (typeof n !== "string" || !n || n.length > 16) return;
+      const nums = [x, y, z];
+      if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return;
+      if (r !== undefined && (typeof r !== "number" || !Number.isFinite(r))) return;
+      this._broadcast({ t: "sfx", n, x, y, z, r: r ?? 1 }, [connId]);
     }
   }
 
