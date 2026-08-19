@@ -470,6 +470,12 @@
      ein schlichtes "#btnExit" wäre schwächer und der Knopf stünde immer da. */
   #tbtns #btnExit{display:none}
   body.riding #tbtns #btnExit{display:flex}
+  /* Der Hundeknopf gehört zum LSDominik-Rausch und zeigt sich nur, solange er
+     läuft (body.tripping, gesetzt in updateTrip) — genau wie der
+     Aussteigen-Knopf nur beim Fahren da ist. Am Schreibtisch tut es die
+     Taste R, am Finger gibt es keine. */
+  #tbtns #btnDog{display:none}
+  body.tripping #tbtns #btnDog{display:flex;border-color:#ffd76a}
   /* Am Finger bedient darf die Leiste ruhig etwas größer sein — und die
      Herzen rutschen entsprechend höher, damit sie nicht darunterliegen. */
   /* Neun Fächer plus acht Fugen müssen nebeneinander auf den Bildschirm
@@ -540,6 +546,7 @@
     <div id="stick"><i></i></div>
     <div id="tbtns">
       <button id="btnExit" title="Aussteigen (F)">🚪</button>
+      <button id="btnDog" title="Hund werfen (R)">🐕</button>
       <button id="btnDrop" title="Wegwerfen (Q)">🗑️</button>
       <button id="btnDive" title="Abtauchen / Schleichen">⤓</button>
       <button id="btnJump" title="Springen">⤒</button>

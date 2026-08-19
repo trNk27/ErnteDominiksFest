@@ -208,6 +208,7 @@ loadSample('punch','./punch.wav');
 loadSample('eat','./eating.wav');
 loadSample('dominik_break','./dominik_break.wav');
 loadSample('explode','./firecracker_explosion.wav');
+loadSample('bark','./dog_bark.wav');     // die explodierenden Hunde, s. throwDog/dogBoom
 loadSample('benni1','./benni_scream1.wav');
 loadSample('benni2','./benni_scream2.wav');
 loadSample('benni3','./benni_scream3.wav');
@@ -249,6 +250,10 @@ const SFX={
     playSampleAt('dominik_break',x,y,z,.6,rate);
   },
   chest:(x,y,z)=>{ const sp=spatialize(x,y,z); if(sp) SND.chest(sp.node); },
+  // Das Bellen der geworfenen Hunde. Steht bewusst in SFX und nicht nur in
+  // SND: ein Hund, den jemand anderes wirft, soll aus der Richtung bellen,
+  // in der er geworfen wurde — es ist der auffälligste Ton im ganzen Spiel.
+  bark:(x,y,z,rate=1)=>{ playSampleAt('bark',x,y,z,.85,rate); },
   // Der Kochtopf ist fertig — klanglich derselbe Chirp wie ein Handwerks-
   // Ergebnis (s. finishCook), aber eine eigene id: "etwas wurde gebaut" und
   // "ein Topf ist fertig" sind für einen Zuhörer zwei verschiedene Ereignisse,
@@ -272,6 +277,7 @@ const SFX_LOCAL={
   sling:(rate)=>playSample('dominik_break',.6,rate),
   chest:()=>SND.chest(),
   cook:()=>SND.craft(),
+  bark:(rate)=>playSample('bark',.85,rate),
 };
 // Drossel je Sound-id, nicht je Sender oder Ort: Abbauen allein feuert dig()
 // zig Mal pro Sekunde (s. updateMining), multipliziert mit jedem Zuhörer im
@@ -318,6 +324,10 @@ const state={t:0,day:1,dayT:.06,night:false,paused:true,started:false,
 const player={x:0,z:18,y:0,viewY:0,vy:0,onGround:true,wet:false,yaw:0,pitch:-.05,
   hp:20,maxhp:20,food:20,maxfood:20,regenT:0,starveT:0,
   bob:0,stepT:0,atkCd:0,hurtT:0,invT:0,fallFrom:0,sel:0,
+  // Der LSDominik-Rausch: Restzeit in Sekunden und die Abklingzeit des
+  // Hundewurfs. Beide sind bewusst NICHT in savePersist — ein Rausch soll
+  // einen Neustart nicht überleben (s. startTrip/updateTrip).
+  trip:0, dogCd:0,
   // Besitz und Wahl der Skins von Manni (siehe SKINS) — gehören zum
   // Spielerzustand, NICHT zu slots: ein Skin ist kein Gegenstand, der aus
   // dem Rucksack fallen oder weggeworfen werden könnte. Index 0 (Standard)
@@ -1717,7 +1727,7 @@ function updateShots(dt){
       s.fuse-=dt;
       if(s.fuse<=0){ detonate(s); removeShot(s); continue; }
     }
-    if(s.life<=0){ removeShot(s); continue; }
+    if(s.life<=0){ if(s.dog) dogBoom(s); removeShot(s); continue; }
     s.vy-=DROP_GRAV*s.grav*dt;          // keine Reibung — es fliegt, es rollt nicht; grav s. ITEMS
     const nx=s.x+s.vx*dt, ny=s.y+s.vy*dt, nz=s.z+s.vz*dt;
     // Ein Benni geht vor Gelände. Der Knaller schlägt bei Berührung nicht
@@ -1726,7 +1736,7 @@ function updateShots(dt){
     // Client ist reine Deko (s. mine bei spawnShotRemote).
     if(s.mine&&!s.blast){
       const m=mobs.find(mm=>Math.hypot(mm.x-nx,mm.z-nz)<.9&&Math.abs(mm.y+1-ny)<1.2);
-      if(m){ hitMob(m,s.dmg,s.kb,s.vx,s.vz); removeShot(s); continue; }
+      if(m){ hitMob(m,s.dmg,s.kb,s.vx,s.vz); if(s.dog) dogBoom(s); removeShot(s); continue; }
       // Wachen stehen nicht in `mobs` (s. dort) und brauchen darum ihre
       // eigene Zeile — und ihren eigenen Schadensweg: hitMob() meldet online
       // ein 'mob-hit' an den Server, der von Wachen nichts weiß.
@@ -1745,6 +1755,7 @@ function updateShots(dt){
     }
     if(fillsAt(Math.round(nx),Math.floor(ny),Math.round(nz))){
       if(s.blast) detonate(s);          // Volltreffer aufs Gelände zündet sofort, s.o.
+      if(s.dog) dogBoom(s);             // der Hund reisst statt zu zünden ein Loch, s. dogBoom
       removeShot(s); continue;
     }
     s.x=nx; s.y=ny; s.z=nz;
@@ -3068,10 +3079,16 @@ let guardsBuilt=false;
 // wer ohne Waffe hinaufsteigt, soll es merken.
 const GUARD_HP=24, GUARD_R=42, GUARD_RESPAWN=32;
 // Schussrate mit Streuung, damit ein Stockwerk nicht im Gleichschritt feuert,
-// und eine Reichweite, die ungefähr ein Stockwerk abdeckt: 3 Schaden alle
-// ~2,6s von zwei bis vier Wachen ist fordernd, aber mit 20 Leben und ein paar
-// Dominiks in der Tasche zu schaffen.
-const GUARD_DMG=3, GUARD_CD_MIN=2.0, GUARD_CD_MAX=3.2, GUARD_SHOOT_R=15, GUARD_SHOT_SP=13;
+// und eine Reichweite, die ungefähr ein Stockwerk abdeckt.
+//
+// Die Zahlen sind gemessen, nicht geraten: mit 2,0-3,2s kamen im Erdgeschoss
+// (vier Wachen) über sechseinhalb Sekunden ganze 3 Schaden an — zu wenig, um
+// den Aufstieg zu einer Aufgabe zu machen. Der Grund ist hurtPlayer selbst:
+// es setzt eine halbe Sekunde Unverwundbarkeit, mehrere gleichzeitige Treffer
+// zählen also nur einmal. Eine dichtere Folge zahlt sich damit stärker aus als
+// mehr Schaden je Treffer, und darum ist die Rate gesunken statt GUARD_DMG
+// gestiegen: ein einzelner Treffer soll weiterhin verkraftbar bleiben.
+const GUARD_DMG=3, GUARD_CD_MIN=1.5, GUARD_CD_MAX=2.4, GUARD_SHOOT_R=15, GUARD_SHOT_SP=13;
 function makeGuardMesh(x,y,z){
   const tex=MOB_TEX.benni||benniTex;
   const h=2.4;                             // größer als ein Benni: eine Statue, die sich rührt
@@ -3159,6 +3176,114 @@ function spawnGuardShot(x,y,z,vx,vy,vz){
   const s=_mkShot('coal',x,y,z,vx,vy,vz,false,{dmg:GUARD_DMG,grav:.12});
   if(s) s.foe=true;
   emitSfx('sling',x,y,z,.7);
+}
+
+// ------------------------------------------------------------------ LSDominik
+// Was passiert, wenn man das Zeug isst. Drei Dinge gleichzeitig, und alle
+// drei enden, wenn der Rausch ausläuft — es gibt genau einen Zustand
+// (player.trip, Sekunden), an dem alles hängt, damit nichts hängenbleibt.
+//
+//   1. Die Welt kippt. Ein Farbfilter über dem ganzen Bild, dazu wandernde
+//      Himmels- und Nebelfarben und eine atmende Brennweite.
+//   2. Man fliegt. Keine Schwerkraft, ␣ hoch, ⇧ runter.
+//   3. Man wirft explodierende Hunde (Taste R), und die reißen echte Löcher
+//      ins Gelände.
+const TRIP_TIME=75;                      // Sekunden Rausch — lang genug für einen Ausflug
+// Die Brennweite atmet im Rausch und muss danach exakt dorthin zurück, wo sie
+// herkam — darum aus der Kamera gelesen und nicht als Zahl wiederholt. Eine
+// getippte 70 stünde hier falsch (die Kamera wird mit 74 gebaut) und hätte den
+// Blickwinkel nach dem ersten Rausch für immer ein Stück enger gelassen.
+const BASE_FOV=camera.fov;
+let tripPhase=0;                         // läuft nur während des Rausches, treibt alle Farben
+function startTrip(){
+  const fresh=player.trip<=0;
+  player.trip=TRIP_TIME;
+  if(fresh) toast('🌀 Die Farben kommen. ␣ steigt, ⇧ sinkt, R wirft Hunde.','good',6000);
+  playSample('dominik_break',.5,.55);
+}
+const tripping=()=>player.trip>0;
+// Der Filter liegt auf dem Canvas selbst, nicht auf einer Deckschicht: eine
+// halbdurchsichtige Fläche darüber würde die Farben nur überfärben, ein
+// hue-rotate dreht sie wirklich durch. Die HUD-Ebene (#ui) bleibt bewusst
+// unberührt — Herzen und Leiste soll man auch im Rausch noch lesen können.
+function updateTrip(dt){
+  const c=renderer?.domElement;
+  if(!tripping()){
+    if(tripPhase!==0){                   // genau einmal aufräumen, nicht jedes Bild
+      tripPhase=0;
+      document.body.classList.remove('tripping');
+      if(c) c.style.filter='';
+      camera.fov=BASE_FOV; camera.rotation.z=0; camera.updateProjectionMatrix();
+    }
+    return;
+  }
+  player.trip-=dt;
+  tripPhase+=dt;
+  document.body.classList.add('tripping');   // blendet den Hundeknopf am Finger ein
+  // Zum Ende hin ausblenden statt hart abzuschalten — sonst schnappt die
+  // Welt in einem Bild von grell auf gewöhnlich zurück.
+  const fade=clamp(player.trip/6,0,1);
+  if(c) c.style.filter=`hue-rotate(${(tripPhase*70)%360}deg) `+
+    `saturate(${1+2.1*fade}) contrast(${1+.28*fade})`;
+  camera.fov=BASE_FOV+Math.sin(tripPhase*1.7)*7*fade;
+  camera.rotation.z=Math.sin(tripPhase*.9)*.09*fade;
+  camera.updateProjectionMatrix();
+  if(player.trip<=0){                    // sofort aufräumen, nicht erst nächstes Bild
+    player.trip=0;
+    if(c) c.style.filter='';
+    camera.fov=BASE_FOV; camera.rotation.z=0; camera.updateProjectionMatrix();
+    tripPhase=0;
+    document.body.classList.remove('tripping');
+    toast('🌀 … und weg.','',2600);
+  }
+}
+// Der explodierende Hund. Er fliegt flach, bellt beim Wurf, und wo er
+// aufschlägt, ist Gelände gewesen: DOG_R Blöcke im Umkreis werden über
+// breakBlock() abgeräumt — bewusst über breakBlock und nicht über setBlock,
+// weil nur der Weg Drops, Ton UND die Netzwerkmeldung an alle Mitspieler
+// mitbringt (s. dort). Grundgestein bleibt stehen, das ist der Boden der
+// Welt (noBreak in BLOCKS).
+//
+// Das ist ausdrücklich die Ausnahme von der Regel, die beim Knaller noch
+// galt ("eine Explosion, die das Gelände verändert, wäre ein eigenes,
+// größeres Problem", s. detonate): hier ist genau das der Sinn der Sache.
+const DOG_R=3.4, DOG_DMG=9;
+function throwDog(){
+  if(!tripping()||state.paused||modalOpen()) return;
+  if(player.dogCd>0) return;
+  player.dogCd=.45;                      // sonst bellt eine ganze Meute pro Sekunde
+  updateEyeRay();
+  const sp=21;
+  const s=_mkShot('lsd',eyePos.x,eyePos.y,eyePos.z,
+    eyeDir.x*sp,eyeDir.y*sp+1.5,eyeDir.z*sp,true,{dmg:DOG_DMG,kb:5,grav:.5});
+  if(s){ s.dog=true; s.mesh.scale.setScalar(.45); }
+  emitSfx('bark',eyePos.x,eyePos.y,eyePos.z,.9+Math.random()*.25);
+}
+// Der Einschlag. Erst der Krach, dann das Loch, dann der Stoß — in dieser
+// Reihenfolge, damit der Ton nicht erst nach dem Abräumen von womöglich
+// hundert Blöcken kommt.
+function dogBoom(s){
+  emitSfx('explode',s.x,s.y,s.z,.8+Math.random()*.2);
+  emitSfx('bark',s.x,s.y,s.z,.7+Math.random()*.2);
+  const cx=Math.round(s.x), cy=Math.floor(s.y), cz=Math.round(s.z);
+  const r=Math.ceil(DOG_R);
+  for(let dx=-r;dx<=r;dx++) for(let dy=-r;dy<=r;dy++) for(let dz=-r;dz<=r;dz++){
+    if(Math.hypot(dx,dy,dz)>DOG_R) continue;
+    const x=cx+dx, y=cy+dy, z=cz+dz;
+    const t=blockAt(x,y,z);
+    if(!t||BLOCKS[t]?.noBreak) continue;
+    breakBlock(x,y,z,t);
+  }
+  for(const m of mobs){
+    const dx=m.x-s.x, dz=m.z-s.z, d=Math.hypot(dx,dz);
+    if(d>DOG_R+1) continue;
+    hitMob(m,DOG_DMG*(1-d/(DOG_R+1)),5,dx,dz);
+  }
+  for(const g of guards){
+    if(g.dead>0) continue;
+    if(Math.hypot(g.x-s.x,g.z-s.z,g.y-s.y)>DOG_R+1) continue;
+    damageGuard(g,DOG_DMG,g.x-s.x,g.z-s.z);
+  }
 }
 
 // ------------------------------------------------------------------ Zielerfassung
@@ -3428,6 +3553,7 @@ function useRight(){
     if(player.food>=player.maxfood&&player.hp>=player.maxhp){ toast('😋 Du bist satt.','',1200); return; }
     player.food=clamp(player.food+it.food,0,player.maxfood);
     if(id==='soup') player.hp=player.maxhp;
+    if(it.trip) startTrip();             // LSDominik — s. startTrip/updateTrip
     consumeHeld(); emitSfx('eat',player.x,player.y+1,player.z); updateHUD();
     return;
   }
@@ -5585,6 +5711,16 @@ function updatePlayer(dt){
       player.vy=clamp(player.vy,-SWIM_UP,SWIM_UP);
       // onGround bleibt der Kollision überlassen: wer auf dem Grund steht,
       // steht auch unter Wasser auf dem Grund.
+    } else if(tripping()){
+      // Fliegen: keine Schwerkraft, ␣ steigt, ⇧ sinkt, und ohne Taste bleibt
+      // man einfach stehen. Der Auftrieb wird gedämpft statt gesetzt, sonst
+      // ruckelte jeder Tastendruck. fallFrom wandert mit, damit der Rausch
+      // nicht mit einem tödlichen Sturzschaden endet, nur weil man oben war —
+      // der eigentliche Fall danach zählt wieder ganz normal.
+      const up=keys.Space?1:0, down=(keys.ShiftLeft||keys.ShiftRight)?1:0;
+      player.vy=lerp(player.vy,(up-down)*7.5,Math.min(1,dt*9));
+      player.onGround=false;
+      player.fallFrom=player.y;
     } else {
       if(player.onGround&&keys.Space){ player.vy=JUMP; player.onGround=false; }
       player.vy-=GRAV*dt;
@@ -5724,6 +5860,7 @@ const C={dayTop:new THREE.Color(0x3f86c8),evTop:new THREE.Color(0xd97b3a),nTop:n
   bmTop:new THREE.Color(0x430109),bmBot:new THREE.Color(0x2a060f),
   top:new THREE.Color(),bot:new THREE.Color()};
 let _wasSub=false;
+const _tripC=new THREE.Color();        // eine einzige, wiederverwendete Farbe statt einer je Bild
 function updateSky(){
   const d=state.dayT;
   const dawn=clamp((NIGHT_END+.04-d)*7,0,1)*(d>NIGHT_END-.01?1:0)+clamp((.14-d)*6,0,1);
@@ -5736,6 +5873,14 @@ function updateSky(){
   // oben eingeblendet — sonst setzte die Farbe beim Nachtbeginn hart ein
   // statt sich einzuschleichen.
   if(bloodMoon(state.day)){ top.lerp(C.bmTop,night); bot.lerp(C.bmBot,night); }
+  // Im Rausch wandern Himmel und Nebel durch den Farbkreis — der Canvas-
+  // Filter allein dreht zwar alles mit, aber ein zusätzlich WANDERNDER
+  // Himmel macht aus dem gleichmässigen Stich eine Bewegung.
+  if(tripping()){
+    const f=clamp(player.trip/6,0,1)*.6;
+    top.lerp(_tripC.setHSL((tripPhase*.14)%1,.85,.6),f);
+    bot.lerp(_tripC.setHSL((tripPhase*.14+.4)%1,.85,.45),f);
+  }
   skyMat.uniforms.top.value.copy(top);
   skyMat.uniforms.bot.value.copy(bot);
   // Unter Wasser wird die Sicht kurz und blau, und ein Schleier liegt vor dem
@@ -6102,6 +6247,9 @@ addEventListener('keydown',e=>{
   // auslösen (ein offenes Fenster pausiert), aber sie soll auch nicht
   // wirkungslos verpuffen.
   if(brew&&e.code==='Space'){ e.preventDefault(); brewStir(); return; }
+  // R wirft einen explodierenden Hund — aber nur im Rausch, sonst ist die
+  // Taste unbelegt wie bisher (throwDog prüft das selbst).
+  if(e.code==='KeyR'){ e.preventDefault(); ac(); if(!modalOpen()) throwDog(); return; }
   if(e.code==='KeyP'){ e.preventDefault(); ac(); togglePause(); return; }
   // Sicht umschalten: V wie "view", F5 zusätzlich für alle, die es aus dem
   // Vorbild so kennen (preventDefault, sonst lädt der Browser die Seite neu).
@@ -6130,6 +6278,7 @@ addEventListener('keydown',e=>{
   if(e.code==='Space') e.preventDefault();
 });
 addEventListener('keyup',e=>{ keys[e.code]=false; });
+el('btnDog').addEventListener('click',e=>{ e.stopPropagation(); ac(); throwDog(); });
 el('btnView').addEventListener('click',e=>{ e.stopPropagation(); ac(); toggleView(); });
 el('btnPause').addEventListener('click',e=>{ e.stopPropagation(); ac(); togglePause(); });
 el('btnBag').addEventListener('click',e=>{ e.stopPropagation(); ac(); modalOpen()?hideModal():openCraft(null); });
@@ -6174,6 +6323,8 @@ function update(dt){
   // ein Pausieren verschiebt also nichts, es hielte nur die Beobachtung an.
   updatePots(dt);
   updatePlayer(dt);
+  updateTrip(dt);
+  if(player.dogCd>0) player.dogCd-=dt;
   updateVehicles(dt);
   // Der Aussteigen-Knopf am Handy zeigt sich nur, wenn man auch wirklich in
   // etwas sitzt (body.riding, siehe #btnExit im CSS). Hier statt in
@@ -6352,6 +6503,13 @@ window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,m
   CHARS,traders,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potTake,potRecipe,potTip,
   openPot,cookPot,clickPotCell,renderPot,
+  // Der Pagodentempel und was daran haengt — damit sich Wachen, Rausch und
+  // Trankstation in der Konsole (und im Rauchtest) ansteuern lassen, ohne
+  // erst achtzig Bloecke weit zu laufen und fuenf Stockwerke zu steigen.
+  guards,updateGuards,alchs,openAlch,brewStart,brewStir,openShrine,alchRecipeItems,
+  startTrip,throwDog,PAGODA,guardSpots,shots,
+  get brew(){return brew;},
+  get tripLeft(){return player.trip;},
   POT_CAP,COOK_TIME,fills,fillsAt,waterAt,WATER_Y,FALL_FREE,MARKET,SHOP,PRICES,GOAL,
   openMarket,sellTo,buyFrom,earn,growing,updateGrow,GROW,SEED_OF,till,plantSeed,
   SKINS,equipSkin,unlockSkin,
