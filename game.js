@@ -11,6 +11,11 @@ import {
   VILLAGES, VILL_R, VILL_FADE, terrainH, surfaceTex, BLOCKS, TREE_TOP, TRUNK_MIN, FRUIT_OFF, treeSpot,
   MOBS, mobCap, bloodMoon, KB_DRAG, FLY_H, MOB_SPAWN_MIN, MOB_SPAWN_MAX,
   CHICKEN_CAP, CHICKEN_NEAR_R, EGG_MIN, EGG_MAX,
+  // Pagodengarten (siehe shared/world.js): PAGODA/BLOSSOM_TOP werden hier
+  // noch nicht gebraucht, guardSpots kommt gleich aus der world-Instanz
+  // unten — beides steht bereit für die Aufträge, die Gegner und Rezepte
+  // daran hängen.
+  PAGODA, BLOSSOM_TOP,
 } from './shared/world.js';
 import {GOAL, SEED_OF, PRICES, SHOP, RECIPES, REFRESH, RAW, offerWant} from './shared/economy.js';
 import {PARTY_URL, connect, on, send, isConnected, getPid} from './net.js';
@@ -298,7 +303,7 @@ function emitSfx(name,x,y,z,rate=1){
 // Landschaft, Truhenplätze und Höhenlogik haben.
 const world=createWorld();
 const {
-  scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
+  scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots, guardSpots,
   K, terrainType, saltVein,
   blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, losClear, litAt,
   setBlock: setBlockData,
@@ -713,6 +718,63 @@ const TEX={
     g.fillStyle='#4a4a4a';
     for(const [x,y] of [[2,3],[13,3],[2,11],[13,11]]) g.fillRect(x,y,1,2); // Nabenglanz
   }),
+  // --- Der Pagodengarten (siehe BLOCKS in shared/world.js). Kirsche und
+  // Zinnoberholz sind wie log/plank gemasertes Holz mit eigener Farbwelt,
+  // Ziegel und Kies bleiben reines Rauschen, Reispapier, Schrein und
+  // Trankstation sind von Hand gezeichnet wie fert/egg/truck oben.
+  cherry :noiseTex(['#8a7360','#7c6555','#93806c','#6e5847'],71,(g,s)=>{
+    g.fillStyle='#5c4a3a'; g.fillRect(0,0,1,s); g.fillRect(s-1,0,1,s);
+    g.fillStyle='#a08b76'; g.fillRect(5,0,1,s); g.fillRect(10,0,1,s);
+  }),
+  // Kirschblüte: viele blasse Rosatöne, dazwischen ein paar weiße und ein
+  // paar dunklere Tupfen — das Weiß gibt den Glanz, das Dunkelrosa die
+  // Tiefe zwischen den einzelnen Blüten.
+  blossom:noiseTex(['#f7cfe0','#f3bcd4','#facce0','#eea9c8','#ffffff','#dd88ae'],72),
+  redwood:noiseTex(['#b23a22','#a5331d','#c24228','#98301b'],73,(g,s)=>{
+    g.fillStyle='#6e1f0f'; g.fillRect(0,0,1,s); g.fillRect(s-1,0,1,s);
+    g.fillStyle='#d1552f'; g.fillRect(5,0,1,s); g.fillRect(10,0,1,s);
+  }),
+  // Tempelziegel: fast schwarzer Schiefer mit waagrechten Grat-Linien, wie
+  // überlappende Ziegelreihen von unten gesehen.
+  tile   :noiseTex(['#232226','#1b1a1e','#2b2a2f','#161519'],74,(g,s)=>{
+    g.fillStyle='#0e0d10'; for(let y=2;y<s;y+=4) g.fillRect(0,y,s,1);
+  }),
+  // Kies: helles, gesprenkeltes Grau — kleinteiliger als Stein, damit man den
+  // geharkten Garten schon an der Textur vom Weg unterscheidet.
+  gravel :noiseTex(['#b9b9b1','#aeaea6','#c4c4bc','#a2a29a','#cfcfc7'],75),
+  // Reispapierwand: heller Grund, darüber ein feines Lattengitter — erst das
+  // Gitter macht aus der Fläche ein Shoji und nicht nur eine leere Wand.
+  paper  :pixTex((g,s)=>{
+    g.fillStyle='#ece3d2'; g.fillRect(0,0,s,s);
+    g.fillStyle='rgba(120,100,70,.10)';
+    for(let y=1;y<s;y+=2) g.fillRect(0,y,s,1);
+    g.fillStyle='#c9b98f';
+    for(let x=0;x<s;x+=4) g.fillRect(x,0,1,s);
+    for(let y=0;y<s;y+=5) g.fillRect(0,y,s,1);
+  }),
+  // Der Schrein: ein kleiner Altar aus dunklem Holz mit einer hell
+  // glimmenden Schale obenauf — das Glimmen ist es, was ihn von einem
+  // simplen Holzblock unterscheidet.
+  shrine :pixTex(g=>{
+    g.fillStyle='#4a3524'; g.fillRect(3,10,10,5);                  // Sockel
+    g.fillStyle='#3a281a'; g.fillRect(3,10,10,1); g.fillRect(3,14,10,1);
+    g.fillStyle='#6b4c2f'; g.fillRect(5,6,6,4);                    // Aufsatz
+    g.fillStyle='#ffd76a'; g.fillRect(6,3,4,3);                    // die Schale
+    g.fillStyle='#ffb03a'; g.fillRect(7,2,2,1);
+    g.fillStyle='rgba(255,215,106,.35)'; g.fillRect(5,1,6,2);      // Schimmer
+  }),
+  // Die Trankstation: bauchiger Kolben über kleiner Flamme, mit blubbernder
+  // Flüssigkeit — verwandt mit dem Kochtopf, aber erkennbar als etwas
+  // Eigenes statt als zweiter Kochtopf.
+  alchemy:pixTex(g=>{
+    g.fillStyle='#3a3f45'; g.fillRect(6,13,4,2);                   // Gestell
+    g.fillStyle='#7fb8a8'; g.fillRect(5,4,6,9);                    // der Kolben
+    g.fillStyle='#5c8f80'; g.fillRect(5,4,1,9); g.fillRect(10,4,1,9);
+    g.fillStyle='#c93fd0'; g.fillRect(6,8,4,4);                    // die Flüssigkeit
+    g.fillStyle='#eaa4ee'; g.fillRect(7,9,1,1); g.fillRect(9,11,1,1); // Blasen
+    g.fillStyle='#caa96a'; g.fillRect(6,2,4,2);                    // der Korken
+    g.fillStyle='#ff8c1a'; g.fillRect(7,13,2,1);                   // die Flamme darunter
+  }),
 };
 
 // ------------------------------------------------------------------ Bruchbilder
@@ -846,6 +908,16 @@ const ITEMS={
   sling   :{ic:'🏹',nm:'Schleuder',      sling:true, ammo:'dominik', dmg:4, kb:2, sp:34, grav:.45, far:true},
   ball    :{ic:'🏀',nm:'Basketball',     throw:'ball',    dmg:5, kb:4, sp:17, lift:4.5, grav:.75, far:true},
   cracker :{ic:'🧨',nm:'Knaller',        throw:'cracker', dmg:7, kb:7, blast:3.5, fuse:1.1},
+  // Der Pagodengarten (siehe BLOCKS in shared/world.js): setzbare Baustoffe
+  // wie plank/brick, dazu die Trankstation als Einrichtungsgegenstand. Kein
+  // Sprite unter sprites/items/ nötig — block:true-Gegenstände zeigen ihre
+  // eigene Blocktextur (siehe drawnSrc: TEX[id] trägt hier zufällig denselben
+  // Namen wie der Blocktyp, das Bildchen fällt also von selbst ab).
+  redwood :{ic:'🟥',nm:'Zinnoberholz',   block:'redwood'},
+  tile    :{ic:'⬛',nm:'Tempelziegel',   block:'tile'},
+  paper   :{ic:'📃',nm:'Reispapierwand', block:'paper'},
+  gravel  :{ic:'🔘',nm:'Kies',           block:'gravel'},
+  alchemy :{ic:'⚗️',nm:'Trankstation',   block:'alchemy'},
 };
 
 // ------------------------------------------------------------------ Geld

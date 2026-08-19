@@ -148,6 +148,12 @@ export const VILL_R=14, VILL_FADE=11;
 // Beides ist mit den neuen Grundrissen gewachsen — vorher lagen alle vier
 // Häuser eines Dorfes fest auf denselben nahen Ecken.
 export const HOUSE_MAX=15, VILL_CLEAR=20;
+// Der Pagodengarten: ein einzelner, fester Bauplatz statt eines gewürfelten
+// wie bei den Dörfern — es soll immer genau eine Tempelanlage geben, an einer
+// Stelle, die von Hand geprüft ist (Geländehöhe, Abstand zu Fluss und Dorf,
+// siehe Auftrag). r ist der flachgeebnete Kern, fade der Übergang zurück ins
+// natürliche Gelände, genau wie VILL_R/VILL_FADE bei den Dörfern.
+export const PAGODA={x:-25,z:95,y:2,r:24,fade:12};
 const _hCache=new Map();
 // Oberkante der Säule: fester Grund liegt bei y < terrainH, gelaufen wird auf terrainH.
 export function terrainH(x,z){
@@ -168,14 +174,26 @@ export function terrainH(x,z){
       const t=(hd-HOME.r)/HOME.fade;
       h=lerp(0,h,t*t*(3-2*t));
     }
-    let near=null, nd=Infinity;
-    for(const g of VILLAGES){
-      const d=Math.hypot(x-g.x,z-g.z);
-      if(d<nd){ nd=d; near=g; }
+    // Der Pagodengarten ebnet sein Gelände genau wie ein Dorf ein — nur zuerst
+    // geprüft und mit eigenem Radius. Liegt eine Säule noch im Einflussbereich
+    // der Pagode, überspringt sie die Dorfsuche gleich ganz: die beiden liegen
+    // 46 Blöcke auseinander und können sich darum nie wirklich in die Quere
+    // kommen, aber so gewinnt die Pagode auch dann, wenn sie es doch täten.
+    const pd=Math.hypot(x-PAGODA.x,z-PAGODA.z);
+    if(pd<PAGODA.r) h=PAGODA.y;
+    else if(pd<PAGODA.r+PAGODA.fade){
+      const t=(pd-PAGODA.r)/PAGODA.fade; h=lerp(PAGODA.y,h,t*t*(3-2*t));
     }
-    if(nd<VILL_R) h=near.y;
-    else if(nd<VILL_R+VILL_FADE){
-      const t=(nd-VILL_R)/VILL_FADE; h=lerp(near.y,h,t*t*(3-2*t));
+    if(pd>=PAGODA.r+PAGODA.fade){
+      let near=null, nd=Infinity;
+      for(const g of VILLAGES){
+        const d=Math.hypot(x-g.x,z-g.z);
+        if(d<nd){ nd=d; near=g; }
+      }
+      if(nd<VILL_R) h=near.y;
+      else if(nd<VILL_R+VILL_FADE){
+        const t=(nd-VILL_R)/VILL_FADE; h=lerp(near.y,h,t*t*(3-2*t));
+      }
     }
     v=Math.round(h);
   }
@@ -240,6 +258,23 @@ export const BLOCKS={
   sprout_p:{tex:'sprout_p',hard:0,drop:'korn',   nm:'Pfeffer-Setzling',
             cross:true, size:.7, sit:true, alpha:true, pass:true},
   bedrock:{tex:'bedrock',hard:0,  drop:null,     nm:'Grundgestein', noBreak:true},
+  // --- Der Pagodengarten. Eigene Blöcke statt eingefärbter alter, weil dieser
+  // Ort von weitem als etwas anderes als Dorf oder Wald zu erkennen sein soll.
+  cherry :{tex:'cherry', hard:1.6, drop:'log',    nm:'Kirschstamm', axe:true},
+  // Wie Laub/Nadeln gibt die Blüte manchmal einen Stock her (twig) — sie ist
+  // Baumkrone, kein eigenes Fach im Rucksack wert.
+  blossom:{tex:'blossom',hard:.3,  drop:null,     nm:'Kirschblüte', twig:true},
+  redwood:{tex:'redwood',hard:1.4, drop:'redwood',nm:'Zinnoberholz', axe:true},
+  tile   :{tex:'tile',   hard:2.2, drop:'tile',   nm:'Tempelziegel', pick:true},
+  paper  :{tex:'paper',  hard:.4,  drop:'paper',  nm:'Reispapierwand'},
+  gravel :{tex:'gravel', hard:.7,  drop:'gravel', nm:'Kies'},
+  // Der Schrein trägt die Rezepte am Ende der Treppe — noBreak, damit sie
+  // nie verloren gehen können, use markiert ihn nur als anklickbar; was der
+  // Klick tut, entscheidet ein anderer Auftrag.
+  shrine :{tex:'shrine', hard:0,   drop:null,     nm:'Schrein',
+           noBreak:true, use:'shrine'},
+  alchemy:{tex:'alchemy',hard:2.0, drop:'alchemy',nm:'Trankstation',
+           pick:true, use:'alchemy'},
 };
 
 // ------------------------------------------------------------------ Bäume
@@ -266,6 +301,23 @@ export const CONIFER_TOP=[];
       if(Math.abs(x)+Math.abs(z)<=rad) CONIFER_TOP.push([x,dy,z]);
   };
   ring(0,2); ring(1,2); ring(2,1); ring(3,2); ring(4,1); ring(5,0);
+})();
+// Die Kirschblüte: breiter als hoch und an den Rändern leicht hängend, statt
+// eines Balls wie TREE_TOP — ein flacher Schirm ist es, der eine Kirsche
+// schon auf den ersten Blick von einem gewöhnlichen Laubbaum unterscheidet.
+export const BLOSSOM_TOP=[];
+(function blossomShape(){
+  // Die breiteste Lage unten (Radius 4 in der Manhattan-Norm, also ein
+  // flacher Diamant), eine engere darüber — nur zwei Lagen, damit die Krone
+  // gedrungen bleibt statt hoch aufzuragen.
+  for(let x=-3;x<=3;x++) for(let z=-3;z<=3;z++)
+    if(Math.abs(x)+Math.abs(z)<=4) BLOSSOM_TOP.push([x,1,z]);
+  for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++)
+    if(Math.abs(x)+Math.abs(z)<=3) BLOSSOM_TOP.push([x,2,z]);
+  // Die hängenden Spitzen: einzelne Blüten eine Lage UNTER dem Schirm, an
+  // seinem Rand — das "Drooping", das eine Kirsche von einem Busch abhebt.
+  for(const [x,z] of [[3,0],[-3,0],[0,3],[0,-3],[2,2],[-2,2],[2,-2],[-2,-2]])
+    BLOSSOM_TOP.push([x,0,z]);
 })();
 // ------------------------------------------------------------------ Dörfer
 // Die Bauarten. In jedem Dorf stand bisher viermal dasselbe Häuschen; das hier
@@ -341,6 +393,7 @@ export function createWorld(){
   const chestSpots=[];
   const houseSpots=[];                     // Stube im zweiten Haus jedes Dorfes
   const traderSpots=[];                    // wo die Jannessen stehen
+  const guardSpots=[];                     // Standplätze der Tempelwachen, je Stockwerk
   const K=(x,y,z)=>x+','+y+','+z;
 
   function noteRange(x,z,y){
@@ -460,6 +513,10 @@ export function createWorld(){
 
   // -------------------------------------------------------------- Landschaft
   (function landscape(){
+    // Derselbe Test wie VILLAGES.some(...) unten, nur für den einen festen
+    // Pagoden-Platz statt für jedes Dorf: wilde Bäume, Büsche und Umgestürzte
+    // sollen nicht mitten im Garten aufploppen, den wir gleich von Hand bauen.
+    const inPagoda=(x,z)=>Math.abs(x-PAGODA.x)<PAGODA.r&&Math.abs(z-PAGODA.z)<PAGODA.r;
     // --- Dörfer. Alles hier legt Blöcke ab vy — der freien Zelle über dem
     // eingeebneten Dorfboden (VILL_R in terrainH). Fußböden, Platz und Wege
     // liegen damit eine Stufe über dem Gras ringsum, so wie schon immer.
@@ -631,6 +688,308 @@ export function createWorld(){
       for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) put('plank',mx+dx,my+3,mz+dz);
       for(let dx=-1;dx<=1;dx++) put('plank',mx+dx,my,mz+2);      // Tresen zum Startpunkt
     }
+    // --- Der Pagodengarten: ein einzelner, von Hand gesetzter Bauplatz (siehe
+    // PAGODA oben) statt einer gewürfelten Anlage wie bei den Dörfern — davon
+    // soll es genau einen geben. Kies statt Gras, Kirschbäume statt Wald, ein
+    // Torii als Wegweiser von weitem und ein fünfstöckiger Tempel als Ziel.
+    {
+      const PX=PAGODA.x, PZ=PAGODA.z, PY=PAGODA.y;
+
+      // -------------------------------------------------------- Der Tempel
+      // R ist der Halbmesser je Stockwerk (Grundfläche (2R+1)²) — 13×13 unten,
+      // danach durchgehend zwei Blöcke schmaler bis 5×5 oben, das als offener
+      // Pavillon endet: eine Reispapierwand ließe dort, wo kaum noch
+      // Grundfläche übrig ist, keinen Platz mehr für Schrein UND Wache.
+      // Wichtig: KEINE zwei Werte in R dürfen gleich sein. Die Wendeltreppe
+      // eines Stockwerks läuft im Ring exakt einen Block innerhalb der
+      // kleineren der beiden angrenzenden Grundflächen (siehe stairCols
+      // unten) — zwei gleich große Nachbarn ergäben denselben Ringradius auf
+      // beiden Seiten eines Stockwerks, und die rein aus dem Ring gewürfelte
+      // Drehung könnte dann Auf- und Abstieg auf dieselbe Spalte legen: zwei
+      // Stufen verschiedener Treppen im selben Luftraum, eine davon nicht
+      // mehr begehbar. Bei lauter verschiedenen Radien ist das unmöglich,
+      // weil ein Ring mit Radius r und einer mit Radius r' bei r≠r' keine
+      // einzige Zelle teilen. FY ist die Zelle des Bretterbodens je
+      // Stockwerk, FLOORH der Abstand zum nächsten — sechs Blöcke, vier für
+      // die Wand (SH) und zwei für die hochgezogene Traufe. Genau dieser
+      // Rhythmus ist es, den die Wendeltreppe braucht: sechs Stufen, jede
+      // einen Block höher als die vorige, wie es der automatische Schritt in
+      // updatePlayer (game.js, canStep) verlangt — mehr als ein Block
+      // Unterschied, und die Treppe wäre für den Spieler unbegehbar.
+      const R=[6,5,4,3,2];
+      const SH=4, FLOORH=SH+2;
+      const FY=R.map((_,s)=>PY+s*FLOORH);
+
+      // Ecken tragen Zinnoberholz-Pfosten, dazwischen Reispapier — wie
+      // shell() bei den Dörfern, nur ohne die zufälligen Fensterlücken: ein
+      // Tempel hat keine Löcher in seinen Wänden außer der einen Tür im
+      // Erdgeschoss und den Treppenschächten, die eigens freigehalten werden.
+      const wall=(x0,z0,w,d,y,h,doorDX)=>{
+        for(let dx=0;dx<w;dx++) for(let dz=0;dz<d;dz++){
+          const edge=dx===0||dx===w-1||dz===0||dz===d-1;
+          if(!edge) continue;
+          const x=x0+dx, z=z0+dz;
+          const corner=(dx===0||dx===w-1)&&(dz===0||dz===d-1);
+          for(let k=1;k<=h;k++){
+            if(doorDX!=null&&dx===doorDX&&dz===0&&k<=2) continue;
+            put(corner?'redwood':'paper',x,y+k,z);
+          }
+        }
+      };
+      // Das oberste Stockwerk trägt nur seine vier Eckpfosten — offen genug,
+      // dass der Schrein von jeder Seite aus zu sehen und zu erreichen ist.
+      const posts=(x0,z0,w,d,y,h)=>{
+        for(const [dx,dz] of [[0,0],[w-1,0],[0,d-1],[w-1,d-1]])
+          for(let k=1;k<=h;k++) put('redwood',x0+dx,y+k,z0+dz);
+      };
+      // Die Traufe: DREI Ringe, und der äußerste liegt doppelt.
+      //
+      // Zwei Ringe waren es zuerst, der äußere einen Block höher als der
+      // innere — die hochgezogene Pagodentraufe, die ein Klötzchendach von
+      // einem echten Pagodendach unterscheidet. Nur hatte das zwei Löcher:
+      //
+      // Erstens berührten sich die beiden Ringe dabei nur über die Kante:
+      // außen y+1, innen y, dazwischen nichts. Von schräg unten sah man
+      // genau durch diese Diagonale in den Himmel. Dasselbe Problem hat
+      // slope() bei den Dorfdächern schon gelöst (siehe den Kommentar dort),
+      // und zwar mit derselben Antwort: die Stufe zwei Lagen dick machen,
+      // damit sich die Ringe überlappen statt sich nur zu streifen. Der
+      // äußerste Ring bekommt darum y UND y+1.
+      //
+      // Zweitens endete das Dach einen Ring ZU FRÜH. X0/X1 greifen zwei
+      // Blöcke über die Wand hinaus, e=2 ist damit genau die Wandlinie
+      // selbst — und die blieb offen. Über der obersten Wandreihe stand der
+      // Himmel, rundherum, in jedem Stockwerk: der Boden des nächsten
+      // Stockwerks ist einen Ring kleiner und deckt sie nicht mit ab. Ein
+      // Dach muss die Wand treffen, auf der es sitzt.
+      //
+      // Der Innenraum bleibt unberührt (e>2): dort deckt der Bretterboden
+      // des nächsten Stockwerks, und genau dort steigt auch die Treppe
+      // durch — sie läuft auf Halbmesser R[s]-2 und damit sicher innerhalb.
+      const eave=(x0,z0,w,d,y)=>{
+        const X0=x0-2,X1=x0+w+1,Z0=z0-2,Z1=z0+d+1;
+        for(let x=X0;x<=X1;x++) for(let z=Z0;z<=Z1;z++){
+          const e=Math.min(x-X0,X1-x,z-Z0,Z1-z);
+          if(e>2) continue;
+          put('tile',x,y,z);
+          if(e===0) put('tile',x,y+1,z);
+        }
+      };
+      // Der Ring einer Wendeltreppen-Etage: die Umrandung eines Quadrats mit
+      // Halbmesser rad, im Uhrzeigersinn ab der linken oberen Ecke — jeder
+      // Schritt darin unterscheidet sich vom vorigen in genau einer Achse um
+      // genau ein Feld, exakt das Muster, das der automatische Schritt des
+      // Spielers braucht.
+      const ringPath=rad=>{
+        const p=[];
+        for(let dx=-rad;dx<=rad;dx++) p.push([dx,-rad]);
+        for(let dz=-rad+1;dz<=rad;dz++) p.push([rad,dz]);
+        for(let dx=rad-1;dx>=-rad;dx--) p.push([dx,rad]);
+        for(let dz=rad-1;dz>=-rad+1;dz--) p.push([-rad,dz]);
+        return p;
+      };
+      // Die vier Treppen: je eine zwischen zwei Stockwerken, im Ring EINEN
+      // Block innerhalb der Grundfläche des jeweils KLEINEREN der beiden
+      // Stockwerke — so bleibt sie sowohl von der eigenen (größeren) Wand als
+      // auch von der Wand des nächsten (kleineren) Stockwerks freigestellt,
+      // egal ob dieses schrumpft oder (ganz oben) gleich groß bleibt. Jede
+      // Treppe beginnt an einer anderen Ecke ihres Rings (startOff), damit
+      // sich der Aufstieg ums Gebäude windet statt immer an derselben Seite
+      // emporzulaufen.
+      const stairCols=[];
+      for(let s=0;s<4;s++){
+        const rad=R[s+1]-1;
+        const ring=ringPath(rad);
+        const startOff=(s%4)*2*rad;
+        const cols=[];
+        for(let i=0;i<FLOORH;i++){
+          const [dx,dz]=ring[(startOff+i)%ring.length];
+          const x=PX+dx, z=PZ+dz, y=FY[s]+1+i;
+          put('plank',x,y,z);
+          cols.push(x+','+z);
+        }
+        stairCols.push(cols);
+      }
+      // Die Böden: die volle Grundfläche in Bretter, außer dort, wo die
+      // Treppe von unten hereinkommt — das ist die Deckenaussparung, durch
+      // die man hochsteigt.
+      for(let s=0;s<5;s++){
+        const w=2*R[s]+1, x0=PX-R[s], z0=PZ-R[s];
+        const holes=s>0?new Set(stairCols[s-1]):null;
+        for(let dx=0;dx<w;dx++) for(let dz=0;dz<w;dz++){
+          const x=x0+dx, z=z0+dz;
+          if(holes&&holes.has(x+','+z)) continue;
+          put('plank',x,FY[s],z);
+        }
+      }
+      // Wände und Traufen, Stockwerk für Stockwerk. Die Tür liegt im
+      // Erdgeschoss auf der Südseite (Richtung Startpunkt) und zeigt zu Torii
+      // und Weg.
+      for(let s=0;s<4;s++){
+        const w=2*R[s]+1, x0=PX-R[s], z0=PZ-R[s];
+        wall(x0,z0,w,w,FY[s],SH,s===0?R[s]:null);
+        eave(x0,z0,w,w,FY[s]+SH+1);
+      }
+      {
+        const s=4, w=2*R[s]+1, x0=PX-R[s], z0=PZ-R[s];
+        posts(x0,z0,w,w,FY[s],SH);
+        eave(x0,z0,w,w,FY[s]+SH+1);
+        // Das schließende Walmdach: dieselbe Form wie hip() bei den Dörfern,
+        // nur in Ziegeln statt Brettern — und eine schmale Spitze obendrauf,
+        // damit die Pagode nicht stumpf endet.
+        const hipY=FY[s]+SH+3, lay=Math.ceil((Math.min(w,w)+2)/2);
+        hip('tile',x0,z0,hipY,w,w);
+        put('redwood',PX,hipY+lay,PZ);
+        put('redwood',PX,hipY+lay+1,PZ);
+      }
+      // Der Schrein, ganz oben im offenen Pavillon — hier endet die Treppe,
+      // hier stehen die Rezepte (siehe BLOCKS.shrine).
+      put('shrine',PX,FY[4]+1,PZ);
+
+      // Die Wachplätze: zwei bis vier je Stockwerk, mit Abstand zur eigenen
+      // Treppe (der von unten UND der nach oben) und, wo die Grundfläche es
+      // hergibt, mit zwei Blöcken Luft zur Wand. In den beiden obersten,
+      // knappen Stockwerken reicht die Fläche dafür nicht immer; dort rückt
+      // die Anforderung auf einen Block zusammen — lieber das als ein
+      // Stockwerk ganz ohne Wache.
+      for(let s=0;s<5;s++){
+        // rgMax reicht bis auf einen Block an die Wand heran (nie auf die
+        // Wand selbst) — geprüft wird trotzdem zuerst der geräumigere Kern
+        // mit zwei Blöcken Luft (clearance), der Rand ist nur die
+        // Rückfallebene für die knappen oberen Stockwerke.
+        const rgMax=Math.max(R[s]-1,1);
+        const forbid=new Set();
+        if(s>0) stairCols[s-1].forEach(c=>forbid.add(c));
+        if(s<4) stairCols[s].forEach(c=>forbid.add(c));
+        if(s===4){
+          for(const [dx,dz] of [[-R[s],-R[s]],[R[s],-R[s]],[-R[s],R[s]],[R[s],R[s]]])
+            forbid.add((PX+dx)+','+(PZ+dz));
+          forbid.add(PX+','+PZ);                    // der Schrein steht in der Mitte
+        }
+        const cand=[];
+        for(let dx=-rgMax;dx<=rgMax;dx++) for(let dz=-rgMax;dz<=rgMax;dz++){
+          const x=PX+dx, z=PZ+dz, k=x+','+z;
+          if(forbid.has(k)) continue;
+          const clearance=R[s]-Math.max(Math.abs(dx),Math.abs(dz));
+          cand.push({x,z,clearance,r:hash2(x,z,331+s)});
+        }
+        cand.sort((a,b)=>b.clearance-a.clearance||a.r-b.r);
+        const want=2+Math.floor(hash2(PX,PZ,401+s)*3);       // 2 bis 4
+        const chosen=[];
+        for(const c of cand){
+          if(chosen.length>=want) break;
+          if(chosen.some(g=>Math.max(Math.abs(g.x-c.x),Math.abs(g.z-c.z))<2)) continue;
+          chosen.push(c);
+        }
+        // Reicht der Mindestabstand in den knappen oberen Stockwerken nicht
+        // für zwei Plätze, dann lieber enger stehende Wachen als ein
+        // Stockwerk ganz ohne — die Grundfläche gibt es sonst nicht her.
+        if(chosen.length<2) for(const c of cand){
+          if(chosen.length>=Math.max(2,want)) break;
+          if(chosen.some(g=>g.x===c.x&&g.z===c.z)) continue;
+          chosen.push(c);
+        }
+        chosen.forEach(c=>guardSpots.push({x:c.x,y:FY[s]+1,z:c.z,floor:s+1}));
+      }
+
+      // -------------------------------------------------------- Der Garten
+      const WR=15;                          // Halbmesser der Gartenmauer
+      const gz=PZ-WR-6;                     // Torii, sechs Blöcke vor der Mauer
+      const pondCX=PX+10, pondCZ=PZ+4, pondR=3;
+
+      // Kies statt Gras, mit unregelmäßigem statt kreisrundem Rand — vnoise
+      // macht daraus weiche Buchten statt eines Zirkelschlags; am Rand zur
+      // Mauer hin bleibt darum echtes Gras stehen, genau die "durchscheinende"
+      // Kante, die ein geharkter Garten von einer geschütteten Fläche
+      // unterscheidet.
+      for(let dx=-WR+1;dx<=WR-1;dx++) for(let dz=-WR+1;dz<=WR-1;dz++){
+        const x=PX+dx, z=PZ+dz;
+        const d=Math.hypot(dx,dz);
+        const edgeR=WR-4+(vnoise(x,z,11,201)-.5)*6;
+        if(d>edgeR) continue;
+        put('gravel',x,PY-1,z);
+      }
+
+      // Kirschbäume: verstreut, nie einander, dem Tempel, dem Weg oder dem
+      // Becken zu nah. Deterministisch aus hash2 statt aus einer eigenen
+      // mulberry()-Instanz gewürfelt — der Wurf hängt rein am Laufindex,
+      // nicht an einem Aufrufzähler, darum kommen Client und Server ohne ein
+      // einziges Netzwerkpaket auf dieselbe Handvoll Bäume.
+      const cherryAt=new Set();
+      const nearCherry=(x,z,min)=>{
+        for(const k of cherryAt){
+          const [tx,tz]=k.split(',').map(Number);
+          if(Math.hypot(tx-x,tz-z)<min) return true;
+        }
+        return false;
+      };
+      const inCorridor=(x,z)=>Math.abs(x-PX)<=4&&z<=PZ-R[0]-1&&z>=gz-2;
+      const inPond=(x,z)=>Math.hypot(x-pondCX,z-pondCZ)<pondR+3;
+      let ncherry=0;
+      for(let i=0;i<160&&ncherry<15;i++){
+        const a=hash2(i,7,211)*Math.PI*2;
+        const rad=8+hash2(i,11,212)*5;
+        const x=Math.round(PX+Math.cos(a)*rad), z=Math.round(PZ+Math.sin(a)*rad);
+        if(Math.max(Math.abs(x-PX),Math.abs(z-PZ))<=R[0]+3) continue;   // nicht auf den Tempel
+        if(inCorridor(x,z)) continue;
+        if(inPond(x,z)) continue;
+        if(nearCherry(x,z,3.2)) continue;
+        const trunk=4+Math.floor(hash2(x,z,213)*3);           // vier bis sechs hoch
+        for(let y=0;y<trunk;y++) put('cherry',x,PY+y,z);
+        for(const [dx,dy,dz] of BLOSSOM_TOP) put('blossom',x+dx,PY+trunk-2+dy,z+dz);
+        cherryAt.add(x+','+z);
+        ncherry++;
+      }
+
+      // Das Trockenbecken: Randsteine, ein Sandboden einen Block tiefer und
+      // ein paar Trittsteine darin. Echtes Wasser ginge hier nicht — das
+      // Wassermodell kennt nur den Raum unter dem Meeresspiegel über einem
+      // Flussbett (siehe waterAt oben), und das Plateau liegt mit PY=2
+      // deutlich darüber. Ein Becken ohne Wasser ist darum kein Kompromiss,
+      // sondern die einzig ehrliche Lösung: ein Zen-Garten harkt ohnehin
+      // öfter Kies als dass er Wasser führt.
+      for(let dx=-pondR-1;dx<=pondR+1;dx++) for(let dz=-pondR-1;dz<=pondR+1;dz++){
+        const x=pondCX+dx, z=pondCZ+dz, d=Math.hypot(dx,dz);
+        if(d>pondR+1) continue;
+        if(d>pondR){ put('rock',x,PY,z); continue; }          // der Rand
+        if(hash2(x,z,221)<.22){ put('rock',x,PY-1,z); continue; }  // ein Trittstein
+        setBlock(x,PY-1,z,null);
+        put('sand',x,PY-2,z);
+      }
+
+      // Der Weg: vom Torii durch die Maueröffnung bis zur Tempeltür.
+      for(let z=gz;z<=PZ-R[0]-1;z++) put('rock',PX,PY-1,z);
+
+      // Das Torii: zwei Pfosten, ein Kranbalken mit Überstand, darunter ein
+      // kürzerer, bündiger Balken — die Silhouette, die den Garten schon von
+      // weitem als das zeigt, was er ist.
+      for(const ddx of [-3,3]) for(let k=0;k<5;k++) put('redwood',PX+ddx,PY+k,gz);
+      for(let dx=-4;dx<=4;dx++) put('redwood',PX+dx,PY+5,gz);
+      for(let dx=-3;dx<=3;dx++) put('redwood',PX+dx,PY+3,gz);
+
+      // Steinlaternen am Weg entlang — Sockel aus Stein, Lichtkasten aus
+      // Reispapier, Kappe aus Stein. Ihre Position wandert zusätzlich in
+      // torches (siehe litAt weiter oben): der Garten soll auch nachts ein
+      // sicherer Ort sein, kein Benni spawnt im Licht der Laternen (spawnMob
+      // in game.js meidet litAt-Zellen genauso wie die Wachen oben ihn nicht
+      // brauchen, weil sie ohnehin schon dort stehen).
+      const doorZ=PZ-R[0]-1;                // letzte begehbare Wegzelle vor der Tür
+      for(const z of [gz+2,Math.round((gz+doorZ)/2),doorZ]) for(const dx of [-2,2]){
+        const x=PX+dx;
+        put('rock',x,PY,z); put('paper',x,PY+1,z); put('rock',x,PY+2,z);
+        torches.push({x,y:PY+2.5,z});
+      }
+
+      // Die Gartenmauer: Stein mit Ziegelabdeckung, ringsum am Rand des
+      // Plateaus — mit einer Lücke dort, wo das Torii steht.
+      for(let dx=-WR;dx<=WR;dx++) for(let dz=-WR;dz<=WR;dz++){
+        if(Math.max(Math.abs(dx),Math.abs(dz))!==WR) continue;
+        if(dz===-WR&&Math.abs(dx)<=2) continue;               // die Lücke fürs Tor
+        const x=PX+dx, z=PZ+dz;
+        put('rock',x,PY,z); put('rock',x,PY+1,z);
+        put('tile',x,PY+2,z);
+      }
+    }
     // --- Wälder: Rauschen gibt die Dichte, Dörfer und Starttal bleiben frei
     const r=mulberry(4711);
     // Die Obergrenze ist nur eine Notbremse, keine Zielzahl — sie muss aber
@@ -661,7 +1020,7 @@ export function createWorld(){
     for(let x=BOUND.x0+3;x<=BOUND.x1-3&&n<TREE_CAP;x++)
       for(let z=BOUND.z0+3;z<=BOUND.z1-3&&n<TREE_CAP;z++){
         if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
-        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)||inPagoda(x,z)) continue;
         const dens=vnoise(x,z,44,11);
         if(hash2(x,z,55)>(dens>.54?.22:.036)) continue;
         const h=treeSpot(x,z);
@@ -728,7 +1087,7 @@ export function createWorld(){
       for(let z=BOUND.z0+6;z<=BOUND.z1-6;z++){
         if(hash2(x,z,111)>.005) continue;
         if(Math.hypot(x-HOME.x,z-HOME.z)<HOME.r-6) continue;
-        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)||inPagoda(x,z)) continue;
         const h=treeSpot(x,z);
         if(h<0) continue;
         const [dx,dz]=NB4[Math.floor(hash2(x,z,112)*4)];
@@ -764,7 +1123,7 @@ export function createWorld(){
         // Zellen weg und kostet einen Bruchteil davon. Über die ganze Karte
         // gerechnet ist das der Unterschied zwischen spürbar und unmerklich.
         if(hash2(x,z,152)>.09) continue;
-        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)) continue;
+        if(VILLAGES.some(v=>Math.abs(x-v.x)<VILL_CLEAR&&Math.abs(z-v.z)<VILL_CLEAR)||inPagoda(x,z)) continue;
         if(vnoise(x,z,19,151)<.44) continue;               // Gruppen statt Teppich
         if(vnoise(x,z,44,11)<=.54&&hash2(x,z,152)>.03) continue;   // außerhalb der Wälder lichter
         const h=treeSpot(x,z);
@@ -868,7 +1227,7 @@ export function createWorld(){
   })();
 
   return {
-    scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots,
+    scenery, edits, colRange, chests, torches, chestSpots, houseSpots, traderSpots, guardSpots,
     K, terrainType, saltVein, coalVein,
     blockAt, solidAt, fills, fillsAt, waterAt, surfaceAt, safeSpot, mobBlocked, losClear, litAt, setBlock,
   };
