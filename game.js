@@ -1727,6 +1727,21 @@ function updateShots(dt){
     if(s.mine&&!s.blast){
       const m=mobs.find(mm=>Math.hypot(mm.x-nx,mm.z-nz)<.9&&Math.abs(mm.y+1-ny)<1.2);
       if(m){ hitMob(m,s.dmg,s.kb,s.vx,s.vz); removeShot(s); continue; }
+      // Wachen stehen nicht in `mobs` (s. dort) und brauchen darum ihre
+      // eigene Zeile — und ihren eigenen Schadensweg: hitMob() meldet online
+      // ein 'mob-hit' an den Server, der von Wachen nichts weiß.
+      const g=guards.find(gg=>!gg.dead&&Math.hypot(gg.x-nx,gg.z-nz)<.9&&Math.abs(gg.y+1.1-ny)<1.4);
+      if(g){ damageGuard(g,s.dmg,s.vx,s.vz); removeShot(s); continue; }
+    }
+    // Das Geschoss einer Wache. Geprüft wird gegen den echten Spielerkörper
+    // (PR breit, PH hoch) und nicht gegen einen Punkt: bei GUARD_SHOT_SP
+    // legt ein Schuss pro Bild gut einen Viertelblock zurück, ein Punkttest
+    // führe bei ungünstigem dt mitten durch den Spieler hindurch. hurtPlayer
+    // bringt seine eigenen Unverwundbarkeitsbilder mit (player.invT).
+    if(s.foe){
+      const near=Math.abs(nx-player.x)<PR+.35&&Math.abs(nz-player.z)<PR+.35&&
+                 ny>player.y-.25&&ny<player.y+PH+.25;
+      if(near){ hurtPlayer(s.dmg); removeShot(s); continue; }
     }
     if(fillsAt(Math.round(nx),Math.floor(ny),Math.round(nz))){
       if(s.blast) detonate(s);          // Volltreffer aufs Gelände zündet sofort, s.o.
@@ -3026,6 +3041,126 @@ function respawn(){
   updateHUD();
 }
 
+// ------------------------------------------------------------------ Tempelwachen
+// Die Gegner in der Pagode. Sie stehen auf den Plätzen, die die
+// Weltgenerierung ausgewürfelt hat (guardSpots aus shared/world.js), rühren
+// sich nie vom Fleck und schießen — der Aufstieg soll etwas kosten.
+//
+// EIGENE LISTE, nicht `mobs`, und das mit Absicht: `mobs` ist entweder
+// vollständig lokal simuliert (offline) ODER vollständig dem Server
+// gehörend (online — updateMobsOnline löscht dort jeden Eintrag, den der
+// Schnappschuss des Servers nicht erwähnt). Eine Wache, von der der Server
+// nichts weiß, wäre online im nächsten Tick wieder weg. Sie stehen darum
+// bewusst NUR im Client — und trotzdem bei allen gleich, weil ihre Plätze
+// aus derselben deterministischen Weltformel kommen wie der Tempel selbst.
+// Kein einziges Netzwerkpaket nötig, exakt dieselbe Begründung, mit der auch
+// Bäume und Dörfer ohne Sync auskommen.
+//
+// EHRLICHE FOLGE: jeder kämpft gegen seine eigenen Wachen. Zwei Spieler im
+// selben Stockwerk teilen sich deren Leben nicht — wer zuerst oben ist, hat
+// dem anderen nichts abgenommen. Das ist der Preis dafür, dass sie ohne
+// Server auskommen, und keine Nachlässigkeit.
+const guards=[];
+let guardsBuilt=false;
+// Deutlich zäher als ein gewöhnlicher Benni (10) und deutlich lohnender:
+// eine Wache ist ein Hindernis im Verlies, kein Nachtärgernis. Mit dem
+// Steinschwert (6 Schaden) sind das vier Schläge, mit der Faust (2) zwölf —
+// wer ohne Waffe hinaufsteigt, soll es merken.
+const GUARD_HP=24, GUARD_R=42, GUARD_RESPAWN=32;
+// Schussrate mit Streuung, damit ein Stockwerk nicht im Gleichschritt feuert,
+// und eine Reichweite, die ungefähr ein Stockwerk abdeckt: 3 Schaden alle
+// ~2,6s von zwei bis vier Wachen ist fordernd, aber mit 20 Leben und ein paar
+// Dominiks in der Tasche zu schaffen.
+const GUARD_DMG=3, GUARD_CD_MIN=2.0, GUARD_CD_MAX=3.2, GUARD_SHOOT_R=15, GUARD_SHOT_SP=13;
+function makeGuardMesh(x,y,z){
+  const tex=MOB_TEX.benni||benniTex;
+  const h=2.4;                             // größer als ein Benni: eine Statue, die sich rührt
+  const asp=tex.image.width/tex.image.height;
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(h*asp,h),
+    new THREE.MeshLambertMaterial({map:tex,transparent:true,alphaTest:.5,
+      side:THREE.DoubleSide,color:0xd06a3a}));   // rot-golden eingefärbt statt eigener Bilddatei
+  mesh.position.set(x,y+h/2,z); mesh.castShadow=true;
+  scene.add(mesh);
+  return mesh;
+}
+// Aufbauen und Abräumen hängen an der Entfernung: dreizehn zusätzliche Netze
+// sollen nicht die ganze Partie in der Szene hängen. Abgeräumt wird mit
+// Geometrie UND Material — makeGuardMesh baut beides je Wache neu (wie
+// makeMobMesh), ein bloßes scene.remove() ließe sie im Grafikspeicher liegen.
+function clearGuards(){
+  for(const g of guards){
+    scene.remove(g.mesh);
+    g.mesh.geometry.dispose(); g.mesh.material.dispose();
+  }
+  guards.length=0;
+  guardsBuilt=false;
+}
+function buildGuards(){
+  if(!benniTex) return;                    // Textur noch nicht geladen — beim nächsten Tick erneut
+  for(const sp of guardSpots){
+    guards.push({x:sp.x,y:sp.y,z:sp.z,floor:sp.floor,hp:GUARD_HP,
+      mesh:makeGuardMesh(sp.x,sp.y,sp.z),
+      cd:rnd(.6,GUARD_CD_MAX),hurtT:0,dead:0,screamCd:rnd(4,9)});
+  }
+  guardsBuilt=true;
+}
+// Wachen sterben nicht endgültig: nach GUARD_RESPAWN Sekunden steht wieder
+// eine da, sonst wäre der Tempel nach einem Besuch für immer leer. Sie kommt
+// aber nicht zurück, solange der Spieler direkt auf ihrem Platz steht — sonst
+// erschiene sie im selben Block wie er.
+function damageGuard(g,dmg,kx=0,kz=0){
+  g.hp-=dmg; g.hurtT=.22;
+  playSample('punch',.6);
+  if(g.hp>0){ SND.hit(); return; }
+  spawnDrop(pick(['coal','string','salt']),rndi(1,2),g.x,g.y+.6,g.z,rnd(-1,1),1.8,rnd(-1,1));
+  state.killed++;
+  SND.mobDie();
+  g.dead=GUARD_RESPAWN;
+  g.mesh.visible=false;
+}
+function updateGuards(dt){
+  const near=Math.hypot(player.x-PAGODA.x,player.z-PAGODA.z)<GUARD_R;
+  if(!near){ if(guardsBuilt) clearGuards(); return; }
+  if(!guardsBuilt) buildGuards();
+  const ex=player.x, ey=player.viewY+EYE*.6, ez=player.z;
+  for(const g of guards){
+    if(g.dead>0){
+      g.dead-=dt;
+      if(g.dead<=0&&Math.hypot(g.x-player.x,g.z-player.z)>1.2){
+        g.hp=GUARD_HP; g.mesh.visible=true; g.cd=rnd(GUARD_CD_MIN,GUARD_CD_MAX);
+      }
+      continue;
+    }
+    if(g.hurtT>0) g.hurtT-=dt;
+    g.mesh.material.color.setHex(g.hurtT>0?0xff3020:0xd06a3a);
+    g.mesh.rotation.y=Math.atan2(camera.position.x-g.x,camera.position.z-g.z);
+    const d=Math.hypot(g.x-player.x,g.z-player.z,g.y-player.y);
+    if(d>GUARD_SHOOT_R) continue;
+    // Sichtlinie: ohne sie schössen beim Betreten des Tempels alle dreizehn
+    // Wachen aus allen fünf Stockwerken gleichzeitig durch Decken und Wände
+    // — unspielbar. losClear rechnet dieselbe Linie, die auch ein Benni durch
+    // eine Mauer nicht schlagen darf.
+    if(!losClear(g.x,g.y+1.2,g.z,ex,ey,ez)) continue;
+    g.screamCd-=dt;
+    if(g.screamCd<=0){ g.screamCd=rnd(6,13); scream('spider'); }
+    g.cd-=dt;
+    if(g.cd>0) continue;
+    g.cd=rnd(GUARD_CD_MIN,GUARD_CD_MAX);
+    const dx=ex-g.x, dy=ey-(g.y+1.2), dz=ez-g.z, l=Math.hypot(dx,dy,dz)||1;
+    spawnGuardShot(g.x,g.y+1.2,g.z,dx/l*GUARD_SHOT_SP,dy/l*GUARD_SHOT_SP,dz/l*GUARD_SHOT_SP);
+  }
+}
+// Das Geschoss der Wache. Es nutzt dieselbe Würfel-Maschinerie wie Schleuder
+// und Basketball (_mkShot), trägt aber foe:true — und nur damit prüft
+// updateShots gegen den SPIELER statt gegen die Bennis. Als Bild dient 'coal':
+// ein dunkler, glühend gemeinter Klumpen, und der einzige Gegenstand im
+// Bestand, der nicht wie eine Zutat oder eine Waffe des Spielers aussieht.
+function spawnGuardShot(x,y,z,vx,vy,vz){
+  const s=_mkShot('coal',x,y,z,vx,vy,vz,false,{dmg:GUARD_DMG,grav:.12});
+  if(s) s.foe=true;
+  emitSfx('sling',x,y,z,.7);
+}
+
 // ------------------------------------------------------------------ Zielerfassung
 // Marsch durchs Blockraster statt Raycast gegen zehntausende Flächen.
 const _rd=new THREE.Vector3();
@@ -3377,6 +3512,17 @@ function attack(){
     if(dot<.4) continue;
     if(d<bestD){ bestD=d; best=m; }
   }
+  // Wachen im selben Kegel — eigene Liste, eigener Schadensweg (s. guards).
+  let bg=null,bgD=bestD;
+  for(const g of guards){
+    if(g.dead>0) continue;
+    const dx=g.x-player.x, dz=g.z-player.z, d=Math.hypot(dx,dz);
+    if(d>3.4||Math.abs(g.y-player.y)>2.4) continue;
+    const dot=(dx/d)*dir.x+(dz/d)*dir.z;
+    if(dot<.4) continue;
+    if(d<bgD){ bgD=d; bg=g; }
+  }
+  if(bg){ damageGuard(bg,heldDmg(),heldKb(),bg.x-player.x,bg.z-player.z); return true; }
   if(!best) return false;
   // Stoßrichtung: vom Spieler weg, mit der Wucht der Waffe in der Hand.
   hitMob(best,heldDmg(),heldKb(),best.x-player.x,best.z-player.z);
@@ -6014,6 +6160,7 @@ function update(dt){
     state.t+=dt;
     updateVitals(dt);
     if(isConnected()) updateMobsOnline(dt); else updateMobs(dt);
+    updateGuards(dt);                    // rein lokal, darum in beiden Zweigen (s. guards)
     updateDrops(dt);
     updateShots(dt);
     updateGrow();
