@@ -271,6 +271,39 @@
   .potcook .cell.res.empty{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.04);box-shadow:none}
   .potcook .arrow{font-size:20px;opacity:.6}
 
+  /* ---------- Das Rührspiel an der Trankstation ---------- */
+  /* Der Kessel von oben: ein Ring, auf dem ein glühender Strudel (.arc)
+     sitzt, darüber ein kreisender Zeiger (.needle). Der Ring entsteht aus
+     einem conic-gradient plus einem Loch (.hole) in der Fenstermitte-Farbe —
+     billiger und robuster als ein SVG mit stroke-dasharray, und beide teilen
+     sich denselben Nullpunkt (12 Uhr, im Uhrzeigersinn), worauf die
+     Treffer-Rechnung in brewInArc() beruht. */
+  .brewwrap{display:flex;justify-content:center;margin:10px 0 4px}
+  .dial{
+    position:relative;width:min(58vw,210px);height:min(58vw,210px);border-radius:50%;
+    background:#0f1c0f;border:2px solid #4a774a;cursor:pointer;
+    box-shadow:inset 0 0 22px rgba(0,0,0,.6)
+  }
+  .dial .arc,.dial .hole{position:absolute;border-radius:50%}
+  .dial .arc{inset:0}
+  .dial .hole{inset:15%;background:#1a2e1a;box-shadow:inset 0 0 16px rgba(0,0,0,.5)}
+  .dial .needle{
+    position:absolute;left:50%;top:50%;width:4px;height:44%;border-radius:2px;
+    background:linear-gradient(#fff,#ffd76a);transform-origin:50% 100%;
+    transform:translate(-50%,-100%);box-shadow:0 0 6px rgba(255,215,106,.8)
+  }
+  .dial .hub{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:34%;height:34%;display:flex;align-items:center;justify-content:center;
+    pointer-events:none
+  }
+  .dial .hub img.ic{width:70%;height:70%}
+  .brewpips{display:flex;align-items:center;justify-content:center;gap:6px;font-size:17px}
+  .brewpips .pip{opacity:.22;margin:0 1px}
+  .brewpips .pip.on{opacity:1;color:#ffd76a}
+  .brewpips .miss .pip.on{color:#ff7a7a}
+  .brewpips .sep{opacity:.35}
+
   /* Muster in Rezeptkarten */
   .patwrap{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0}
   .patwrap .pat{display:grid;gap:3px}

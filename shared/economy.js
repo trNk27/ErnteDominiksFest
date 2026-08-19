@@ -100,6 +100,24 @@ export const RECIPES=[
   {id:'sling',  rank:6.5,out:['sling',1],  pat:['KSK',' K ',' K '], key:{K:'stick',S:'string'}},
   // Kein Muster, nur eine Mischung — im Kochtopf würde man das nicht essen wollen.
   {id:'cracker',rank:7.5,out:['cracker',3],shapeless:['coal','fert']},
+  // --- Der Pagodentempel (siehe PAGODA in shared/world.js). Beide Rezepte
+  // liegen am Schrein ganz oben, hinter fünf Stockwerken Tempelwachen — sie
+  // sind bewusst NICHT bei den Jannessen zu haben, sonst wäre der Aufstieg
+  // eine Sehenswürdigkeit statt einer Aufgabe.
+  //
+  // Die Trankstation: Kohle als Feuer darunter, Stein als Fassung, Holz als
+  // Gestell. Drei Felder breit, damit sie wie Kochtopf und Truhe nur an der
+  // Werkbank entsteht — das steht nirgends als Merkmal, es ergibt sich
+  // daraus, dass nichts Breiteres als zwei ins Rucksackraster passt.
+  {id:'alchemy',rank:13,out:['alchemy',1], pat:[' C ','SLS','LLL'],
+   key:{C:'coal',S:'stone',L:'log'}},
+  // LSDominik: vier Pilze, vier Dominiks, und nichts davon ist zu erraten
+  // (secret) — ohne den Schrein bleibt die Station ratlos. station:'alchemy'
+  // hält es zugleich aus dem Kochtopf heraus: was gebraut wird, wird nicht
+  // gekocht.
+  {id:'lsd',rank:14,out:['lsd',1], station:'alchemy', secret:true,
+   shapeless:['mushroom','mushroom','mushroom','mushroom',
+              'dominik','dominik','dominik','dominik']},
 ];
 
 // ------------------------------------------------------------------ Angebote

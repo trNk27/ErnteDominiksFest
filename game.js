@@ -775,6 +775,24 @@ const TEX={
     g.fillStyle='#caa96a'; g.fillRect(6,2,4,2);                    // der Korken
     g.fillStyle='#ff8c1a'; g.fillRect(7,13,2,1);                   // die Flamme darunter
   }),
+  // LSDominik: ein kleines Essbares, das aussieht, als gehörte es nicht in
+  // diese Welt. Ein Dominik-runder Grundkörper, aber die Farben beissen sich
+  // absichtlich — Magenta gegen Giftgrün gegen Cyan, in Ringen von aussen
+  // nach innen. Man soll es im Rucksack sofort von der Frucht unterscheiden,
+  // aus der es gemacht ist.
+  lsd    :pixTex(g=>{
+    const ring=['#c93fd0','#4ade4a','#2fd0d0','#ffe14a','#ff5cae'];
+    for(let y=1;y<15;y++) for(let x=1;x<15;x++){
+      const dx=x-7.5, dy=y-7.5, d=Math.hypot(dx,dy);
+      if(d>6.6) continue;
+      // Spirale statt konzentrischer Ringe: der Winkel wandert mit dem
+      // Radius, dadurch dreht sich das Muster sichtbar in sich hinein.
+      const a=Math.atan2(dy,dx)+d*.9;
+      g.fillStyle=ring[(Math.round((a/Math.PI+2)*2.5)+Math.round(d))%ring.length];
+      g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='rgba(255,255,255,.55)'; g.fillRect(5,4,2,2);
+  }),
 };
 
 // ------------------------------------------------------------------ Bruchbilder
@@ -918,6 +936,11 @@ const ITEMS={
   paper   :{ic:'📃',nm:'Reispapierwand', block:'paper'},
   gravel  :{ic:'🔘',nm:'Kies',           block:'gravel'},
   alchemy :{ic:'⚗️',nm:'Trankstation',   block:'alchemy'},
+  // LSDominik — gebraut an der Trankstation aus vier Pilzen und vier
+  // Dominiks (siehe RECIPES). Sättigt kaum: man isst es nicht, weil man
+  // Hunger hat. trip markiert, was beim Essen wirklich passiert — siehe den
+  // Ess-Zweig in useRight() und startTrip() weiter unten.
+  lsd     :{ic:'🌀',nm:'LSDominik',      food:2, trip:true},
 };
 
 // ------------------------------------------------------------------ Geld
@@ -1982,6 +2005,260 @@ function updatePots(dt){
   refreshPotWindow();
 }
 
+// ------------------------------------------------------------------ Trankstation
+// Die Schwester des Kochtopfs, mit einem entscheidenden Unterschied: hier
+// wird nicht gewartet, hier wird gerührt. Der Topf kocht auf einer Uhr und
+// ist server-arbitriert (pot-add/pot-start/pot-grant), weil zwei Spieler
+// sonst dasselbe Gericht doppelt herausholen könnten. Die Station braucht das
+// nicht, weil sie gar keine Zeit vergehen lässt: Brauen ist ein Handgriff,
+// der sofort gelingt oder sofort misslingt.
+//
+// EHRLICH GESAGT ist das zugleich ihre Grenze: die Station ist rein lokal.
+// Ihr Inhalt wird nicht synchronisiert, zwei Spieler an derselben Station
+// sehen jeder ihren eigenen Kessel und können jeder ein eigenes LSDominik
+// herausholen. Für ein Rezept, das man erst nach fünf Stockwerken Tempel
+// bekommt, ist das verschmerzbar — als Fehler soll es trotzdem hier stehen
+// und nicht erst gefunden werden.
+const ALCH_CAP=8;                        // vier Pilze plus vier Dominiks, mehr braucht kein Rezept
+const alchs=new Map();                   // "x,y,z" → {items:[{id,n}]}
+const alchCount=a=>a.items.reduce((n,i)=>n+i.n,0);
+function alchAt(cell){
+  const k=K(cell.x,cell.y,cell.z);
+  let a=alchs.get(k);
+  if(!a){ a={items:[]}; alchs.set(k,a); }
+  return a;
+}
+// Hineinlegen/herausnehmen wie beim Topf (potAdd/potTake), nur ohne dessen
+// Server-Meldung — s. der Absatz über der Datei-Sektion.
+function alchAdd(cell,id,n){
+  const a=alchAt(cell);
+  let put=0;
+  for(const it of a.items){
+    if(it.id!==id) continue;
+    const t=Math.min(n-put,STACK-it.n);
+    it.n+=t; put+=t; if(put>=n) return put;
+  }
+  while(put<n&&a.items.length<ALCH_CAP){
+    const t=Math.min(n-put,STACK);
+    a.items.push({id,n:t}); put+=t;
+  }
+  return put;
+}
+function alchTake(cell,i,n){
+  const a=alchAt(cell), it=a.items[i];
+  if(!it) return 0;
+  const t=Math.min(n,it.n);
+  it.n-=t; if(it.n<=0) a.items.splice(i,1);
+  return t;
+}
+// Dieselbe Zutatenprüfung wie potRecipeItems, nur für die andere Station.
+// Die Trennung ist der ganze Punkt: was gebraut wird, wird nicht gekocht,
+// und ein Kochtopfrezept darf hier niemals aufgehen.
+function alchRecipeItems(items){
+  const ids=[];
+  for(const it of items) for(let i=0;i<it.n;i++) ids.push(it.id);
+  ids.sort();
+  return RECIPES.find(r=>r.station==='alchemy'&&r.shapeless&&
+    r.shapeless.length===ids.length&&
+    r.shapeless.slice().sort().every((v,i)=>v===ids[i]))||null;
+}
+function alchTip(cell){
+  const a=alchs.get(K(cell.x,cell.y,cell.z));
+  if(!a||!a.items.length) return '⚗️';
+  return '⚗️ '+a.items.map(i=>ITEMS[i.id].ic+(i.n>1?i.n:'')).join(' ');
+}
+let openAlchCell=null;
+function openAlch(cell){
+  openAlchCell=cell;
+  alchAt(cell);
+  panel='alch';
+  SND.chest();
+  renderAlch(false);
+}
+function alchGrid(a){
+  let h='<div class="invgrid potgrid">';
+  for(let i=0;i<ALCH_CAP;i++) h+=`<div class="cell" data-alch="${i}">${stackHTML(a.items[i])}</div>`;
+  return h+'</div>';
+}
+function clickAlchCell(i,one){
+  if(!openAlchCell) return;
+  const a=alchAt(openAlchCell);
+  if(!carry){
+    const cur=a.items[i];
+    if(!cur) return;
+    const got=alchTake(openAlchCell,i,one?1:cur.n);
+    if(got>0) carry={id:cur.id,n:got};
+  }else{
+    const got=alchAdd(openAlchCell,carry.id,one?1:carry.n);
+    if(got<=0){ SND.fail(); return; }
+    carry.n-=got; if(carry.n<=0) carry=null;
+  }
+  SND.tap();
+  rerenderPanel();
+}
+function alchSideHTML(){
+  const brews=RECIPES.filter(r=>r.station==='alchemy'&&known.has(r.id));
+  return '<h3>📜 In der Trankstation</h3>'+
+    (brews.length?brews.map(recCard).join('')
+      :'<p class="sidenote">Du kennst noch kein Gebräu. Das Rezept liegt im Schrein ganz oben in der Pagode.</p>');
+}
+function renderAlch(keep=true){
+  if(!openAlchCell) return;
+  const a=alchAt(openAlchCell);
+  const r=a.items.length?alchRecipeItems(a.items):null;
+  const shown=r&&known.has(r.id);
+  const off=!shown;
+  showModal(`<h2>⚗️ Trankstation</h2>`+
+    alchGrid(a)+
+    `<div class="potcook">
+      <button class="potbtn${off?' off':''}" data-act="brew">Brauen</button>
+      <div class="arrow">➜</div>
+      <div class="cell res${shown?'':' empty'}">${shown?icon(r.out[0]):''}</div>
+    </div>`+
+    `<p class="hint">${a.items.length
+      ?(shown?'Rühren musst du selbst.':'Daraus wird nichts, was du kennst.')
+      :'Zutaten hineinziehen.'}</p>`+
+    '<h3>Rucksack</h3>'+invGrid()+
+    '<div class="btnrow"><button class="primary" data-act="close">Schließen</button></div>',
+    keep,alchSideHTML());
+}
+
+// ---- Das Rührspiel. Brauen soll ein Handgriff sein und kein Knopf: ein
+// Zeiger kreist über dem Kessel, irgendwo auf dem Ring glüht ein Strudel, und
+// man muss ihn dreimal treffen. Jeder Treffer verschiebt den Strudel, macht
+// ihn schmaler und den Zeiger schneller — deshalb sind drei Treffer eine
+// echte Forderung und nicht dreimal dasselbe. Drei Fehlversuche, und die
+// Zutaten sind hin: es gibt 🤢 angebrannte Pampe, genau wie aus einem
+// verpfuschten Kochtopf. Dieselbe Strafe für denselben Fehler.
+const BREW_HITS=3, BREW_TRIES=3;
+let brew=null;                           // {cell,r,ang,spd,arc0,arcW,hits,misses,raf}
+// EINE Stelle, die den Lauf beendet — und hideModal ruft sie ebenfalls (s.
+// dort). Ohne das liefe die Bildschleife nach dem Schließen des Fensters
+// ewig weiter und drehte einen Zeiger, den niemand mehr sieht; genau der
+// klassische Fehler bei so einem Spiel. Weil jeder Ausgang (Sieg, Pleite,
+// Esc, Schließen) hier durchmuss, kann kein Pfad daran vorbei.
+function brewStop(){
+  if(!brew) return;
+  cancelAnimationFrame(brew.raf);
+  brew=null;
+}
+function brewStart(cell){
+  const a=alchAt(cell);
+  const r=a.items.length?alchRecipeItems(a.items):null;
+  if(!r){ toast('⚗️ Daraus wird nichts.','warn',1800); SND.fail(); return; }
+  if(!known.has(r.id)){ toast('⚗️ Du weißt nicht, was daraus werden soll.','warn',2400); SND.fail(); return; }
+  brewStop();
+  brew={cell,r,ang:0,spd:170,arc0:rnd(0,360),arcW:74,hits:0,misses:0,raf:0};
+  renderBrew();
+  brewLoop(performance.now());
+}
+function renderBrew(){
+  if(!brew) return;
+  const pips=(n,full,ch)=>Array.from({length:n},(_,i)=>
+    `<span class="pip${i<full?' on':''}">${ch}</span>`).join('');
+  showModal(`<h2>⚗️ Rühren</h2>
+    <p class="hint">Triff den glühenden Strudel — dreimal. <b>Leertaste</b>, Klick oder Tipp.</p>
+    <div class="brewwrap">
+      <div class="dial" data-act="stir">
+        <div class="arc" id="brewArc"></div>
+        <div class="hole"></div>
+        <div class="needle" id="brewNeedle"></div>
+        <div class="hub">${icon(brew.r.out[0])}</div>
+      </div>
+    </div>
+    <div class="brewpips">
+      <span>${pips(BREW_HITS,brew.hits,'●')}</span>
+      <span class="sep">·</span>
+      <span class="miss">${pips(BREW_TRIES,BREW_TRIES-brew.misses,'♥')}</span>
+    </div>
+    <div class="btnrow"><button class="primary" data-act="stir">Rühren</button>
+      <button data-act="close">Abbrechen</button></div>`,true);
+  paintBrew();
+}
+// Nur die zwei bewegten Teile anfassen statt das Fenster neu zu bauen — ein
+// showModal() pro Bild würde den ganzen Rucksack darunter neu zeichnen.
+function paintBrew(){
+  if(!brew) return;
+  const arc=el('brewArc'), nd=el('brewNeedle');
+  if(!arc||!nd) return;
+  arc.style.background=`conic-gradient(from ${brew.arc0}deg,`+
+    `#ffd76a 0 ${brew.arcW}deg, rgba(0,0,0,0) ${brew.arcW}deg)`;
+  nd.style.transform=`translate(-50%,-100%) rotate(${brew.ang}deg)`;
+}
+function brewLoop(now){
+  if(!brew) return;
+  const dt=Math.min((now-(brew.last||now))/1000,.05);
+  brew.last=now;
+  brew.ang=(brew.ang+brew.spd*dt)%360;
+  paintBrew();
+  brew.raf=requestAnimationFrame(brewLoop);
+}
+// Liegt der Zeiger im Strudel? Beide Winkel laufen im Uhrzeigersinn ab 12 Uhr,
+// conic-gradient und die Nadel-Drehung teilen sich damit denselben Nullpunkt —
+// darum genügt hier die Differenz modulo 360.
+const brewInArc=()=>((brew.ang-brew.arc0)%360+360)%360<brew.arcW;
+function brewStir(){
+  if(!brew) return;
+  if(brewInArc()){
+    brew.hits++;
+    if(brew.hits>=BREW_HITS) return brewFinish(true);
+    // Enger und schneller — und der Strudel springt weit genug weg, dass man
+    // ihn nicht zweimal mit demselben Rhythmus erwischt.
+    brew.arcW=Math.max(26,brew.arcW-16);
+    brew.spd+=85;
+    brew.arc0=(brew.arc0+rnd(110,250))%360;
+    tone(660,.09,'triangle',.09); tone(990,.12,'triangle',.09,.08);
+  }else{
+    brew.misses++;
+    SND.fail();
+    if(brew.misses>=BREW_TRIES) return brewFinish(false);
+  }
+  renderBrew();
+}
+function brewFinish(won){
+  const {cell,r}=brew;
+  brewStop();
+  const a=alchAt(cell);
+  a.items.length=0;                      // die Zutaten sind so oder so verbraucht
+  if(won){
+    giveOrDrop(r.out[0],r.out[1]);
+    state.crafted++;
+    if(!known.has(r.id)) learnRecipe(r.id);
+    emitSfx('craft',player.x,player.y+1,player.z);
+    toast('⚗️ '+ITEMS[r.out[0]].nm+'!','good',2600);
+  }else{
+    giveOrDrop('junk',1);
+    toast('⚗️ Verrührt — angebrannte Pampe.','bad',2600);
+  }
+  updateHUD();
+  openAlchCell=cell;
+  renderAlch(false);
+}
+
+// ------------------------------------------------------------------ Der Schrein
+// Das Ende des Aufstiegs. Beide Rezepte des Tempels liegen hier und nirgends
+// sonst — die Jannessen haben sie nicht, das Raster verrät sie nicht
+// (secret), und die Trankstation selbst schweigt ohne sie. Wer oben ankommt,
+// bekommt sie beide auf einmal; learnRecipe() schickt sie zugleich an alle
+// Mitspieler (s. dort), damit der Aufstieg einer für die ganze Runde zählt.
+const SHRINE_GIFTS=['alchemy','lsd'];
+function openShrine(){
+  const fresh=SHRINE_GIFTS.filter(id=>!known.has(id));
+  for(const id of SHRINE_GIFTS) learnRecipe(id);
+  SND.book();
+  const cards=SHRINE_GIFTS.map(id=>{
+    const r=RECIPES.find(x=>x.id===id);
+    return `<h3>${ITEMS[r.out[0]].nm}</h3>`+patHTML(r);
+  }).join('');
+  showModal(`<h2>⛩️ Der Schrein</h2>
+    <p>Fünf Stockwerke, und oben steht nur das hier: eine Schale, in der es
+    schwach glimmt, und zwei Zeichnungen auf Reispapier. ${fresh.length
+      ?'Du prägst sie dir ein.'
+      :'Du kennst sie längst — sie stehen trotzdem noch da.'}</p>
+    ${cards}
+    <div class="btnrow"><button class="primary" data-act="close">Hinabsteigen</button></div>`);
+}
+
 // ------------------------------------------------------------------ Bewohner
 const CHARS=[
   {key:'manni',name:'Manni-Markt',h:1.9,x:MARKET.x,z:MARKET.z,color:'#ff6b4a',
@@ -2807,6 +3084,7 @@ function updateTarget(){
   const tip=el('tip');
   const b=target?BLOCKS[target.type]:null;
   const atPot=!aimed&&!aimedSign&&!aimedVehicle&&b&&b.use==='pot'?target.cell:null;
+  const atAlch=!aimed&&!aimedSign&&!aimedVehicle&&b&&b.use==='alchemy'?target.cell:null;
   // Nur noch der Name — das goldene Fadenkreuz (#cross.hot) sagt längst,
   // dass hier etwas geht; welche Taste, steht in der Tastenlegende.
   const txt=aimed?aimed.name
@@ -2814,6 +3092,7 @@ function updateTarget(){
            :aimedVehicle?ITEMS[VEHICLES[aimedVehicle.kind].item].ic+' '+VEHICLES[aimedVehicle.kind].nm+
              (aimedVehicle.rider!=null?' 🔒':'')
            :atPot?potTip(atPot)
+           :atAlch?alchTip(atAlch)
            :b&&b.use?b.nm:'';
   if(tip.textContent!==txt) tip.textContent=txt;
   el('cross').classList.toggle('hot',!!aimed||!!aimedSign||!!aimedVehicle||(!!target&&!!BLOCKS[target.type].use));
@@ -2896,6 +3175,14 @@ function breakBlock(x,y,z,t){
       pots.delete(K(x,y,z));
     }
   }
+  // Dasselbe für die Trankstation — was drinliegt, gehört dem Spieler.
+  if(t==='alchemy'){
+    const a=alchs.get(K(x,y,z));
+    if(a){
+      for(const it of a.items) spawnDrop(it.id,it.n,x,y+.4,z,rnd(-1,1),1.8,rnd(-1,1));
+      alchs.delete(K(x,y,z));
+    }
+  }
   // Eine Truhe voller Inhalt gibt beim Abbauen alle 24 Fächer wieder her —
   // spawnDrop() broadcastet selbst (Phase 6), kein weiterer Sync-Code nötig.
   if(t==='chest'){
@@ -2965,6 +3252,8 @@ function useRight(){
     if(u==='chest') return openChest(target.cell);
     if(u==='bench') return openCraft('bench');
     if(u==='pot')   return openPot(target.cell);
+    if(u==='alchemy') return openAlch(target.cell);
+    if(u==='shrine')  return openShrine();
   }
   // 3. Hacken und säen — vor dem Essen, sonst isst man die Saat auf
   if(it&&it.hoe&&target){ till(target.cell); return; }
@@ -3334,6 +3623,7 @@ function patHTML(r){
   else for(const row of rows) for(let x=0;x<w;x++)
     g+=`<div class="pc">${row[x]?icon(row[x]):''}</div>`;
   const note=r.station==='pot'?'In den 🍲 Kochtopf werfen — Reihenfolge egal.'
+            :r.station==='alchemy'?'In die ⚗️ Trankstation — Reihenfolge egal, aber gerührt werden will es.'
             :r.shapeless?'Anordnung egal.':'';
   return `<div class="patwrap">
     <div class="pat" style="grid-template-columns:repeat(${w},30px)">${g}</div>
@@ -3344,8 +3634,8 @@ function patHTML(r){
 }
 function recipeCard(r,from){
   const rows=patRows(r);
-  const st=Math.max(rows.length,...rows.map(x=>x.length))>2
-    ?(r.station==='pot'?'🍲 Kochtopf':'🛠️ Werkbank'):'';
+  const st=r.station||Math.max(rows.length,...rows.map(x=>x.length))>2
+    ?(r.station==='pot'?'🍲 Kochtopf':r.station==='alchemy'?'⚗️ Trankstation':'🛠️ Werkbank'):'';
   showModal(`<h2>📜 ${ITEMS[r.out[0]].nm}</h2>${patHTML(r)}
     <p style="font-size:12.5px;opacity:.85;text-align:center">
       ${st?st+' · ':''}steht ab jetzt im Rezeptbuch — <b>E</b> öffnet es.</p>
@@ -3432,6 +3722,7 @@ function rerenderPanel(){
   if(panel==='chest') renderChest();
   else if(panel==='market') openMarket(marketChar,true);
   else if(panel==='pot') renderPot();
+  else if(panel==='alch') renderAlch();
   else renderCraft();
 }
 // side ist die Rezeptleiste neben dem Fenster; ohne sie bleibt sie weg.
@@ -3449,6 +3740,7 @@ function hideModal(){
   dropCarry();
   modal.classList.add('hidden'); state.paused=false; openChestCell=null; craftStation=null;
   tradePartner=null; mining=false; openSignCell=null; openPotCell=null; panel=null;
+  brewStop(); openAlchCell=null;
 }
 const modalOpen=()=>!modal.classList.contains('hidden');
 
@@ -3646,7 +3938,7 @@ function updateItemTip(){
   if(carry||document.pointerLockElement){ tipEl.style.display='none'; return; }
   const node=document.elementFromPoint?.(mouseX,mouseY);
   const cell=node&&node.closest?.(
-    '[data-slot],[data-bar],[data-g],[data-chest],[data-pot],[data-want],[data-act],[data-shop],[data-accept]');
+    '[data-slot],[data-bar],[data-g],[data-chest],[data-pot],[data-alch],[data-want],[data-act],[data-shop],[data-accept]');
   const id=itemUnder(cell);
   if(!id){ tipEl.style.display='none'; return; }
   if(id==='accept') tipEl.innerHTML='<b>Mannis Annahme</b><i>Stapel ablegen — verkauft sofort</i>';
@@ -3756,6 +4048,7 @@ function togglePause(){
 function useCell(c,one){
   if(c.dataset.chest!=null) clickChestCell(+c.dataset.chest,one);
   else if(c.dataset.pot!=null) clickPotCell(+c.dataset.pot,one);
+  else if(c.dataset.alch!=null) clickAlchCell(+c.dataset.alch,one);
   else if(c.dataset.slot!=null) clickCell({k:'i',i:+c.dataset.slot},one);
   else if(c.dataset.accept!=null) clickAccept(one);
   else clickCell({k:'g',i:+c.dataset.g},one);
@@ -3772,7 +4065,7 @@ function useCell(c,one){
 //                 Fensterrand hinauszieht, wirft in die Welt
 let cellHoldT=0, cellHeld=null, cellDidHold=false, cellDrag=false, cellX=0, cellY=0;
 mbox.addEventListener('pointerdown',e=>{
-  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-pot],[data-accept]');
+  const c=e.target.closest('[data-slot],[data-g],[data-chest],[data-pot],[data-alch],[data-accept]');
   if(!c) return;
   e.preventDefault(); e.stopPropagation();
   ac();
@@ -3796,6 +4089,8 @@ mbox.addEventListener('click',e=>{
   if(act==='craft'){ craftFromGrid(); return; }
   if(act==='trade'){ doTrade(); return; }
   if(act==='cook'){ cookPot(openPotCell); return; }
+  if(act==='brew'){ brewStart(openAlchCell); return; }
+  if(act==='stir'){ brewStir(); return; }
   if(act==='close') hideModal();
   else if(act==='takeall'){ takeAllFromChest(); }
   else if(act==='help') openIntro();
@@ -5656,6 +5951,11 @@ addEventListener('keydown',e=>{
     modalOpen()?hideModal():openCraft(null);
     return;
   }
+  // Läuft gerade das Rührspiel, gehört die Leertaste ihm — und zwar bevor
+  // irgendein anderer Zweig sie sieht. Springen kann sie ohnehin nicht
+  // auslösen (ein offenes Fenster pausiert), aber sie soll auch nicht
+  // wirkungslos verpuffen.
+  if(brew&&e.code==='Space'){ e.preventDefault(); brewStir(); return; }
   if(e.code==='KeyP'){ e.preventDefault(); ac(); togglePause(); return; }
   // Sicht umschalten: V wie "view", F5 zusätzlich für alle, die es aus dem
   // Vorbild so kennen (preventDefault, sonst lädt der Browser die Seite neu).
