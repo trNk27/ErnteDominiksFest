@@ -35,6 +35,17 @@ für alle gleich). Was **nicht** geteilt ist und nur im eigenen Browser bleibt:
 Rucksack, Leben, Hunger, Position — keine Accounts, kein Login, keine
 Spielerdaten auf dem Server.
 
+**Man hört einander.** Was ein Mitspieler tut, klingt jetzt auch bei dir —
+Abbauen, Setzen, Essen, Bauen, Truhen, ein Schuss, eine Explosion, ein
+bellender Hund. Und zwar **von dort, wo es passiert**: leiser mit der
+Entfernung, dumpfer, und auf der Seite, auf der es liegt. Ab 48 Blöcken
+bleibt es still — was man ohnehin nicht mehr sieht, soll nicht als ferner
+Brei im Ohr hängen. Die eigenen Geräusche klingen unverändert wie immer.
+
+Nicht geteilt wird, was ohnehin schon bei allen gleich läuft (Vogelgezwit-
+scher, Tag- und Nachtmusik) oder was nur einen angeht: Schritte, der eigene
+Schmerzenslaut, Klicks in der Leiste, das Aufheben eines Gegenstands.
+
 **Kommen und Gehen** wird kurz eingeblendet: „👋 Spieler 3 ist dazugekommen." bzw.
 „👋 Spieler 3 hat das Spiel verlassen." — unter demselben Namen, der dem Mitspieler auch
 über dem Kopf hängt. Wer die Verbindung verliert statt bewusst aufzuhören, erscheint
@@ -141,6 +152,7 @@ danach sucht, stolpert auch nicht hinein.
 | `Q` | Gegenstand einen Block weit vor sich werfen · `⇧Q` den ganzen Stapel |
 | `E` | Inventar mit Raster und Rezeptbuch |
 | `1`–`9` / Mausrad | Platz in der Inventarleiste wählen |
+| `R` | **explodierenden Hund werfen** — nur im 🌀 Rausch |
 | `P` | Pause |
 
 Eine Stufe steigst du automatisch hoch, ab zwei Blöcken ist es eine Wand — für dich
@@ -381,6 +393,7 @@ sättigt, wieviel Schaden er macht, wofür er als Zutat taugt.
 | 🧑‍🌾 Hacke | 🪨🪨· / ·🥢· / ·🥢· | Werkbank |
 | 🏹 Schleuder | 🥢🧵🥢 / ·🥢· / ·🥢· | Werkbank |
 | 🧨 Knaller ×3 | ⚫ · 🧪 | Anordnung egal |
+| ⚗️ Trankstation | ·⚫· / 🪨🪵🪨 / 🪵🪵🪵 | Werkbank · Rezept vom ⛩️ Schrein |
 
 ## 🧑‍🌾 Das Feld
 
@@ -403,6 +416,97 @@ Wild wächst nichts nach. Damit die Ernte nicht ausgeht, legst du dir ein **Feld
 Der gezogene Dominik hängt an keinem Stamm mehr: er sitzt als Strauch im Beet, in
 Griffhöhe. Ein Feld voll davon neben dem Kochtopf und dem Markt ist die kürzeste
 Strecke zwischen Ernte und Kasse.
+
+## ⛩️ Der Pagodengarten
+
+Weit im Nordwesten, gut achtzig Blöcke vom Startpunkt, steht etwas, das
+niemand dorthin gebaut hat: ein **japanischer Garten**. Geharkter **Kies**,
+ein **Torii** über dem Weg, **Steinlaternen**, eine niedrige Mauer mit
+Ziegelabdeckung — und ein Dutzend **Kirschbäume**, die nichts tragen außer
+Blüten. Die Laternen stehen nicht nur herum: sie zählen als Fackeln und
+halten die Bennis fern. Der Garten ist nachts wirklich ein sicherer Ort.
+
+Ein **Teich** ist da auch, nur trocken — ein Becken aus Stein mit Sandgrund
+und Trittsteinen. Das ist kein Versehen: Wasser ist in diesem Spiel kein
+Block, sondern der Raum unter dem Wasserspiegel über einem Flussbett, und
+der Garten liegt darüber. Echtes Wasser ist dort baulich unmöglich.
+
+### Die Pagode
+
+In der Mitte steht der Tempel: **fünf Stockwerke, 36 Blöcke hoch**, von
+13×13 nach oben auf 5×5 zulaufend, mit geschwungenen Ziegeldächern. Innen
+führt in **jedem Stockwerk in einer anderen Ecke** eine Wendeltreppe weiter
+nach oben — der Aufstieg dreht sich also um das Gebäude herum.
+
+Leer ist er nicht. Auf jedem Stockwerk stehen **Tempelwachen**: Bennis, die
+größer sind als gewöhnliche, rotgolden wie Statuen, und die sich **nie vom
+Fleck rühren**. Sie laufen nicht hinter dir her — sie **schießen**. Durch
+Wände und Decken kommen ihre Geschosse nicht, es kämpft also immer nur das
+Stockwerk gegen dich, in dem du gerade stehst. Erschlagen kommen sie nach
+gut einer halben Minute wieder; der Tempel bleibt nicht leergeräumt.
+
+Ganz oben, im offenen Pavillon des fünften Stocks, steht der **Schrein**.
+Er ist unzerstörbar, und er hat die beiden letzten Rezepte des Spiels — bei
+keinem Jannes zu haben, durch kein Herumprobieren zu erraten. Wer ihn
+anspricht, lernt beide auf einmal, **und alle im Zimmer lernen sie mit**.
+Ein Aufstieg reicht für die ganze Runde.
+
+## ⚗️ Die Trankstation
+
+Das erste Rezept vom Schrein. Gebaut wird sie an der **Werkbank**:
+
+| Ergebnis | Muster | |
+|---|---|---|
+| ⚗️ Trankstation | ·⚫· / 🪨🪵🪨 / 🪵🪵🪵 | Werkbank |
+
+Hingestellt und mit Rechtsklick geöffnet, sieht sie aus wie der Kochtopf:
+Zutaten hineinziehen, ein Feld zeigt vorher, was daraus wird. Nur heißt der
+Knopf **„Brauen"** — und der kocht nicht, der **öffnet ein Spiel**.
+
+**Rühren im Takt.** Über dem Kessel kreist ein Zeiger, irgendwo auf dem Ring
+glüht ein Strudel, und den musst du **dreimal treffen** — `␣ Leertaste`,
+Mausklick oder Fingertipp, alle drei gehen. Jeder Treffer macht den Strudel
+**schmaler**, den Zeiger **schneller**, und wirft den Strudel weit genug
+weg, dass derselbe Rhythmus nicht zweimal trägt. Du hast **drei Fehlgriffe**
+frei; beim vierten ist alles hin und es gibt 🤢 **angebrannte Pampe** —
+dieselbe Strafe, die der Kochtopf für einen verpfuschten Ansatz auch kennt.
+
+Die Station ist bewusst **nicht mit dem Server abgeglichen**, anders als der
+Kochtopf. Der kocht auf einer Uhr, und zwei Spieler könnten dasselbe Gericht
+doppelt herausholen, wenn niemand schiedsrichtert. Gebraut wird dagegen
+sofort oder gar nicht, da gibt es nichts zu entscheiden — dafür sieht an
+derselben Station jeder seinen eigenen Kessel.
+
+## 🌀 LSDominik
+
+Das zweite Rezept vom Schrein, und das einzige, das man in der Trankstation
+brauen kann:
+
+| Gebräu | Zutaten |
+|---|---|
+| 🌀 **LSDominik** | 4× 🍄 · 4× 🍑 |
+
+Es sättigt fast nichts. Man isst es nicht, weil man Hunger hat. Man isst es,
+weil danach **fünfundsiebzig Sekunden** lang Folgendes gilt:
+
+- **Die Welt kippt.** Die Farben drehen sich durch den ganzen Farbkreis,
+  Himmel und Nebel wandern mit, und das Bild atmet. Die Anzeigen bleiben
+  lesbar — Herzen und Leiste macht der Rausch mit Absicht nicht mit.
+- **Du fliegst.** Keine Schwerkraft mehr: `␣` steigt, `⇧` sinkt, ohne Taste
+  stehst du in der Luft. Der Sturz danach zählt wieder ganz normal — aber
+  der Rausch selbst setzt dich nie zu Boden.
+- **Du wirfst explodierende Hunde.** `R` (am Handy erscheint dafür ein
+  eigener Knopf 🐕, aber nur im Rausch). Sie bellen, und wo einer aufschlägt,
+  **ist Gelände gewesen** — ein Loch von gut drei Blöcken Halbmesser, mitsamt
+  allem, was darin stand. Was herausbricht, lässt sich aufsammeln wie jeder
+  abgebaute Block, und deine Mitspieler sehen das Loch auch. Nur das
+  **Grundgestein** bleibt: das ist der Boden der Welt.
+
+  Der 🧨 Knaller zerlegt bis heute bewusst **keine** Blöcke. Der Hund ist die
+  Ausnahme, und er ist es mit Ansage.
+
+Läuft der Rausch aus, blendet alles über ein paar Sekunden zurück, statt in
+einem Bild umzuschalten.
 
 ## Kochen
 
@@ -626,6 +730,9 @@ jedem Start dieselbe, kein Speicherstand nötig.
 - Wild wachsende **🍑 Dominiks, 🍄 Pilze und 🌶️ Pfeffer** kommen **nicht wieder** —
   wer dauerhaft ernten will, legt sich ein 🧑‍🌾 **Feld** an.
 - **18 Truhen**, sechs davon in Dörfern; **11 Jannessen**, die umherstreifen.
+- Der **⛩️ Pagodengarten** im Nordwesten (siehe oben) — auf einem eingeebneten
+  Plateau wie ein Dorf, nur dass hier kein Baum, kein Busch und kein Pfeffer
+  wächst: der Garten ist geharkt.
 - Rund um den Startpunkt liegt ein **flaches Tal** ohne Bäume — Platz zum Bauen, und
   darin der **🛒 Manni-Markt**.
 - Ganz unten liegt **Grundgestein**: zwölf Blöcke unter dem Meeresspiegel ist Schluss,
@@ -645,7 +752,22 @@ allerdings einen Baum weniger oder einen neuen Nachbarn vor der Tür haben — u
 einem Dorf gebaut hat, findet seinen Anbau womöglich neben einer anderen Hauswand
 wieder.
 
-### Die Welt wurde einmal zurückgesetzt
+### Die Welt wurde ein zweites Mal zurückgesetzt
+
+Mit dem Pagodengarten fängt wieder alles von vorn an — und diesmal nicht aus
+Geschmack, sondern weil es nicht anders geht. Der Garten setzt Blöcke
+dorthin, wo bisher offenes Gelände war. Gesetzte und abgebaute Blöcke
+schlagen aber jede neu erzeugte Landschaft: eine alte Mauer stünde jetzt
+mitten im Tempel, und ein alter Abbau risse ein Loch in eine Tempelwand, die
+es zum Zeitpunkt des Abbaus noch gar nicht gab.
+
+Technisch dieselben zwei Schlüssel wie beim ersten Mal, eine Nummer weiter:
+der Server speichert unter `world3` (siehe `STORAGE_KEY` in
+`party/src/game-server.js`), der Browser unter `edf_player3`/`edf_slots3`
+(siehe `savePersist` in `game.js`). Der alte Stand ist wieder nicht gelöscht,
+nur liegengelassen.
+
+### Die Welt wurde schon einmal zurückgesetzt
 
 Mit den Wurfweiten, dem Monstertruck und den Skins fängt alles von vorn an: gesetzte und
 abgebaute Blöcke, Truhen, Felder, Fackeln, Schilder, Fahrzeuge, die gemeinsame Kasse und
@@ -663,6 +785,7 @@ Schlüssel zurück und hat die alte Welt wieder.
 
 - `index.html` + `game.js` — das Spiel (three.js, lokal unter `vendor/`, MIT)
 - `vendor/font/` — Pixelify Sans als Schrift (SIL Open Font License 1.1, `OFL.txt` liegt dabei)
+- `dog_bark.wav` — das Bellen der explodierenden Hunde
 - `*.png` — die Charaktere und Dominik als Frucht
 - `sprites/items/` — die Gegenstände für Leiste, Raster, Truhe und Rezeptbuch; dieselben
   Bilder tragen auch die Würfel, die herumliegen
