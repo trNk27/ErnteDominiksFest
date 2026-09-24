@@ -426,8 +426,15 @@ renderer.setPixelRatio(Math.min(devicePixelRatio||1,TOUCH?1.25:1.75));
 // Am Schreibtisch ist das keine Rede wert, auf dem Telefon ist es der teuerste
 // einzelne Posten — und ohne Schatten sieht die Klötzchenwelt zwar flacher,
 // aber immer noch richtig aus. Lieber flach als weiß (siehe VIEW oben).
-renderer.shadowMap.enabled=!TOUCH;
-renderer.shadowMap.type=THREE.PCFShadowMap;
+const SHADOWS=!TOUCH;
+renderer.shadowMap.enabled=SHADOWS;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+// Ein Filmkurven-Abgleich statt harter Abschneidekante: helle Stellen (Sonne
+// auf Sand, Schnee, die Fackel dicht vor der Wand) laufen weich aus, statt
+// flächig weiß zu werden. "Neutral" lässt dabei die Farben, wie sie sind —
+// die Texturen sollen nicht plötzlich ausgeblichen aussehen.
+renderer.toneMapping=THREE.NeutralToneMapping;
+renderer.toneMappingExposure=1.0;
 // Verliert das Telefon den Grafikkontext (Speichernot, App im Hintergrund,
 // abgestürzter Grafikprozess), hört WebGL einfach auf zu zeichnen: die
 // Bedienung läuft weiter, das Bild bleibt WEISS stehen. Ohne diesen Zuhörer
@@ -465,21 +472,124 @@ camera=new THREE.PerspectiveCamera(74,1,.1,400);
 const hemi=new THREE.HemisphereLight(0xcfe8ff,0x5a8a45,1.25); scene.add(hemi);
 const sun=new THREE.DirectionalLight(0xfff3d6,2.0);
 sun.position.set(26,44,16); sun.castShadow=true;
-sun.shadow.mapSize.set(512,512);
+// Seit Bäume und Häuser selbst Schatten werfen, lohnt sich eine feinere und
+// weitere Schattenkarte: 2048 Punkte auf 72 Blöcke, also gut drei Punkte je
+// Block — scharf genug für Blätterdächer, weit genug, dass der Schatten nicht
+// wenige Schritte vor einem abreißt.
+const SH_R=36, SH_MAP=2048;
+sun.shadow.mapSize.set(SH_MAP,SH_MAP);
 const sc=sun.shadow.camera;
-sc.left=-24;sc.right=24;sc.top=24;sc.bottom=-24;sc.near=1;sc.far=120;
+sc.left=-SH_R;sc.right=SH_R;sc.top=SH_R;sc.bottom=-SH_R;sc.near=1;sc.far=160;
 scene.add(sun.target);
-sun.shadow.bias=-0.0018; sun.shadow.normalBias=0.05;
+sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
+sun.shadow.radius=2.5;
 scene.add(sun);
 
+// Himmel: Verlauf, Sonne mit Hof, Mond, Sterne und das Glühen am Horizont bei
+// Sonnenauf- und -untergang. Alles in einem einzigen Shader auf der Kugel, die
+// mit der Kamera mitwandert (sonst verzögen sich Sonne und Sterne, sobald man
+// von der Weltmitte weggeht).
 const skyMat=new THREE.ShaderMaterial({
-  side:THREE.BackSide,depthWrite:false,fog:false,
-  uniforms:{top:{value:new THREE.Color(0x3f86c8)},bot:{value:new THREE.Color(0xbfe0ef)}},
+  side:THREE.BackSide,depthWrite:false,depthTest:false,fog:false,
+  uniforms:{
+    top:{value:new THREE.Color(0x3f86c8)},bot:{value:new THREE.Color(0xbfe0ef)},
+    sunDir:{value:new THREE.Vector3(0,1,0)},moonDir:{value:new THREE.Vector3(0,-1,0)},
+    sunCol:{value:new THREE.Color(0xfff3d6)},glowCol:{value:new THREE.Color(0xff8a3c)},
+    glow:{value:0},night:{value:0},dayVis:{value:1},time:{value:0},spin:{value:0}
+  },
   vertexShader:'varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-  fragmentShader:'uniform vec3 top;uniform vec3 bot;varying vec3 vP;'+
-    'void main(){float h=normalize(vP).y*.5+.5;gl_FragColor=vec4(mix(bot,top,smoothstep(.42,.95,h)),1.);}'
+  fragmentShader:`
+    uniform vec3 top,bot,sunDir,moonDir,sunCol,glowCol;
+    uniform float glow,night,dayVis,time,spin;
+    varying vec3 vP;
+    float hash(vec3 p){p=fract(p*.3183099+.1);p*=17.;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}
+    void main(){
+      vec3 d=normalize(vP);
+      float h=d.y*.5+.5;
+      vec3 col=mix(bot,top,smoothstep(.42,.95,h));
+      // Horizontglühen in Richtung der tiefstehenden Sonne.
+      float sd=dot(d,sunDir);
+      float hz=1.-smoothstep(.0,.42,abs(d.y+.02));
+      col+=glowCol*glow*(pow(max(sd,0.),5.)*.9+.18)*hz;
+      col=mix(col,col*.55+glowCol*.35,glow*pow(max(sd,0.),24.)*.5);
+      // Sonne: harte Scheibe im Pixel-Look plus zwei Höfe.
+      float disc=smoothstep(.99935,.99955,sd);
+      col+=sunCol*(disc*2.4+pow(max(sd,0.),380.)*.8+pow(max(sd,0.),24.)*.14)*dayVis;
+      // Mond: blasse Scheibe mit ein paar dunklen Flecken und kühlem Hof.
+      float md=dot(d,moonDir);
+      float mdisc=smoothstep(.99955,.99972,md);
+      float spots=hash(floor(d*900.));
+      col=mix(col,vec3(.86,.9,1.)*(spots>.72?.78:1.),mdisc*night);
+      col+=vec3(.55,.65,1.)*pow(max(md,0.),90.)*.35*night;
+      // Sterne: je Zelle eines feinen Rasters auf der Kugel höchstens einer,
+      // funkelnd, und mit der Nacht um die Weltachse gedreht.
+      if(night>.01){
+        float c=cos(spin),s=sin(spin);
+        vec3 q=vec3(c*d.x-s*d.y,s*d.x+c*d.y,d.z)*260.;
+        vec3 id=floor(q);
+        float r=hash(id);
+        if(r>.985){
+          vec3 f=fract(q)-.5;
+          float st=smoothstep(.34,.0,length(f));
+          float tw=.6+.4*sin(time*(1.5+r*6.)+r*80.);
+          float fade=smoothstep(-.02,.25,d.y)*night*(1.-mdisc);
+          col+=mix(vec3(.75,.85,1.),vec3(1.,.9,.75),fract(r*37.))*st*tw*fade*1.6;
+        }
+      }
+      gl_FragColor=vec4(col,1.);
+    }`
 });
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(320,20,12),skyMat));
+const skyDome=new THREE.Mesh(new THREE.SphereGeometry(320,32,16),skyMat);
+skyDome.renderOrder=-10; skyDome.frustumCulled=false;
+scene.add(skyDome);
+
+// Wolken: eine flache Schicht hoch über der Welt, aus einer kleinen
+// Klötzchen-Wolkenkarte, die langsam mit dem Wind zieht. Sie liegen fest in
+// der Welt (nicht am Spieler), blenden zum Rand hin aus und nehmen die Farbe
+// des Himmels an — rosa am Abend, grau in der Nacht.
+const CLOUD_Y=78, CLOUD_CELL=6;
+const cloudTex=(()=>{
+  const S=64, c=document.createElement('canvas'); c.width=c.height=S;
+  const g=c.getContext('2d'), r=mulberry(7771);
+  // Ein paar zufällige Wolkenkerne, die zu Klumpen anwachsen — wie echte
+  // Haufenwolken, nicht wie gleichmäßiges Rauschen.
+  const on=new Uint8Array(S*S);
+  for(let n=0;n<26;n++){
+    let x=Math.floor(r()*S), y=Math.floor(r()*S);
+    const len=4+Math.floor(r()*18);
+    for(let k=0;k<len;k++){
+      for(let dy=0;dy<2;dy++) for(let dx=0;dx<3;dx++) on[((y+dy+S)%S)*S+(x+dx+S)%S]=1;
+      x+=Math.floor(r()*3)-1; y+=r()<.3?Math.floor(r()*3)-1:0;
+    }
+  }
+  const img=g.createImageData(S,S);
+  for(let i=0;i<S*S;i++){ img.data[i*4]=img.data[i*4+1]=img.data[i*4+2]=255; img.data[i*4+3]=on[i]?255:0; }
+  g.putImageData(img,0,0);
+  const t=new THREE.CanvasTexture(c);
+  t.magFilter=THREE.NearestFilter; t.minFilter=THREE.LinearFilter; t.generateMipmaps=false;
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+})();
+const cloudMat=new THREE.ShaderMaterial({
+  transparent:true,depthWrite:false,fog:false,side:THREE.DoubleSide,
+  uniforms:{map:{value:cloudTex},col:{value:new THREE.Color(0xffffff)},shade:{value:new THREE.Color(0xdfe6ef)},
+            wind:{value:new THREE.Vector2()},cam:{value:new THREE.Vector3()},op:{value:.85}},
+  vertexShader:'varying vec3 vW;void main(){vec4 w=modelMatrix*vec4(position,1.);vW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}',
+  fragmentShader:`
+    uniform sampler2D map;uniform vec3 col,shade,cam;uniform vec2 wind;uniform float op;varying vec3 vW;
+    void main(){
+      vec2 uv=(vW.xz+wind)/${(64*CLOUD_CELL).toFixed(1)};
+      float a=texture2D(map,uv).a;
+      float dist=length(vW.xz-cam.xz);
+      float fade=1.-smoothstep(150.,300.,dist);
+      if(a*fade<.01) discard;
+      // Zum Horizont hin nehmen die Wolken die Himmelsfarbe an (shade).
+      gl_FragColor=vec4(mix(col,shade,smoothstep(60.,260.,dist)),a*fade*op);
+    }`
+});
+const clouds=new THREE.Mesh(new THREE.PlaneGeometry(720,720),cloudMat);
+clouds.rotation.x=-Math.PI/2; clouds.renderOrder=-5; clouds.frustumCulled=false;
+scene.add(clouds);
 
 // ------------------------------------------------------------------ Pixel-Texturen
 function pixTex(draw,size=16,repeat){
@@ -534,9 +644,38 @@ const TEX={
     g.fillRect(0,7,s,1); g.fillRect(0,15,s,1);
     g.fillRect(7,0,1,8); g.fillRect(3,8,1,8);
   }),
-  water  :noiseTex(['#2f7fc4','#2a72b2','#3a8ad0'],30),
+  // Wasser: tiefes Blau mit ein paar hellen Wellenkämmen. Bewegt wird es
+  // nicht hier, sondern im Material (waterMat) über den Versatz der Textur.
+  water  :noiseTex(['#2b76b8','#276cab','#3080c2','#2a70b0'],30,(g,s,r)=>{
+    for(let n=0;n<7;n++){
+      const x=Math.floor(r()*s), y=Math.floor(r()*s), w=2+Math.floor(r()*4);
+      g.fillStyle='rgba(170,215,255,.45)'; g.fillRect(x,y,w,1);
+      g.fillStyle='rgba(20,60,110,.35)'; g.fillRect(x+1,y+1,w-1,1);
+    }
+  }),
   grass  :noiseTex(['#6aab3f','#5f9e38','#74b649','#589434','#7cbd4f'],36,(g,s)=>{
     g.fillStyle='rgba(0,0,0,.10)'; g.fillRect(0,0,s,1); g.fillRect(0,0,1,s);
+  }),
+  // Grasflanke: Erde, oben ein grüner Saum, der unregelmäßig herabhängt —
+  // wie im Vorbild. Der Saum liegt oben im Bild, weil die Bildoberkante auf
+  // der Seite eines Blocks oben ist.
+  grassSide:noiseTex(['#8a6440','#7d5937','#946d48','#6f4e30'],22,(g,s,r)=>{
+    const grass=['#6aab3f','#5f9e38','#74b649','#589434','#7cbd4f'];
+    for(let x=0;x<s;x++){
+      const h=3+Math.floor(r()*3)+(r()<.25?2:0);
+      for(let y=0;y<h;y++){ g.fillStyle=grass[Math.floor(r()*grass.length)]; g.fillRect(x,y,1,1); }
+      g.fillStyle='rgba(30,50,15,.35)'; g.fillRect(x,h,1,1);
+    }
+  }),
+  // Stammende: Jahresringe um einen hellen Kern, mit dunkler Rinde am Rand.
+  logEnd:pixTex((g,s)=>{
+    const ring=['#b08a55','#9c7747','#b8935d','#8e6a3d'];
+    for(let y=0;y<s;y++) for(let x=0;x<s;x++){
+      const d=Math.max(Math.abs(x-7.5),Math.abs(y-7.5))+(((x*7+y*13)%5)===0?.6:0);
+      g.fillStyle=d>6.6?'#5e4325':ring[Math.floor(d*.9)%ring.length];
+      g.fillRect(x,y,1,1);
+    }
+    g.fillStyle='#6b4c2b'; g.fillRect(7,7,2,2);
   }),
   sand   :noiseTex(['#d9c68a','#cdb87b','#e3d29a','#c2ad72'],37),
   snow   :noiseTex(['#f2f6fa','#e7edf4','#ffffff','#dde6ef'],38),
@@ -866,6 +1005,37 @@ const CRACKS=(()=>{
 // eine kaputte Textur ist ein Schönheitsfehler, eine Ausnahme killt die Schleife.
 const blockTex=t=>TEX[BLOCKS[t]?.tex]||TEX.stone;
 
+// Wasser glänzt jetzt: eine Wellen-Normalenkarte (aus überlagerten Sinus-
+// wellen, darum nahtlos kachelbar) zieht langsam über die Oberfläche, und
+// das Material wirft die Sonne als Glanzpunkt zurück. Ein einziges Material
+// für alle Chunks — so läuft die Bewegung überall im selben Takt.
+const WATER_N=(()=>{
+  const S=64, c=document.createElement('canvas'); c.width=c.height=S;
+  const g=c.getContext('2d'), img=g.createImageData(S,S), T=Math.PI*2/S;
+  const hgt=(x,y)=>Math.sin(x*T*2+Math.sin(y*T)*1.5)*.5+Math.sin((x+y)*T*3)*.3+Math.sin((x-2*y)*T)*.35;
+  for(let y=0;y<S;y++) for(let x=0;x<S;x++){
+    const dx=hgt(x+1,y)-hgt(x-1,y), dy=hgt(x,y+1)-hgt(x,y-1);
+    const nx=-dx*1.6, ny=-dy*1.6, l=Math.hypot(nx,ny,1), i=(y*S+x)*4;
+    img.data[i]=(nx/l*.5+.5)*255; img.data[i+1]=(ny/l*.5+.5)*255; img.data[i+2]=(1/l*.5+.5)*255; img.data[i+3]=255;
+  }
+  g.putImageData(img,0,0);
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+})();
+let _waterMat=null;
+function waterMat(){
+  if(!_waterMat){
+    _waterMat=new THREE.MeshPhongMaterial({
+      map:TEX.water,normalMap:WATER_N,normalScale:new THREE.Vector2(.55,.55),
+      transparent:true,opacity:.8,side:THREE.DoubleSide,
+      specular:0x9fc8ff,shininess:70,
+    });
+    TEX.water.wrapS=TEX.water.wrapT=THREE.RepeatWrapping;
+  }
+  return _waterMat;
+}
+
 // ------------------------------------------------------------------ Gegenstände
 const ITEMS={
   dirt    :{ic:'🟫',nm:'Erde',        block:'dirt'},
@@ -1141,24 +1311,72 @@ function crossVerts(i,x,y,z,s,sit){
 const chunks=new Map();
 const NCH=Math.ceil((BOUND.x1-BOUND.x0+1)/CHUNK);
 const CI=x=>clamp(Math.floor((x-BOUND.x0)/CHUNK),0,NCH-1);
+
+// ---- Umgebungsverdeckung (AO) und Fackellicht, beides je Ecke eingebacken.
+// Jede Ecke einer Fläche schaut auf die drei Nachbarzellen davor (zwei Kanten,
+// eine Ecke): je mehr davon voll sind, desto dunkler. Das ist der eine Kniff,
+// der eine Klötzchenwelt von "Pappkarton" zu "Raum" macht — Kanten, Mulden
+// und Baumkronen bekommen Tiefe, ohne dass die Grafik einen Lichtstrahl mehr
+// rechnen muss: es sind nur Farben an den Ecken, die ohnehin gezeichnet werden.
+const AO_LEVEL=[.46,.64,.82,1];
+// Fackeln leuchten jetzt wirklich: jede Ecke im Umkreis bekommt ein warmes
+// Eigenleuchten, das im Material auf die Grundfarbe der Fläche addiert wird
+// (voxelMat). Nachts trägt das die Szene, tagsüber fällt es neben der Sonne
+// kaum auf — GLOW_K regelt das für alle Chunks auf einmal, ohne Neuvernetzen.
+const TORCH_R=7.5, TORCH_C=[1.0,.58,.26];
+const GLOW_K={value:1};
+function voxelMat(opts){
+  const m=new THREE.MeshLambertMaterial(Object.assign({vertexColors:true},opts));
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.glowK=GLOW_K;
+    sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\nattribute vec3 glow;\nvarying vec3 vGlow;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=glow;');
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\nuniform float glowK;\nvarying vec3 vGlow;')
+      .replace('#include <emissivemap_fragment>',
+               '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=diffuseColor.rgb*vGlow*glowK;');
+  };
+  m.customProgramCacheKey=()=>'voxel';
+  return m;
+}
+// Manche Blöcke sehen oben anders aus als an der Seite: Gras hat an den
+// Flanken Erde mit einem grünen Saum, ein Stamm zeigt an den Enden Jahresringe.
+// Der Materialschlüssel bekommt dafür einen Zusatz ('grass:side'), damit die
+// Flächen in eigene Netze wandern.
+const SIDE_TEX={grass:{side:'grassSide'},log:{end:'logEnd'}};
+function faceKey(t,dir){
+  const f=SIDE_TEX[t];
+  if(!f) return t;
+  if(f.side&&dir!=='py'&&dir!=='ny') return t+':side';
+  if(f.end&&(dir==='py'||dir==='ny')) return t+':end';
+  return t;
+}
+function matTex(mat){
+  if(mat==='water') return TEX.water;
+  const i=mat.indexOf(':');
+  if(i<0) return blockTex(mat);
+  const f=SIDE_TEX[mat.slice(0,i)];
+  return TEX[f[mat.slice(i+1)]]||blockTex(mat.slice(0,i));
+}
+// Ein ganz sanfter, großflächiger Farbwechsel über Wiesen und Laub, damit
+// eine Ebene nicht wie ein gekacheltes Tischtuch aussieht.
+const TINTED={grass:1,leaf:1,needle:1,'grass:side':1,blossom:1};
+const tintAt=(x,z)=>.93+.035*Math.sin(x*.11+z*.07)+.035*Math.sin(z*.13-x*.05+1.7);
+const AXIS={py:1,ny:1,px:0,nx:0,pz:2,nz:2};
+
 function buildChunk(ci,cj){
   const ck=ci+','+cj;
   let c=chunks.get(ck);
-  if(c){ for(const m of c.meshes){ scene.remove(m); m.geometry.dispose(); m.material.dispose(); } c.meshes.length=0; }
+  if(c){ for(const m of c.meshes){ scene.remove(m); m.geometry.dispose(); if(m.material!==_waterMat) m.material.dispose(); } c.meshes.length=0; }
   else { c={meshes:[],cx:0,cz:0,visible:true}; chunks.set(ck,c); }
   const bx=BOUND.x0+ci*CHUNK, bz=BOUND.z0+cj*CHUNK;
   const x1=Math.min(bx+CHUNK-1,BOUND.x1), z1=Math.min(bz+CHUNK-1,BOUND.z1);
   c.cx=bx+CHUNK/2; c.cz=bz+CHUNK/2;
-  const buf={};
-  const addQuad=(mat,v,nv)=>{
-    const b=buf[mat]||(buf[mat]={p:[],n:[],u:[],i:[]});
-    const base=b.p.length/3;
-    b.p.push(...v);
-    for(let k=0;k<4;k++) b.n.push(nv[0],nv[1],nv[2]);
-    b.u.push(...UVQ);
-    b.i.push(base,base+1,base+2, base,base+2,base+3);
-  };
-  const add=(mat,dir,x,y,z)=>addQuad(mat,faceVerts(dir,x,y,z),FACE_N[dir]);
+  // Erster Durchgang: welche Höhen jede Säule überhaupt braucht. Daraus
+  // ergibt sich der Ausschnitt für den Belegt-Speicher unten.
+  const W=x1-bx+1, D=z1-bz+1, cols=new Int32Array(W*D*2);
+  let minY=1e9, maxY=-1e9;
   for(let x=bx;x<=x1;x++) for(let z=bz;z<=z1;z++){
     const H=terrainH(x,z);
     let lo=H-1, hi=H-1;
@@ -1170,6 +1388,95 @@ function buildChunk(ci,cj){
     lo=Math.max(lo,H-10);
     const r=colRange.get(x+','+z);
     if(r){ if(r[0]-1<lo) lo=r[0]-1; if(r[1]>hi) hi=r[1]; }
+    const o=((x-bx)*D+(z-bz))*2;
+    cols[o]=lo; cols[o+1]=hi;
+    if(lo<minY) minY=lo; if(hi>maxY) maxY=hi;
+  }
+  // "Füllt diese Zelle aus?" wird für Sichtbarkeit und AO dutzendfach je
+  // Fläche gefragt. blockAt baut dafür jedes Mal einen Text-Schlüssel — hier
+  // wird jede Antwort einmal geholt und in einem Zahlenfeld gemerkt.
+  const oy=minY-2, CW=W+2, CD=D+2, CH=maxY-minY+5;
+  const occ=new Int8Array(CW*CD*CH).fill(-1);
+  // Oberster möglicher Block je Säule: alles, was über dem Gelände steht
+  // (Bäume, Häuser, Gesetztes), ist in colRange vermerkt. Darüber ist sicher
+  // Luft — die meisten AO-Fragen gehen genau dorthin und brauchen so gar
+  // kein blockAt.
+  const tops=new Int32Array(CW*CD).fill(-1e9);
+  const topAt=(ix,iz,x,z)=>{
+    const i=iz*CW+ix;
+    let t=tops[i];
+    if(t===-1e9){
+      const r=colRange.get(x+','+z);
+      t=tops[i]=Math.max(terrainH(x,z)-1,r?r[1]:-1e9);
+    }
+    return t;
+  };
+  const fillsC=(x,y,z)=>{
+    const ix=x-bx+1, iz=z-bz+1, iy=y-oy;
+    if(ix<0||iz<0||iy<0||ix>=CW||iz>=CD||iy>=CH) return fillsAt(x,y,z);
+    if(y>topAt(ix,iz,x,z)) return false;
+    const i=(iy*CD+iz)*CW+ix;
+    let v=occ[i];
+    if(v<0) v=occ[i]=fillsAt(x,y,z)?1:0;
+    return v===1;
+  };
+  // Fackeln in Reichweite dieses Chunks — meist keine, dann kostet das Licht nichts.
+  const near=torches.filter(t=>t.x>=bx-TORCH_R&&t.x<=x1+TORCH_R&&t.z>=bz-TORCH_R&&t.z<=z1+TORCH_R);
+  const glowAt=(out,px,py,pz,n)=>{
+    let g=0;
+    for(const t of near){
+      const dx=t.x-px, dy=t.y+.5-py, dz=t.z-pz;
+      const d=Math.sqrt(dx*dx+dy*dy+dz*dz)+.001;
+      if(d>=TORCH_R) continue;
+      const fac=n?clamp(((dx*n[0]+dy*n[1]+dz*n[2])/d)*.6+.4,0,1):1;
+      const f=1-d/TORCH_R;
+      g+=f*f*fac;
+    }
+    g=Math.min(g*1.15,1.25);
+    out.push(TORCH_C[0]*g,TORCH_C[1]*g,TORCH_C[2]*g);
+  };
+  const buf={};
+  const getBuf=mat=>buf[mat]||(buf[mat]={p:[],n:[],u:[],c:[],g:[],i:[]});
+  const addQuad=(mat,v,nv,ao,tint)=>{
+    const b=getBuf(mat);
+    const base=b.p.length/3;
+    b.p.push(...v);
+    for(let k=0;k<4;k++){
+      b.n.push(nv[0],nv[1],nv[2]);
+      const a=(ao?AO_LEVEL[ao[k]]:1)*tint;
+      b.c.push(a,a,a);
+      glowAt(b.g,v[k*3],v[k*3+1],v[k*3+2],nv===UPN?null:nv);
+    }
+    b.u.push(...UVQ);
+    // Die Diagonale so legen, dass die dunklen Ecken nicht quer über die
+    // Fläche verschmiert werden (sonst sieht man ein schiefes Dreieck).
+    if(ao&&ao[0]+ao[2]<ao[1]+ao[3]) b.i.push(base,base+1,base+3, base+1,base+2,base+3);
+    else b.i.push(base,base+1,base+2, base,base+2,base+3);
+  };
+  const aoTmp=[0,0,0,0];
+  const add=(t,dir,x,y,z)=>{
+    const v=faceVerts(dir,x,y,z), n=FACE_N[dir];
+    if(t==='water'){ addQuad('water',v,n,null,1); return; }
+    const ax=AXIS[dir];
+    const bxn=x+n[0], byn=y+n[1], bzn=z+n[2];
+    for(let k=0;k<4;k++){
+      // Richtung der Ecke von der Blockmitte aus, entlang der beiden
+      // Achsen, die in der Fläche liegen (die Normalenachse bleibt 0).
+      const sx=ax===0?0:Math.sign(v[k*3]-x);
+      const sy=ax===1?0:Math.sign(v[k*3+1]-y-.5);
+      const sz=ax===2?0:Math.sign(v[k*3+2]-z);
+      // Die beiden Kantennachbarn: je eine der zwei Tangentenrichtungen.
+      const a=ax===0?fillsC(bxn,byn+sy,bzn):fillsC(bxn+sx,byn,bzn);
+      const b=ax===2?fillsC(bxn,byn+sy,bzn):fillsC(bxn,byn,bzn+sz);
+      const cc=fillsC(bxn+sx,byn+sy,bzn+sz);
+      aoTmp[k]=a&&b?0:3-(a+b+cc);
+    }
+    const m=faceKey(t,dir);
+    addQuad(m,v,n,aoTmp,TINTED[m]?tintAt(x,z):1);
+  };
+  for(let x=bx;x<=x1;x++) for(let z=bz;z<=z1;z++){
+    const H=terrainH(x,z);
+    const o=((x-bx)*D+(z-bz))*2, lo=cols[o], hi=cols[o+1];
     for(let y=lo;y<=hi;y++){
       const t=blockAt(x,y,z);
       if(!t) continue;
@@ -1177,18 +1484,18 @@ function buildChunk(ci,cj){
         // Kein Würfel, sondern zwei gekreuzte Flächen — beidseitig sichtbar,
         // also keine Nachbarprüfung: die Frucht hängt ohnehin frei.
         const s=BLOCKS[t].size||1, sit=BLOCKS[t].sit;
-        addQuad(t,crossVerts(0,x,y,z,s,sit),UPN);
-        addQuad(t,crossVerts(1,x,y,z,s,sit),UPN);
+        addQuad(t,crossVerts(0,x,y,z,s,sit),UPN,null,1);
+        addQuad(t,crossVerts(1,x,y,z,s,sit),UPN,null,1);
         continue;
       }
-      if(!fillsAt(x,y+1,z)) add(t,'py',x,y,z);
-      if(!fillsAt(x,y-1,z)) add(t,'ny',x,y,z);
-      if(!fillsAt(x+1,y,z)) add(t,'px',x,y,z);
-      if(!fillsAt(x-1,y,z)) add(t,'nx',x,y,z);
-      if(!fillsAt(x,y,z+1)) add(t,'pz',x,y,z);
-      if(!fillsAt(x,y,z-1)) add(t,'nz',x,y,z);
+      if(!fillsC(x,y+1,z)) add(t,'py',x,y,z);
+      if(!fillsC(x,y-1,z)) add(t,'ny',x,y,z);
+      if(!fillsC(x+1,y,z)) add(t,'px',x,y,z);
+      if(!fillsC(x-1,y,z)) add(t,'nx',x,y,z);
+      if(!fillsC(x,y,z+1)) add(t,'pz',x,y,z);
+      if(!fillsC(x,y,z-1)) add(t,'nz',x,y,z);
     }
-    if(H<=SEA-1&&!fillsAt(x,SEA-1,z)) add('water','py',x,SEA-1,z);
+    if(H<=SEA-1&&!fillsC(x,SEA-1,z)) add('water','py',x,SEA-1,z);
   }
   for(const mat in buf){
     const b=buf[mat];
@@ -1199,17 +1506,26 @@ function buildChunk(ci,cj){
     g.setAttribute('uv',new THREE.Float32BufferAttribute(b.u,2));
     g.setIndex(b.i);
     g.computeBoundingSphere();
-    const opts={map:mat==='water'?TEX.water:blockTex(mat)};
+    let material, solid=false;
     // Beidseitig: von unten schaut man beim Schwimmen gegen die Oberfläche.
-    if(mat==='water'){ opts.transparent=true; opts.opacity=.78; opts.side=THREE.DoubleSide; }
-    else if(BLOCKS[mat]?.alpha){
-      // Durchsichtige Ecken werden weggeschnitten, dadurch bleibt die runde
-      // Form der Frucht stehen statt eines Kastens. Beide Seiten, sonst
-      // schaut man durch die Vorderseite ins Nichts.
-      opts.transparent=true; opts.alphaTest=.5; opts.side=THREE.DoubleSide;
+    if(mat==='water') material=waterMat();
+    else{
+      const opts={map:matTex(mat)};
+      if(BLOCKS[mat]?.alpha){
+        // Durchsichtige Ecken werden weggeschnitten, dadurch bleibt die runde
+        // Form der Frucht stehen statt eines Kastens. Beide Seiten, sonst
+        // schaut man durch die Vorderseite ins Nichts.
+        opts.transparent=true; opts.alphaTest=.5; opts.side=THREE.DoubleSide;
+      }else solid=true;
+      g.setAttribute('color',new THREE.Float32BufferAttribute(b.c,3));
+      g.setAttribute('glow',new THREE.Float32BufferAttribute(b.g,3));
+      material=voxelMat(opts);
     }
-    const mesh=new THREE.Mesh(g,new THREE.MeshLambertMaterial(opts));
-    mesh.receiveShadow=true; mesh.castShadow=false;
+    const mesh=new THREE.Mesh(g,material);
+    // Volle Blöcke werfen jetzt selbst Schatten — Bäume auf die Wiese,
+    // Häuser auf die Straße. Das kostet einen zweiten Durchgang, darum nur
+    // dort, wo es die Schatten überhaupt gibt (siehe shadowMap oben).
+    mesh.receiveShadow=true; mesh.castShadow=solid&&SHADOWS;
     mesh.visible=c.visible;
     scene.add(mesh); c.meshes.push(mesh);
   }
@@ -1346,7 +1662,56 @@ function emitTorches(){
   }
   torchPost.instanceMatrix.needsUpdate=true;
   torchFlame.instanceMatrix.needsUpdate=true;
+  // Lichthof um jede Flamme und — für neue oder verschwundene Fackeln — die
+  // Chunks drumherum neu vernetzen, damit das eingebackene Fackellicht
+  // (siehe glowAt in buildChunk) dazukommt oder verschwindet.
+  const now=new Set(), hp=haloGeo.attributes.position;
+  let n=0;
+  for(const t of torches){
+    const k=t.x+','+t.y+','+t.z;
+    now.add(k);
+    if(!_torchKeys.has(k)) relightAround(t.x,t.z);
+    if(n<hp.count) hp.setXYZ(n++,t.x,t.y+.62,t.z);
+  }
+  for(const k of _torchKeys) if(!now.has(k)){ const [x,,z]=k.split(',').map(Number); relightAround(x,z); }
+  _torchKeys=now;
+  haloGeo.setDrawRange(0,n);
+  hp.needsUpdate=true;
 }
+let _torchKeys=new Set();
+function relightAround(x,z){
+  const R=Math.ceil(TORCH_R);
+  for(let i=CI(x-R);i<=CI(x+R);i++) for(let j=CI(z-R);j<=CI(z+R);j++){
+    const k=i+','+j;
+    if(chunks.has(k)) _dirtyChunks.add(k);             // was noch nicht gebaut ist, bekommt das Licht beim Bauen
+  }
+}
+// Der Lichthof: ein weicher, flackernder Schein um die Flamme, additiv, damit
+// er die Nacht aufhellt statt sie zu übermalen. Alle Fackeln in einem Aufruf.
+const haloGeo=new THREE.BufferGeometry();
+haloGeo.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(240*3),3));
+haloGeo.setDrawRange(0,0);
+const haloMat=new THREE.ShaderMaterial({
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,fog:false,
+  uniforms:{time:{value:0},k:{value:1},px:{value:1}},
+  vertexShader:`uniform float time,px;varying float vF;
+    void main(){
+      vec4 mv=modelViewMatrix*vec4(position,1.);
+      float s=position.x*12.9898+position.z*78.233;
+      vF=.82+.1*sin(time*9.+s)+.08*sin(time*23.+s*2.);
+      gl_PointSize=min(px*1400.*vF/-mv.z,px*600.);
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`uniform float k;varying float vF;
+    void main(){
+      float d=length(gl_PointCoord-.5)*2.;
+      float a=pow(max(1.-d,0.),3.)*.7+pow(max(1.-d,0.),14.)*.6;
+      gl_FragColor=vec4(vec3(1.,.62,.25)*a*k*vF,1.);
+    }`
+});
+const halos=new THREE.Points(haloGeo,haloMat);
+halos.frustumCulled=false;
+scene.add(halos);
 
 // ------------------------------------------------------------------ Schilder
 // signs: "x,y,z" → {text}. Wie Fackeln leben Schilder außerhalb des Block-
@@ -5858,6 +6223,8 @@ const C={dayTop:new THREE.Color(0x3f86c8),evTop:new THREE.Color(0xd97b3a),nTop:n
   water:new THREE.Color(0x1d5c8f),
   // Blutmond: der Nachthimmel kippt zusätzlich Richtung Blut statt Blau.
   bmTop:new THREE.Color(0x430109),bmBot:new THREE.Color(0x2a060f),
+  hemiDay:new THREE.Color(0xcfe8ff),hemiEv:new THREE.Color(0xffc7a0),hemiN:new THREE.Color(0x8ea4e8),
+  cloudDay:new THREE.Color(0xffffff),cloudEv:new THREE.Color(0xffb48a),cloudN:new THREE.Color(0x2a3350),
   top:new THREE.Color(),bot:new THREE.Color()};
 let _wasSub=false;
 const _tripC=new THREE.Color();        // eine einzige, wiederverwendete Farbe statt einer je Bild
@@ -5881,8 +6248,25 @@ function updateSky(){
     top.lerp(_tripC.setHSL((tripPhase*.14)%1,.85,.6),f);
     bot.lerp(_tripC.setHSL((tripPhase*.14+.4)%1,.85,.45),f);
   }
-  skyMat.uniforms.top.value.copy(top);
-  skyMat.uniforms.bot.value.copy(bot);
+  const U=skyMat.uniforms;
+  U.top.value.copy(top);
+  U.bot.value.copy(bot);
+  // Sonne und Mond laufen auf demselben Bogen von Ost nach West: die Sonne
+  // zwischen NIGHT_END und NIGHT_START (über Mitternacht des Zählers hinweg),
+  // der Mond in der Nacht. Das Licht kommt jetzt auch genau von dort, wo man
+  // sie am Himmel sieht — die Schatten zeigen weg von der Sonne.
+  const dayLen=1-NIGHT_END+NIGHT_START;
+  const pSun=((d-NIGHT_END+1)%1)/dayLen;                 // 0 Aufgang … 1 Untergang, >1 nachts
+  const pMoon=(d-NIGHT_START)/(NIGHT_END-NIGHT_START);
+  arcDir(U.sunDir.value,pSun);
+  arcDir(U.moonDir.value,pMoon);
+  U.sunCol.value.copy(C.sunDay).lerp(C.sunEv,warm);
+  U.glow.value=warm*(1-night*.7);
+  U.night.value=clamp(night*1.2-.1,0,1);
+  U.dayVis.value=pSun<=1?1:0;
+  U.time.value=state.t;
+  U.spin.value=(pMoon)*1.2;
+  if(bloodMoon(state.day)) U.glowCol.value.set(0xff3030); else U.glowCol.value.set(0xff8a3c);
   // Unter Wasser wird die Sicht kurz und blau, und ein Schleier liegt vor dem
   // Bild — sonst merkt man beim Schwimmen kaum, dass man untergetaucht ist.
   const sub=state.underwater;
@@ -5891,13 +6275,108 @@ function updateSky(){
   scene.fog.far=sub?lerp(26,9,night):FOG_FAR;
   renderer.setClearColor(sub?C.water:bot);
   if(sub!==_wasSub){ _wasSub=sub; el('water').style.opacity=sub?1:0; }
-  sun.intensity=lerp(2.0,.35,night);
+  // Welche Lichtquelle gerade scheint: tagsüber die Sonne, nachts der Mond.
+  // Am Horizont blenden beide aus, damit der Schatten beim Wechsel nicht
+  // von einer Seite auf die andere springt.
+  const lit=pSun<=1?U.sunDir.value:U.moonDir.value;
+  const rise=smooth01(lit.y/.16);
+  sun.intensity=lerp(2.1,.38,night)*lerp(.25,1,rise);
   sun.color.copy(C.sunDay).lerp(C.sunEv,warm*.8).lerp(C.moon,night);
-  hemi.intensity=lerp(1.25,.42,night);
-  const ang=Math.PI*(.15+d*.7);
-  sun.target.position.set(player.x,player.y,player.z);
-  sun.position.set(player.x+Math.cos(ang)*44,player.y+Math.max(10,Math.sin(ang)*48),player.z+16);
+  hemi.intensity=lerp(1.2,.44,night);
+  hemi.color.copy(C.hemiDay).lerp(C.hemiEv,warm*.6).lerp(C.hemiN,night);
+  GLOW_K.value=lerp(.35,1.25,night);
+  // Die Schattenkamera folgt dem Spieler, aber in ganzen Schattenkarten-
+  // Punkten: sonst "schwimmen" alle Schattenkanten bei jedem Schritt.
+  _ld.copy(lit); if(_ld.y<.28){ _ld.y=.28; } _ld.normalize();
+  _lm.lookAt(_v0,_ld,_up);                               // Drehung ins Lichtsystem
+  _lq.setFromRotationMatrix(_lm);
+  _lp.set(player.x,player.y,player.z).applyQuaternion(_lqi.copy(_lq).invert());
+  const tx=SH_R*2/SH_MAP;
+  _lp.x=Math.round(_lp.x/tx)*tx; _lp.y=Math.round(_lp.y/tx)*tx;
+  _lp.applyQuaternion(_lq);
+  sun.target.position.copy(_lp);
+  sun.position.copy(_lp).addScaledVector(_ld,80);
+  sun.target.updateMatrixWorld();
+  // Himmel und Wolken wandern mit.
+  skyDome.position.copy(camera.position);
+  clouds.position.set(camera.position.x,CLOUD_Y,camera.position.z);
+  const cu=cloudMat.uniforms;
+  cu.wind.value.set(state.t*.9,state.t*.25);
+  cu.cam.value.copy(camera.position);
+  cu.col.value.copy(C.cloudDay).lerp(C.cloudEv,warm*.8).lerp(C.cloudN,night);
+  if(bloodMoon(state.day)) cu.col.value.lerp(C.bmTop,night*.6);
+  cu.shade.value.copy(cu.col.value).multiplyScalar(.82).lerp(bot,.25);
+  cu.op.value=sub?0:lerp(.8,.35,night);
+  updateAmbience();
 }
+// Richtung auf dem Tagesbogen: p=0 Osten am Horizont, .5 im Zenit (leicht
+// nach Süden gekippt, damit die Sonne nie genau senkrecht steht), 1 Westen.
+function arcDir(v,p){
+  const a=Math.PI*clamp(p,-.1,1.1);
+  return v.set(Math.cos(a),Math.sin(a)*.93,.36).normalize();
+}
+const smooth01=x=>{ x=clamp(x,0,1); return x*x*(3-2*x); };
+
+// ---- Schwebeteilchen: tagsüber treibt Blütenstaub in der Luft, nachts
+// blinken Glühwürmchen über der Wiese. Ein Kasten um den Spieler, in dem die
+// Teilchen umlaufen (die Rechnung dafür steckt ganz im Shader — die Grafik
+// bekommt nur einmal feste Zufallszahlen und danach je Bild ein paar Regler).
+const MOTE_N=TOUCH?90:220, MOTE_BOX=new THREE.Vector3(44,14,44);
+const moteGeo=new THREE.BufferGeometry();
+{
+  const r=mulberry(4242), p=new Float32Array(MOTE_N*3), s=new Float32Array(MOTE_N);
+  for(let i=0;i<MOTE_N;i++){ p[i*3]=r(); p[i*3+1]=r(); p[i*3+2]=r(); s[i]=r(); }
+  moteGeo.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+  moteGeo.setAttribute('seed',new THREE.Float32BufferAttribute(s,1));
+}
+const moteMat=new THREE.ShaderMaterial({
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,fog:false,
+  uniforms:{time:{value:0},center:{value:new THREE.Vector3()},box:{value:MOTE_BOX},
+            night:{value:0},day:{value:1},px:{value:1}},
+  vertexShader:`uniform float time,night,px;uniform vec3 center,box;attribute float seed;
+    varying float vA;varying vec3 vC;
+    void main(){
+      vec3 drift=vec3(sin(time*.21+seed*40.)*2.+time*.35,sin(time*.5+seed*17.)*1.2,cos(time*.17+seed*23.)*2.+time*.12);
+      vec3 lo=center-box*.5;
+      vec3 w=lo+mod(position*box+drift-lo,box);
+      w.y=center.y-3.+mod(position.y*box.y+drift.y,box.y)*mix(1.,.45,night);
+      vec4 mv=modelViewMatrix*vec4(w,1.);
+      float dist=-mv.z;
+      // Glühwürmchen blinken einzeln; Staub funkelt nur leicht im Licht.
+      float blink=pow(max(sin(time*(1.2+seed*1.8)+seed*60.),0.),3.);
+      float edge=1.-smoothstep(box.x*.3,box.x*.5,length(w.xz-center.xz));
+      vA=edge*mix(.22+.12*sin(time*2.+seed*9.),blink*1.2,night);
+      vC=mix(vec3(1.,.97,.85),vec3(.75,1.,.35),night);
+      gl_PointSize=clamp(px*mix(5.,9.,night)*10./dist,1.,px*14.);
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`uniform float day;varying float vA;varying vec3 vC;
+    void main(){
+      float d=length(gl_PointCoord-.5)*2.;
+      float a=smoothstep(1.,.0,d);
+      gl_FragColor=vec4(vC*a*a*vA*day,1.);
+    }`
+});
+const motes=new THREE.Points(moteGeo,moteMat);
+motes.frustumCulled=false;
+scene.add(motes);
+function updateAmbience(){
+  const t=state.t, sub=state.underwater;
+  const night=skyMat.uniforms.night.value;
+  const px=renderer.getPixelRatio()*innerHeight/720;
+  const mu=moteMat.uniforms;
+  mu.time.value=t; mu.center.value.set(player.x,player.y,player.z);
+  mu.night.value=night; mu.px.value=px;
+  // In der Dämmerung gibt es weder Staub noch Glühwürmchen, unter Wasser auch nicht.
+  mu.day.value=sub?0:Math.max(1-night*2.2,0)*.9+Math.max(night*2-1,0);
+  haloMat.uniforms.time.value=t; haloMat.uniforms.px.value=px;
+  haloMat.uniforms.k.value=lerp(.35,1,night);
+  // Wasser zieht: Farbe langsam, Wellen etwas schneller und schräg dazu.
+  TEX.water.offset.set(t*.03,t*.012);
+  WATER_N.offset.set(-t*.07,t*.05);
+}
+const _ld=new THREE.Vector3(), _lp=new THREE.Vector3(), _v0=new THREE.Vector3(), _up=new THREE.Vector3(0,1,0),
+      _lm=new THREE.Matrix4(), _lq=new THREE.Quaternion(), _lqi=new THREE.Quaternion();
 function cullChunks(){
   const r=(VIEW+CHUNK)**2;
   // Höchstens zwei neue Chunks je Bild: das Vernetzen eines Chunks dauert
@@ -6499,7 +6978,7 @@ Promise.all([
 });
 
 // ------------------------------------------------------------------ Debug-API
-window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,mobs,
+window.game={state,player,slots,ITEMS,BLOCKS,RECIPES,known,grid,chests,torches,emitTorches,mobs,
   CHARS,traders,traderSpots,chestSpots,openTrade,doTrade,aimChar,saltVein,beyondRiver,BOUND,
   drops,pots,spawnDrop,dropHeld,giveOrDrop,updateDrops,usePot,potAdd,potTake,potRecipe,potTip,
   openPot,cookPot,clickPotCell,renderPot,
