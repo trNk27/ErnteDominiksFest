@@ -670,6 +670,24 @@ mit Rezept**. Wer die richtigen Zutaten ohne das Rezept in den Topf wirft, bekom
 Vorräte bereit: Bretter, Stöcke, Fackeln, Schnur, Stein, Ziegel, gelegentlich ein
 Schwert. **Zutaten liegen nicht mehr darin**, die holst du dir draußen selbst.
 
+## 🌅 Wie die Welt aussieht
+
+- **Himmel**: Sonne und Mond ziehen sichtbar von Ost nach West, nachts
+  funkeln Sterne, und bei Sonnenauf- und -untergang glüht der Horizont
+  (beim Blutmond rot). Darüber ziehen Klötzchenwolken, die die Farbe des
+  Himmels annehmen.
+- **Licht und Schatten**: Das Licht kommt genau von dort, wo Sonne oder Mond
+  gerade stehen. Bäume, Häuser und Gelände werfen am Rechner echte Schatten
+  (am Handy aus Rücksicht auf die Grafik nicht).
+- **Tiefe an den Kanten**: Jede Blockecke wird dunkler, je mehr Nachbarn sie
+  einschließen (Umgebungsverdeckung) — Mulden, Hauswände und Baumkronen
+  bekommen so Tiefe. Grasblöcke haben an den Seiten Erde mit grünem Saum,
+  Stämme zeigen an den Enden Jahresringe.
+- **Fackeln leuchten**: Im Umkreis von gut sieben Blöcken fällt warmes Licht
+  auf Boden und Wände, die Flamme hat einen flackernden Schein.
+- **Wasser** glänzt in der Sonne und kräuselt sich langsam.
+- **In der Luft**: tagsüber treibt Blütenstaub, nachts blinken Glühwürmchen.
+
 ## Die Welt
 
 Aus einer festen Zufallsformel entsteht eine Landschaft von **145 × 145 Blöcken** — bei
